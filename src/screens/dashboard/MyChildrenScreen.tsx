@@ -123,12 +123,12 @@ export default function MyChildrenScreen({ navigation }: any) {
     );
   }
 
-  const QUICK_LINKS = (childId: string) => [
-    { label: 'Report Card', emoji: '📊', screen: 'ParentResults', params: { studentId: childId } },
-    { label: 'Attendance', emoji: '📋', screen: 'ParentAttendance', params: { studentId: childId } },
-    { label: 'Grades', emoji: '🎓', screen: 'ParentGrades', params: { studentId: childId } },
-    { label: 'Invoices', emoji: '💰', screen: 'ParentInvoices', params: { studentId: childId } },
-    { label: 'Certificates', emoji: '🏆', screen: 'ParentCertificates', params: { studentId: childId } },
+  const QUICK_LINKS = (childId: string, childName: string) => [
+    { label: 'Report Card', emoji: '📊', screen: 'ParentResults', params: { studentId: childId, studentName: childName } },
+    { label: 'Attendance', emoji: '📋', screen: 'ParentAttendance', params: { studentId: childId, studentName: childName } },
+    { label: 'Grades', emoji: '🎓', screen: 'ParentGrades', params: { studentId: childId, studentName: childName } },
+    { label: 'Invoices', emoji: '💰', screen: 'ParentInvoices', params: { studentId: childId, studentName: childName } },
+    { label: 'Certificates', emoji: '🏆', screen: 'ParentCertificates', params: { studentId: childId, studentName: childName } },
   ];
 
   return (
@@ -252,7 +252,7 @@ export default function MyChildrenScreen({ navigation }: any) {
 
                   {/* Quick links */}
                   <View style={styles.quickLinks}>
-                    {QUICK_LINKS(child.id).map(({ label, emoji, screen, params }) => (
+                    {QUICK_LINKS(child.id, child.full_name).map(({ label, emoji, screen, params }) => (
                       <TouchableOpacity
                         key={label}
                         style={styles.quickLink}

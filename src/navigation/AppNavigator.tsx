@@ -35,6 +35,11 @@ import MessagesScreen from '../screens/dashboard/MessagesScreen';
 import SettingsScreen from '../screens/dashboard/SettingsScreen';
 import MyChildrenScreen from '../screens/dashboard/MyChildrenScreen';
 import AnalyticsScreen from '../screens/dashboard/AnalyticsScreen';
+import ParentResultsScreen from '../screens/dashboard/ParentResultsScreen';
+import ParentAttendanceScreen from '../screens/dashboard/ParentAttendanceScreen';
+import ParentGradesScreen from '../screens/dashboard/ParentGradesScreen';
+import ParentInvoicesScreen from '../screens/dashboard/ParentInvoicesScreen';
+import ParentCertificatesScreen from '../screens/dashboard/ParentCertificatesScreen';
 
 import { COLORS } from '../constants/colors';
 import { FONT_FAMILY, FONT_SIZE } from '../constants/typography';
@@ -163,6 +168,11 @@ function MainStack() {
       <Stack.Screen name="Settings" component={SettingsScreen} />
       <Stack.Screen name="MyChildren" component={MyChildrenScreen} />
       <Stack.Screen name="Analytics" component={AnalyticsScreen} />
+      <Stack.Screen name="ParentResults" component={ParentResultsScreen} />
+      <Stack.Screen name="ParentAttendance" component={ParentAttendanceScreen} />
+      <Stack.Screen name="ParentGrades" component={ParentGradesScreen} />
+      <Stack.Screen name="ParentInvoices" component={ParentInvoicesScreen} />
+      <Stack.Screen name="ParentCertificates" component={ParentCertificatesScreen} />
     </Stack.Navigator>
   );
 }

@@ -9,6 +9,12 @@ export type RootStackParamList = {
   AssignmentDetail: { assignmentId: string; title: string };
   MessageThread: { userId: string; name: string };
   ChildDetail: { studentId: string; name: string };
+  // Parent portal detail screens
+  ParentResults: { studentId: string; studentName?: string };
+  ParentAttendance: { studentId: string; studentName?: string };
+  ParentGrades: { studentId: string; studentName?: string };
+  ParentInvoices: { studentId: string; studentName?: string };
+  ParentCertificates: { studentId: string; studentName?: string };
 };
 
 export type TabParamList = {
