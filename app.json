@@ -1,22 +1,24 @@
 {
   "expo": {
-    "name": "rillcod-mobile",
-    "slug": "rillcod-mobile",
+    "name": "Rillcod Academy",
+    "slug": "rillcod-academy",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
-    "userInterfaceStyle": "light",
+    "userInterfaceStyle": "dark",
     "splash": {
       "image": "./assets/splash-icon.png",
       "resizeMode": "contain",
-      "backgroundColor": "#ffffff"
+      "backgroundColor": "#05050a"
     },
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": false,
+      "bundleIdentifier": "com.rillcod.academy"
     },
     "android": {
+      "package": "com.rillcod.academy",
       "adaptiveIcon": {
-        "backgroundColor": "#E6F4FE",
+        "backgroundColor": "#05050a",
         "foregroundImage": "./assets/android-icon-foreground.png",
         "backgroundImage": "./assets/android-icon-background.png",
         "monochromeImage": "./assets/android-icon-monochrome.png"
@@ -25,6 +27,23 @@
     },
     "web": {
       "favicon": "./assets/favicon.png"
-    }
+    },
+    "plugins": [
+      "expo-localization",
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Rillcod Academy needs access to your photos to update your profile picture.",
+          "cameraPermission": "Rillcod Academy needs access to your camera to take a profile photo."
+        }
+      ],
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/icon.png",
+          "color": "#7a0606"
+        }
+      ]
+    ]
   }
 }
