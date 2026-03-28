@@ -20,13 +20,11 @@ const { width } = Dimensions.get('window');
 
 interface Course {
   id: string;
-  title: string;
+  name: string;
   description: string | null;
-  category: string | null;
-  level: string | null;
+  difficulty_level: string | null;
   duration_weeks: number | null;
-  thumbnail_url: string | null;
-  is_published: boolean;
+  is_active: boolean | null;
 }
 
 interface Enrollment {
@@ -36,24 +34,11 @@ interface Enrollment {
   status: string;
 }
 
-const CATEGORY_ICONS: Record<string, string> = {
-  'AI':          '🤖',
-  'Robotics':    '🦾',
-  'Coding':      '💻',
-  'Web Dev':     '🌐',
-  'Data Science':'📊',
-  'IoT':         '📡',
-  'Cybersecurity':'🔒',
-  'Design':      '🎨',
-};
-
 const LEVEL_COLORS: Record<string, string> = {
   beginner:     COLORS.success,
   intermediate: COLORS.gold,
   advanced:     COLORS.accent,
 };
-
-const FILTERS = ['All', 'AI', 'Robotics', 'Coding', 'Web Dev', 'Data Science'];
 
 export default function LearnScreen() {
   const { profile } = useAuth();
@@ -64,15 +49,14 @@ export default function LearnScreen() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [search, setSearch] = useState('');
-  const [activeFilter, setActiveFilter] = useState('All');
   const [searchFocused, setSearchFocused] = useState(false);
 
   const loadData = useCallback(async () => {
     const [courseRes, enrollRes] = await Promise.all([
       supabase
         .from('programs')
-        .select('id, title, description, category, level, duration_weeks, thumbnail_url, is_published')
-        .eq('is_published', true)
+        .select('id, name, description, difficulty_level, duration_weeks, is_active')
+        .eq('is_active', true)
         .order('created_at', { ascending: false }),
       profile
         ? supabase
@@ -96,11 +80,10 @@ export default function LearnScreen() {
     enrollments.find(e => e.program_id === courseId);
 
   const filtered = courses.filter(c => {
-    const matchFilter = activeFilter === 'All' || c.category === activeFilter;
     const matchSearch = !search.trim() ||
-      c.title.toLowerCase().includes(search.toLowerCase()) ||
+      c.name.toLowerCase().includes(search.toLowerCase()) ||
       (c.description ?? '').toLowerCase().includes(search.toLowerCase());
-    return matchFilter && matchSearch;
+    return matchSearch;
   });
 
   const enrolled  = filtered.filter(c => !!getEnrollment(c.id));
@@ -158,39 +141,6 @@ export default function LearnScreen() {
           )}
         </MotiView>
       </LinearGradient>
-
-      {/* Filter chips */}
-      <ScrollView
-        horizontal
-        showsHorizontalScrollIndicator={false}
-        contentContainerStyle={styles.filtersRow}
-        style={styles.filtersScroll}
-      >
-        {FILTERS.map(f => {
-          const active = f === activeFilter;
-          return (
-            <TouchableOpacity
-              key={f}
-              onPress={() => { setActiveFilter(f); light(); }}
-              activeOpacity={0.75}
-            >
-              <MotiView
-                animate={{
-                  backgroundColor: active ? COLORS.primary : COLORS.bgCard,
-                  borderColor: active ? COLORS.primaryMid : COLORS.border,
-                  scale: active ? 1.04 : 1,
-                }}
-                transition={{ type: 'timing', duration: 160 }}
-                style={styles.filterChip}
-              >
-                <Text style={[styles.filterText, active && styles.filterTextActive]}>
-                  {CATEGORY_ICONS[f] ? `${CATEGORY_ICONS[f]} ` : ''}{f}
-                </Text>
-              </MotiView>
-            </TouchableOpacity>
-          );
-        })}
-      </ScrollView>
 
       <ScrollView
         contentContainerStyle={styles.scroll}
@@ -281,19 +231,8 @@ interface CourseCardProps {
 
 function CourseCard({ course, enrollment, index, onPress }: CourseCardProps) {
   const progress = enrollment?.progress_pct ?? 0;
-  const catIcon  = CATEGORY_ICONS[course.category ?? ''] ?? '📘';
-  const lvlColor = LEVEL_COLORS[course.level?.toLowerCase() ?? ''] ?? COLORS.textMuted;
-
-  // Pick a gradient based on category
-  const GRAD_MAP: Record<string, [string, string]> = {
-    'AI':           ['#1e1050', '#3730a3'],
-    'Robotics':     ['#0c2a1a', '#065f46'],
-    'Coding':       ['#1a0505', '#7a0606'],
-    'Web Dev':      ['#0c1a2e', '#1e40af'],
-    'Data Science': ['#1c1400', '#92400e'],
-    'IoT':          ['#0d1f25', '#164e63'],
-  };
-  const grad = GRAD_MAP[course.category ?? ''] ?? ['#0f0a1a', '#1e1050'] as [string, string];
+  const lvlColor = LEVEL_COLORS[course.difficulty_level?.toLowerCase() ?? ''] ?? COLORS.textMuted;
+  const grad: [string, string] = ['#0f0a1a', '#1e1050'];
 
   return (
     <MotiView
@@ -307,7 +246,7 @@ function CourseCard({ course, enrollment, index, onPress }: CourseCardProps) {
 
         {/* Top banner */}
         <LinearGradient colors={grad} style={styles.cardBanner}>
-          <Text style={styles.cardBannerEmoji}>{catIcon}</Text>
+          <Text style={styles.cardBannerEmoji}>📘</Text>
           {enrollment && (
             <View style={styles.enrolledBadge}>
               <Text style={styles.enrolledBadgeText}>✓ Enrolled</Text>
@@ -316,17 +255,12 @@ function CourseCard({ course, enrollment, index, onPress }: CourseCardProps) {
         </LinearGradient>
 
         <View style={styles.cardBody}>
-          {/* Category + level row */}
+          {/* Level + duration row */}
           <View style={styles.cardMeta}>
-            {course.category && (
-              <View style={styles.catChip}>
-                <Text style={styles.catChipText}>{course.category}</Text>
-              </View>
-            )}
-            {course.level && (
+            {course.difficulty_level && (
               <View style={[styles.lvlChip, { borderColor: lvlColor + '60' }]}>
                 <Text style={[styles.lvlChipText, { color: lvlColor }]}>
-                  {course.level.charAt(0).toUpperCase() + course.level.slice(1)}
+                  {course.difficulty_level.charAt(0).toUpperCase() + course.difficulty_level.slice(1)}
                 </Text>
               </View>
             )}
@@ -335,7 +269,7 @@ function CourseCard({ course, enrollment, index, onPress }: CourseCardProps) {
             )}
           </View>
 
-          <Text style={styles.cardTitle} numberOfLines={2}>{course.title}</Text>
+          <Text style={styles.cardTitle} numberOfLines={2}>{course.name}</Text>
 
           {course.description && (
             <Text style={styles.cardDesc} numberOfLines={2}>{course.description}</Text>

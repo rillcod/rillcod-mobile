@@ -109,7 +109,7 @@ export default function DashboardScreen({ navigation }: any) {
     const annRes = await supabase
       .from('announcements')
       .select('id, title, content, created_at')
-      .eq('is_published', true)
+      .eq('is_active', true)
       .order('created_at', { ascending: false })
       .limit(4);
 
