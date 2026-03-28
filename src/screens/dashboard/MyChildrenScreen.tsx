@@ -93,7 +93,7 @@ export default function MyChildrenScreen({ navigation }: any) {
           const gradeRes = await supabase
             .from('student_progress_reports')
             .select('overall_grade')
-            .eq('student_id', child.id)
+            .eq('student_id', child.user_id)  // student_progress_reports.student_id = portal_users.id
             .eq('is_published', true)
             .order('report_date', { ascending: false })
             .limit(1)
@@ -123,8 +123,9 @@ export default function MyChildrenScreen({ navigation }: any) {
     );
   }
 
-  const QUICK_LINKS = (childId: string, childName: string) => [
-    { label: 'Report Card', emoji: '📊', screen: 'ParentResults', params: { studentId: childId, studentName: childName } },
+  const QUICK_LINKS = (childId: string, childName: string, userId: string | null) => [
+    // ParentResults uses userId (portal_users.id) because student_progress_reports.student_id → portal_users
+    { label: 'Report Card', emoji: '📊', screen: 'ParentResults', params: { studentId: childId, studentName: childName, userId } },
     { label: 'Attendance', emoji: '📋', screen: 'ParentAttendance', params: { studentId: childId, studentName: childName } },
     { label: 'Grades', emoji: '🎓', screen: 'ParentGrades', params: { studentId: childId, studentName: childName } },
     { label: 'Invoices', emoji: '💰', screen: 'ParentInvoices', params: { studentId: childId, studentName: childName } },
@@ -252,7 +253,7 @@ export default function MyChildrenScreen({ navigation }: any) {
 
                   {/* Quick links */}
                   <View style={styles.quickLinks}>
-                    {QUICK_LINKS(child.id, child.full_name).map(({ label, emoji, screen, params }) => (
+                    {QUICK_LINKS(child.id, child.full_name, child.user_id).map(({ label, emoji, screen, params }) => (
                       <TouchableOpacity
                         key={label}
                         style={styles.quickLink}

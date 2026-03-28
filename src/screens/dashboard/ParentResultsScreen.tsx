@@ -43,18 +43,35 @@ function scoreColor(score: number | null): string {
 }
 
 export default function ParentResultsScreen({ navigation, route }: any) {
-  const { studentId, studentName } = route.params ?? {};
+  // studentId = students.id; userId = portal_users.id (student_progress_reports.student_id → portal_users)
+  const { studentId, studentName, userId } = route.params ?? {};
   const [reports, setReports] = useState<Report[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [noPortalAccount, setNoPortalAccount] = useState(false);
 
   const load = async () => {
     try {
+      // Resolve the portal_users.id: prefer passed userId, otherwise fetch from students table
+      let portalUserId: string | null = userId ?? null;
+      if (!portalUserId) {
+        const { data: student } = await supabase
+          .from('students').select('user_id').eq('id', studentId).maybeSingle();
+        portalUserId = student?.user_id ?? null;
+      }
+
+      if (!portalUserId) {
+        setNoPortalAccount(true);
+        setReports([]);
+        return;
+      }
+
+      setNoPortalAccount(false);
       const { data } = await supabase
         .from('student_progress_reports')
         .select('id, course_name, report_term, theory_score, practical_score, attendance_score, overall_score, overall_grade, is_published, report_date, instructor_name, learning_milestones, key_strengths, areas_for_growth')
-        .eq('student_id', studentId)
+        .eq('student_id', portalUserId)
         .eq('is_published', true)
         .order('report_date', { ascending: false });
       setReports((data ?? []) as Report[]);
@@ -64,7 +81,7 @@ export default function ParentResultsScreen({ navigation, route }: any) {
     }
   };
 
-  useEffect(() => { load(); }, [studentId]);
+  useEffect(() => { load(); }, [studentId, userId]);
 
   const avgScore = reports.length > 0
     ? Math.round(reports.reduce((s, r) => s + (r.overall_score ?? 0), 0) / reports.length)
@@ -101,7 +118,13 @@ export default function ParentResultsScreen({ navigation, route }: any) {
             <RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); load(); }} tintColor={COLORS.primary} />
           }
         >
-          {reports.length === 0 ? (
+          {noPortalAccount ? (
+            <View style={styles.empty}>
+              <Text style={styles.emptyIcon}>📊</Text>
+              <Text style={styles.emptyTitle}>No portal account</Text>
+              <Text style={styles.emptyText}>This child has no linked portal account. Reports appear once they register.</Text>
+            </View>
+          ) : reports.length === 0 ? (
             <View style={styles.empty}>
               <Text style={styles.emptyIcon}>📊</Text>
               <Text style={styles.emptyTitle}>No published reports</Text>
