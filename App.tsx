@@ -1,3 +1,4 @@
+import 'react-native-reanimated';
 import 'react-native-url-polyfill/auto';
 import React, { useEffect, useCallback } from 'react';
 import { View } from 'react-native';

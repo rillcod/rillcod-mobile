@@ -30,6 +30,7 @@
     },
     "newArchEnabled": true,
     "plugins": [
+      "expo-dev-client",
       "expo-localization",
       [
         "expo-image-picker",
