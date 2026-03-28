@@ -47,18 +47,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   };
 
   useEffect(() => {
-    supabase.auth.getSession().then(({ data: { session: s } }) => {
-      setSession(s);
-      setUser(s?.user ?? null);
-      if (s?.user) fetchProfile(s.user.id).finally(() => setLoading(false));
-      else setLoading(false);
-    });
-
+    // onAuthStateChange fires INITIAL_SESSION immediately — no need for a separate
+    // getSession() call. Calling both simultaneously causes "Body already read" when
+    // the token refresh response is consumed by two concurrent requests.
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, s) => {
       setSession(s);
       setUser(s?.user ?? null);
-      if (s?.user) fetchProfile(s.user.id);
-      else { setProfile(null); setLoading(false); }
+      if (s?.user) {
+        fetchProfile(s.user.id).finally(() => setLoading(false));
+      } else {
+        setProfile(null);
+        setLoading(false);
+      }
     });
 
     return () => subscription.unsubscribe();
