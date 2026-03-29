@@ -35,11 +35,11 @@ export type RootStackParamList = {
   AddTeacher: undefined;
   AddClass: undefined;
   SchoolDetail: { schoolId: string };
-  StudentReport: { studentId: string };
   BulkRegister: undefined;
   ClassDetail: { classId: string };
-  CreateAssignment: undefined;
-  ReportBuilder: undefined;
+  CreateAssignment: { classId?: string; className?: string };
+  ReportBuilder: { studentId?: string; studentName?: string };
+  StudentReport: { studentId: string; studentName?: string };
   AI: undefined;
   Assignments: undefined;
   Grades: undefined;

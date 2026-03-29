@@ -23,7 +23,7 @@ interface TeacherProfile {
   created_at: string;
 }
 
-interface ClassItem { id: string; name: string }
+interface ClassItem { id: string; name: string; student_count?: number }
 
 export default function TeacherDetailScreen({ route, navigation }: any) {
   const { teacherId } = route.params ?? {};
@@ -46,10 +46,26 @@ export default function TeacherDetailScreen({ route, navigation }: any) {
         supabase.from('assignments').select('id', { count: 'exact', head: true }).eq('teacher_id', teacherId),
       ]);
 
-      if (cls.data) setClasses(cls.data as ClassItem[]);
+      // Fetch student counts per class
+      let enrichedClasses: ClassItem[] = cls.data ?? [];
+      if (enrichedClasses.length > 0) {
+        const classIds = enrichedClasses.map(c => c.id);
+        const enrollCounts = await Promise.all(
+          classIds.map(id =>
+            supabase.from('class_enrollments').select('id', { count: 'exact', head: true }).eq('class_id', id)
+          )
+        );
+        enrichedClasses = enrichedClasses.map((c, i) => ({
+          ...c,
+          student_count: enrollCounts[i].count ?? 0,
+        }));
+      }
+
+      const totalStudents = enrichedClasses.reduce((sum, c) => sum + (c.student_count ?? 0), 0);
+      if (enrichedClasses.length > 0) setClasses(enrichedClasses);
       setStats({
-        classes: cls.data?.length ?? 0,
-        students: 0,
+        classes: enrichedClasses.length,
+        students: totalStudents,
         assignments: asgn.count ?? 0,
       });
       setLoading(false);
@@ -104,6 +120,7 @@ export default function TeacherDetailScreen({ route, navigation }: any) {
         <View style={styles.statsRow}>
           {[
             { label: 'Classes', value: stats.classes, color: '#7c3aed', emoji: '📚' },
+            { label: 'Students', value: stats.students, color: COLORS.success, emoji: '👨‍🎓' },
             { label: 'Assignments', value: stats.assignments, color: COLORS.info, emoji: '📝' },
           ].map((s, i) => (
             <MotiView key={s.label} from={{ opacity: 0, translateY: 10 }} animate={{ opacity: 1, translateY: 0 }} transition={{ delay: i * 80 }} style={styles.statCard}>
@@ -146,11 +163,14 @@ export default function TeacherDetailScreen({ route, navigation }: any) {
               <TouchableOpacity
                 key={c.id}
                 style={[styles.classRow, i > 0 && styles.classRowBorder]}
-                onPress={() => navigation.navigate('Classes')}
+                onPress={() => navigation.navigate('ClassDetail', { classId: c.id })}
                 activeOpacity={0.8}
               >
                 <Text style={styles.classIcon}>📚</Text>
                 <Text style={styles.className}>{c.name}</Text>
+                {c.student_count != null && c.student_count > 0 && (
+                  <Text style={styles.classCount}>{c.student_count} students</Text>
+                )}
                 <Text style={styles.chevron}>›</Text>
               </TouchableOpacity>
             ))}
@@ -200,6 +220,7 @@ const styles = StyleSheet.create({
   classIcon: { fontSize: 18 },
   className: { flex: 1, fontFamily: FONT_FAMILY.bodySemi, fontSize: FONT_SIZE.sm, color: COLORS.textPrimary },
   chevron: { fontSize: 18, color: COLORS.textMuted },
+  classCount: { fontFamily: FONT_FAMILY.body, fontSize: FONT_SIZE.xs, color: COLORS.textMuted },
 
   emptyWrap: { flex: 1, alignItems: 'center', justifyContent: 'center' },
   emptyText: { fontFamily: FONT_FAMILY.body, fontSize: FONT_SIZE.sm, color: COLORS.textMuted },

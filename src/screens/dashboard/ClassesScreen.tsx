@@ -46,11 +46,22 @@ export default function ClassesScreen({ navigation }: any) {
 
     const { data } = await q;
     if (data) {
-      const items = (data as any[]).map(c => ({
+      const items: ClassItem[] = (data as any[]).map(c => ({
         ...c,
         teacher_name: c.portal_users?.full_name ?? null,
         student_count: 0,
       }));
+
+      // Fetch real student counts in parallel
+      if (items.length > 0) {
+        const counts = await Promise.all(
+          items.map(c =>
+            supabase.from('class_enrollments').select('id', { count: 'exact', head: true }).eq('class_id', c.id)
+          )
+        );
+        counts.forEach((res, i) => { items[i].student_count = res.count ?? 0; });
+      }
+
       setClasses(items);
       setFiltered(items);
     }

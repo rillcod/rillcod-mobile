@@ -45,8 +45,13 @@
     "react-native-worklets": "^0.8.1"
   },
   "devDependencies": {
-    "@types/react": "~19.1.10",
+    "@types/react": "~19.1.0",
     "typescript": "~5.9.2"
   },
-  "private": true
+  "private": true,
+  "overrides": {
+    "react": "19.1.0",
+    "react-dom": "19.1.0",
+    "scheduler": "0.26.0"
+  }
 }
