@@ -191,6 +191,11 @@ export default function OnboardingScreen({ navigation }: Props) {
 
       {/* Actions */}
       <View style={styles.actions}>
+        {/* Brand mark */}
+        <View style={styles.brandRow}>
+          <Image source={require('../../../assets/rillcod-icon.png')} style={styles.brandMark} resizeMode="cover" />
+          <Text style={styles.brandLabel}>Rillcod Academy</Text>
+        </View>
         <PremiumButton
           label={activeIdx === SLIDES.length - 1 ? t('onboarding.getStarted') : t('onboarding.next')}
           onPress={goNext}
@@ -322,6 +327,14 @@ const styles = StyleSheet.create({
     paddingBottom: Platform.OS === 'ios' ? 48 : SPACING['2xl'],
     gap: SPACING.base,
     zIndex: 1,
+  },
+  brandRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8 },
+  brandMark: { width: 28, height: 28, borderRadius: 8 },
+  brandLabel: {
+    fontFamily: FONT_FAMILY.display,
+    fontSize: FONT_SIZE.sm,
+    color: COLORS.textMuted,
+    letterSpacing: LETTER_SPACING.wide,
   },
   signinLink: { alignItems: 'center', paddingVertical: SPACING.sm },
   signinText: {

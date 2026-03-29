@@ -19,6 +19,10 @@ import ForgotPasswordScreen from '../screens/auth/ForgotPasswordScreen';
 // Onboarding
 import OnboardingScreen from '../screens/onboarding/OnboardingScreen';
 
+// Public registration
+import PublicStudentRegistrationScreen from '../screens/public/PublicStudentRegistrationScreen';
+import PublicSchoolRegistrationScreen from '../screens/public/PublicSchoolRegistrationScreen';
+
 // Main tab screens
 import DashboardScreen from '../screens/dashboard/DashboardScreen';
 import LearnScreen from '../screens/learn/LearnScreen';
@@ -40,6 +44,50 @@ import ParentAttendanceScreen from '../screens/dashboard/ParentAttendanceScreen'
 import ParentGradesScreen from '../screens/dashboard/ParentGradesScreen';
 import ParentInvoicesScreen from '../screens/dashboard/ParentInvoicesScreen';
 import ParentCertificatesScreen from '../screens/dashboard/ParentCertificatesScreen';
+
+// New admin/shared screens
+import StudentsScreen from '../screens/dashboard/StudentsScreen';
+import TeachersScreen from '../screens/dashboard/TeachersScreen';
+import SchoolsScreen from '../screens/dashboard/SchoolsScreen';
+import ApprovalsScreen from '../screens/dashboard/ApprovalsScreen';
+import AttendanceScreen from '../screens/dashboard/AttendanceScreen';
+import PaymentsScreen from '../screens/dashboard/PaymentsScreen';
+import TimetableScreen from '../screens/dashboard/TimetableScreen';
+import ClassesScreen from '../screens/dashboard/ClassesScreen';
+import CBTScreen from '../screens/dashboard/CBTScreen';
+import ReportsScreen from '../screens/dashboard/ReportsScreen';
+import StudentDetailScreen from '../screens/dashboard/StudentDetailScreen';
+import AssignmentDetailScreen from '../screens/dashboard/AssignmentDetailScreen';
+import TeacherDetailScreen from '../screens/dashboard/TeacherDetailScreen';
+import AddStudentScreen from '../screens/dashboard/AddStudentScreen';
+import AddSchoolScreen from '../screens/dashboard/AddSchoolScreen';
+import AddTeacherScreen from '../screens/dashboard/AddTeacherScreen';
+import AddClassScreen from '../screens/dashboard/AddClassScreen';
+import SchoolDetailScreen from '../screens/dashboard/SchoolDetailScreen';
+import StudentReportScreen from '../screens/dashboard/StudentReportScreen';
+import BulkRegisterScreen from '../screens/dashboard/BulkRegisterScreen';
+import ClassDetailScreen from '../screens/dashboard/ClassDetailScreen';
+import CreateAssignmentScreen from '../screens/dashboard/CreateAssignmentScreen';
+import ReportBuilderScreen from '../screens/dashboard/ReportBuilderScreen';
+import AIScreen from '../screens/dashboard/AIScreen';
+import CoursesScreen from '../screens/dashboard/CoursesScreen';
+import ProjectsScreen from '../screens/dashboard/ProjectsScreen';
+import LibraryScreen from '../screens/dashboard/LibraryScreen';
+import LeaderboardScreen from '../screens/dashboard/LeaderboardScreen';
+import LiveSessionsScreen from '../screens/dashboard/LiveSessionsScreen';
+import EngageScreen from '../screens/dashboard/EngageScreen';
+import VaultScreen from '../screens/dashboard/VaultScreen';
+import MissionsScreen from '../screens/dashboard/MissionsScreen';
+import ProtocolScreen from '../screens/dashboard/ProtocolScreen';
+import ManageCertificatesScreen from '../screens/dashboard/ManageCertificatesScreen';
+import NewslettersScreen from '../screens/dashboard/NewslettersScreen';
+import CardBuilderScreen from '../screens/dashboard/CardBuilderScreen';
+import UsersScreen from '../screens/dashboard/UsersScreen';
+import EnrolStudentsScreen from '../screens/dashboard/EnrolStudentsScreen';
+import WipeStudentsScreen from '../screens/dashboard/WipeStudentsScreen';
+import ProgramsScreen from '../screens/dashboard/ProgramsScreen';
+import LessonsScreen from '../screens/dashboard/LessonsScreen';
+import SchoolOverviewScreen from '../screens/dashboard/SchoolOverviewScreen';
 
 import { COLORS } from '../constants/colors';
 import { FONT_FAMILY, FONT_SIZE } from '../constants/typography';
@@ -173,6 +221,48 @@ function MainStack() {
       <Stack.Screen name="ParentGrades" component={ParentGradesScreen} />
       <Stack.Screen name="ParentInvoices" component={ParentInvoicesScreen} />
       <Stack.Screen name="ParentCertificates" component={ParentCertificatesScreen} />
+      <Stack.Screen name="Students" component={StudentsScreen} />
+      <Stack.Screen name="Teachers" component={TeachersScreen} />
+      <Stack.Screen name="Schools" component={SchoolsScreen} />
+      <Stack.Screen name="Approvals" component={ApprovalsScreen} />
+      <Stack.Screen name="Attendance" component={AttendanceScreen} />
+      <Stack.Screen name="Payments" component={PaymentsScreen} />
+      <Stack.Screen name="Timetable" component={TimetableScreen} />
+      <Stack.Screen name="Classes" component={ClassesScreen} />
+      <Stack.Screen name="CBT" component={CBTScreen} />
+      <Stack.Screen name="Reports" component={ReportsScreen} />
+      <Stack.Screen name="StudentDetail" component={StudentDetailScreen} />
+      <Stack.Screen name="AssignmentDetail" component={AssignmentDetailScreen} />
+      <Stack.Screen name="TeacherDetail" component={TeacherDetailScreen} />
+      <Stack.Screen name="AddStudent" component={AddStudentScreen} />
+      <Stack.Screen name="AddSchool" component={AddSchoolScreen} />
+      <Stack.Screen name="AddTeacher" component={AddTeacherScreen} />
+      <Stack.Screen name="AddClass" component={AddClassScreen} />
+      <Stack.Screen name="SchoolDetail" component={SchoolDetailScreen} />
+      <Stack.Screen name="StudentReport" component={StudentReportScreen} />
+      <Stack.Screen name="BulkRegister" component={BulkRegisterScreen} />
+      <Stack.Screen name="ClassDetail" component={ClassDetailScreen} />
+      <Stack.Screen name="CreateAssignment" component={CreateAssignmentScreen} />
+      <Stack.Screen name="ReportBuilder" component={ReportBuilderScreen} />
+      <Stack.Screen name="AI" component={AIScreen} />
+      <Stack.Screen name="Courses" component={CoursesScreen} />
+      <Stack.Screen name="Projects" component={ProjectsScreen} />
+      <Stack.Screen name="Library" component={LibraryScreen} />
+      <Stack.Screen name="Leaderboard" component={LeaderboardScreen} />
+      <Stack.Screen name="LiveSessions" component={LiveSessionsScreen} />
+      <Stack.Screen name="Engage" component={EngageScreen} />
+      <Stack.Screen name="Vault" component={VaultScreen} />
+      <Stack.Screen name="Missions" component={MissionsScreen} />
+      <Stack.Screen name="Protocol" component={ProtocolScreen} />
+      <Stack.Screen name="ManageCertificates" component={ManageCertificatesScreen} />
+      <Stack.Screen name="Newsletters" component={NewslettersScreen} />
+      <Stack.Screen name="CardBuilder" component={CardBuilderScreen} />
+      <Stack.Screen name="Users" component={UsersScreen} />
+      <Stack.Screen name="EnrolStudents" component={EnrolStudentsScreen} />
+      <Stack.Screen name="WipeStudents" component={WipeStudentsScreen} />
+      <Stack.Screen name="Programs" component={ProgramsScreen} />
+      <Stack.Screen name="Lessons" component={LessonsScreen} />
+      <Stack.Screen name="SchoolOverview" component={SchoolOverviewScreen} />
     </Stack.Navigator>
   );
 }
@@ -212,6 +302,8 @@ export default function AppNavigator() {
             <Stack.Screen name="Login" component={LoginScreen} options={{ animation: 'fade' }} />
             <Stack.Screen name="Register" component={RegisterScreen} options={{ animation: 'slide_from_right' }} />
             <Stack.Screen name="ForgotPassword" component={ForgotPasswordScreen} options={{ animation: 'slide_from_right' }} />
+            <Stack.Screen name="PublicStudentRegistration" component={PublicStudentRegistrationScreen} options={{ animation: 'slide_from_right' }} />
+            <Stack.Screen name="PublicSchoolRegistration" component={PublicSchoolRegistrationScreen} options={{ animation: 'slide_from_right' }} />
           </>
         ) : (
           <>
@@ -236,6 +328,8 @@ export default function AppNavigator() {
             <Stack.Screen name="Login" component={LoginScreen} options={{ animation: 'fade' }} />
             <Stack.Screen name="Register" component={RegisterScreen} options={{ animation: 'slide_from_right' }} />
             <Stack.Screen name="ForgotPassword" component={ForgotPasswordScreen} options={{ animation: 'slide_from_right' }} />
+            <Stack.Screen name="PublicStudentRegistration" component={PublicStudentRegistrationScreen} options={{ animation: 'slide_from_right' }} />
+            <Stack.Screen name="PublicSchoolRegistration" component={PublicSchoolRegistrationScreen} options={{ animation: 'slide_from_right' }} />
           </>
         )}
       </Stack.Navigator>

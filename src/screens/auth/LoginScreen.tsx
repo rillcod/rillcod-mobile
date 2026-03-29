@@ -69,8 +69,7 @@ export default function LoginScreen({ navigation }: Props) {
             style={styles.brand}
           >
             <View style={styles.logoWrap}>
-              <LinearGradient colors={COLORS.gradPrimary} style={StyleSheet.absoluteFill} />
-              <Image source={require('../../../assets/icon.png')} style={styles.logo} resizeMode="contain" />
+              <Image source={require('../../../assets/rillcod-icon.png')} style={styles.logo} resizeMode="cover" />
             </View>
             <MotiText style={styles.brandName}>{t('app.name')}</MotiText>
             <Text style={styles.brandTagline}>{t('app.tagline')}</Text>
@@ -144,6 +143,30 @@ export default function LoginScreen({ navigation }: Props) {
                 </LinearGradient>
               </TouchableOpacity>
 
+              {/* Public registration links */}
+              <View style={styles.publicLinksWrap}>
+                <Text style={styles.publicLinksTitle}>New to Rillcod?</Text>
+                <View style={styles.publicLinksRow}>
+                  <TouchableOpacity
+                    style={styles.publicLinkBtn}
+                    onPress={() => (navigation as any).navigate('PublicStudentRegistration')}
+                    activeOpacity={0.8}
+                  >
+                    <Text style={styles.publicLinkEmoji}>🎓</Text>
+                    <Text style={styles.publicLinkLabel}>Student{'\n'}Enrolment</Text>
+                  </TouchableOpacity>
+                  <View style={styles.publicLinkSep} />
+                  <TouchableOpacity
+                    style={styles.publicLinkBtn}
+                    onPress={() => (navigation as any).navigate('PublicSchoolRegistration')}
+                    activeOpacity={0.8}
+                  >
+                    <Text style={styles.publicLinkEmoji}>🏫</Text>
+                    <Text style={styles.publicLinkLabel}>School{'\n'}Partnership</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+
             </View>
           </MotiView>
 
@@ -193,8 +216,8 @@ const styles = StyleSheet.create({
   scroll: { flexGrow: 1, padding: SPACING.xl, paddingTop: Platform.OS === 'ios' ? 80 : 60 },
   brand: { alignItems: 'center', marginBottom: SPACING['2xl'] },
   logoWrap: {
-    width: 72,
-    height: 72,
+    width: 80,
+    height: 80,
     borderRadius: RADIUS.xl,
     overflow: 'hidden',
     alignItems: 'center',
@@ -202,7 +225,7 @@ const styles = StyleSheet.create({
     marginBottom: SPACING.md,
     ...SHADOW.glow(COLORS.primaryGlow),
   },
-  logo: { width: 48, height: 48 },
+  logo: { width: 80, height: 80 },
   brandName: {
     fontFamily: FONT_FAMILY.display,
     fontSize: FONT_SIZE['2xl'],
@@ -298,5 +321,45 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     marginTop: SPACING.xl,
     opacity: 0.5,
+  },
+  publicLinksWrap: {
+    marginTop: SPACING.lg,
+    backgroundColor: COLORS.bgCard,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    borderRadius: RADIUS.lg,
+    padding: SPACING.md,
+  },
+  publicLinksTitle: {
+    fontFamily: FONT_FAMILY.bodySemi,
+    fontSize: FONT_SIZE.xs,
+    color: COLORS.textMuted,
+    textTransform: 'uppercase',
+    letterSpacing: 1,
+    textAlign: 'center',
+    marginBottom: SPACING.sm,
+  },
+  publicLinksRow: {
+    flexDirection: 'row',
+    alignItems: 'stretch',
+  },
+  publicLinkBtn: {
+    flex: 1,
+    alignItems: 'center',
+    gap: 6,
+    paddingVertical: SPACING.sm,
+  },
+  publicLinkEmoji: { fontSize: 28 },
+  publicLinkLabel: {
+    fontFamily: FONT_FAMILY.bodySemi,
+    fontSize: FONT_SIZE.xs,
+    color: COLORS.textSecondary,
+    textAlign: 'center',
+    lineHeight: 16,
+  },
+  publicLinkSep: {
+    width: 1,
+    backgroundColor: COLORS.border,
+    marginVertical: 4,
   },
 });

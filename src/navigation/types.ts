@@ -3,6 +3,8 @@ export type RootStackParamList = {
   Login: undefined;
   Register: undefined;
   ForgotPassword: undefined;
+  PublicStudentRegistration: undefined;
+  PublicSchoolRegistration: undefined;
   Main: undefined;
   // Detail screens (accessible from tabs)
   CourseDetail: { programId: string; title: string };
@@ -15,6 +17,57 @@ export type RootStackParamList = {
   ParentGrades: { studentId: string; studentName?: string };
   ParentInvoices: { studentId: string; studentName?: string };
   ParentCertificates: { studentId: string; studentName?: string };
+  // Admin / staff screens
+  Students: undefined;
+  Teachers: undefined;
+  Schools: undefined;
+  Approvals: undefined;
+  Attendance: undefined;
+  Payments: undefined;
+  Timetable: undefined;
+  Classes: undefined;
+  CBT: undefined;
+  Reports: undefined;
+  StudentDetail: { studentId: string };
+  TeacherDetail: { teacherId: string };
+  AddStudent: undefined;
+  AddSchool: undefined;
+  AddTeacher: undefined;
+  AddClass: undefined;
+  SchoolDetail: { schoolId: string };
+  StudentReport: { studentId: string };
+  BulkRegister: undefined;
+  ClassDetail: { classId: string };
+  CreateAssignment: undefined;
+  ReportBuilder: undefined;
+  AI: undefined;
+  Assignments: undefined;
+  Grades: undefined;
+  Certificates: undefined;
+  Invoices: undefined;
+  Messages: undefined;
+  Settings: undefined;
+  MyChildren: undefined;
+  Analytics: undefined;
+  // New screens
+  Courses: undefined;
+  Projects: undefined;
+  Library: undefined;
+  Leaderboard: undefined;
+  LiveSessions: undefined;
+  Engage: undefined;
+  Vault: undefined;
+  Missions: undefined;
+  Protocol: undefined;
+  ManageCertificates: undefined;
+  Newsletters: undefined;
+  CardBuilder: undefined;
+  Users: undefined;
+  EnrolStudents: undefined;
+  WipeStudents: undefined;
+  Programs: undefined;
+  Lessons: undefined;
+  SchoolOverview: undefined;
 };
 
 export type TabParamList = {

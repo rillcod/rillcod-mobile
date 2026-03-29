@@ -12,11 +12,11 @@ export const SPACING = {
 };
 
 export const RADIUS = {
-  sm:   8,
-  md:   12,
-  lg:   16,
-  xl:   20,
-  '2xl': 28,
+  sm:   0,
+  md:   0,
+  lg:   0,
+  xl:   0,
+  '2xl': 0,
   full: 9999,
 };
 

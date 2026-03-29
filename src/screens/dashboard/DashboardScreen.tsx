@@ -29,9 +29,9 @@ const ROLE_CONFIG = {
     actions: [
       { icon: '👥', label: 'Students', color: COLORS.admin },
       { icon: '🏫', label: 'Schools', color: '#5b21b6' },
+      { icon: '🤖', label: 'AI Hub', color: '#7c3aed' },
       { icon: '📊', label: 'Analytics', color: COLORS.info },
       { icon: '💳', label: 'Payments', color: COLORS.gold },
-      { icon: '📝', label: 'Approvals', color: COLORS.success },
       { icon: '🏆', label: 'Reports', color: COLORS.accent },
     ],
   },
@@ -41,11 +41,11 @@ const ROLE_CONFIG = {
     label: t('roles.teacher'),
     actions: [
       { icon: '📚', label: 'Classes', color: '#7c3aed' },
+      { icon: '🤖', label: 'AI Hub', color: '#7c3aed' },
       { icon: '📝', label: 'Assignments', color: COLORS.info },
       { icon: '📋', label: 'Attendance', color: COLORS.success },
       { icon: '🏆', label: 'Reports', color: COLORS.gold },
       { icon: '💬', label: 'Messages', color: COLORS.accent },
-      { icon: '🎯', label: 'Progress', color: COLORS.admin },
     ],
   },
   student: {
@@ -54,11 +54,11 @@ const ROLE_CONFIG = {
     label: t('roles.student'),
     actions: [
       { icon: '📚', label: 'Courses', color: COLORS.info },
+      { icon: '🤖', label: 'AI Hub', color: '#7c3aed' },
       { icon: '📝', label: 'Assignments', color: '#7c3aed' },
       { icon: '🏆', label: 'My Report', color: COLORS.gold },
-      { icon: '🎮', label: 'Playground', color: COLORS.accent },
+      { icon: '💻', label: 'Code Lab', color: COLORS.accent },
       { icon: '🎖️', label: 'Certificates', color: COLORS.success },
-      { icon: '💬', label: 'Messages', color: COLORS.admin },
     ],
   },
   school: {
@@ -72,16 +72,40 @@ const ROLE_CONFIG = {
       { icon: '📅', label: 'Timetable', color: COLORS.success },
     ],
   },
-};
+  parent: {
+    color: COLORS.primary,
+    glow: 'rgba(59,130,246,0.25)',
+    label: t('roles.parent', { defaultValue: 'Parent' }),
+    actions: [
+      { icon: '👨‍👩‍👦', label: 'My Children', color: COLORS.info },
+      { icon: '💳', label: 'Payments', color: COLORS.gold },
+      { icon: '🏆', label: 'Reports', color: COLORS.success },
+    ],
+  },
+} as const;
 
 // Map action labels to navigation screen names
 const ACTION_SCREENS: Record<string, string> = {
+  'Students': 'Students',
+  'Schools': 'Schools',
   'Analytics': 'Analytics',
+  'Payments': 'Payments',
+  'Approvals': 'Approvals',
+  'Reports': 'Reports',
+  'Classes': 'Classes',
   'Assignments': 'Assignments',
-  'My Report': 'Grades',
-  'Certificates': 'Certificates',
+  'Attendance': 'Attendance',
   'Messages': 'Messages',
-  'Invoices': 'Invoices',
+  'Progress': 'Reports',
+  'Overview': 'Analytics',
+  'Timetable': 'Timetable',
+  'My Report': 'Reports',
+  'Certificates': 'Certificates',
+  'Courses': 'Learn',
+  'Invoices': 'Payments',
+  'Playground': 'Learn',
+  'AI Hub': 'AI',
+  'Code Lab': 'AI',
   'Settings': 'Settings',
 };
 
@@ -94,7 +118,7 @@ export default function DashboardScreen({ navigation }: any) {
   const [loading, setLoading] = useState(true);
 
   const role = profile?.role ?? 'student';
-  const config = ROLE_CONFIG[role] || ROLE_CONFIG.student;
+  const config = ROLE_CONFIG[role as keyof typeof ROLE_CONFIG] || ROLE_CONFIG.student;
 
   const greetingKey = () => {
     const h = new Date().getHours();
@@ -266,7 +290,7 @@ export default function DashboardScreen({ navigation }: any) {
           </View>
 
           <View style={styles.actionsGrid}>
-            {config.actions.map((a, i) => (
+            {config.actions.map((a: any, i: number) => (
               <MotiView
                 key={i}
                 from={{ opacity: 0, scale: 0.85 }}
