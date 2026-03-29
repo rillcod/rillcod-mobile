@@ -273,9 +273,16 @@ export default function AppNavigator() {
   const [onboardingDone, setOnboardingDone] = useState<boolean | null>(null);
 
   useEffect(() => {
+    // Fallback: if AsyncStorage hangs, default to done after 3s
+    const t = setTimeout(() => setOnboardingDone(prev => prev ?? true), 3000);
     AsyncStorage.getItem(ONBOARDING_KEY).then(val => {
+      clearTimeout(t);
       setOnboardingDone(val === 'true');
+    }).catch(() => {
+      clearTimeout(t);
+      setOnboardingDone(true);
     });
+    return () => clearTimeout(t);
   }, []);
 
   if (loading || onboardingDone === null) {

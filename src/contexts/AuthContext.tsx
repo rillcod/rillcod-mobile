@@ -34,12 +34,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [loading, setLoading] = useState(true);
 
   const fetchProfile = async (userId: string) => {
-    const { data } = await supabase
-      .from('portal_users')
-      .select('id, email, full_name, role, school_id, school_name, profile_image_url, phone, bio, is_active')
-      .eq('id', userId)
-      .single();
-    if (data) setProfile(data as UserProfile);
+    try {
+      const { data } = await supabase
+        .from('portal_users')
+        .select('id, email, full_name, role, school_id, school_name, profile_image_url, phone, bio, is_active')
+        .eq('id', userId)
+        .single()
+        .abortSignal(AbortSignal.timeout(5000));
+      if (data) setProfile(data as UserProfile);
+    } catch {
+      // Network/timeout — profile stays null, loading will be cleared by caller
+    }
   };
 
   const refreshProfile = async () => {
@@ -47,21 +52,31 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   };
 
   useEffect(() => {
-    // onAuthStateChange fires INITIAL_SESSION immediately — no need for a separate
-    // getSession() call. Calling both simultaneously causes "Body already read" when
-    // the token refresh response is consumed by two concurrent requests.
+    // Safety timeout — if Supabase never fires or network is unavailable,
+    // release the loading gate after 6 seconds so the app is usable.
+    const safetyTimer = setTimeout(() => setLoading(false), 6000);
+
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, s) => {
+      clearTimeout(safetyTimer);
       setSession(s);
       setUser(s?.user ?? null);
       if (s?.user) {
-        fetchProfile(s.user.id).finally(() => setLoading(false));
+        // fetchProfile with its own 5s timeout so a slow DB never hangs the app
+        const profileTimer = setTimeout(() => setLoading(false), 5000);
+        fetchProfile(s.user.id).finally(() => {
+          clearTimeout(profileTimer);
+          setLoading(false);
+        });
       } else {
         setProfile(null);
         setLoading(false);
       }
     });
 
-    return () => subscription.unsubscribe();
+    return () => {
+      clearTimeout(safetyTimer);
+      subscription.unsubscribe();
+    };
   }, []);
 
   const signIn = async (email: string, password: string): Promise<{ error: string | null }> => {
