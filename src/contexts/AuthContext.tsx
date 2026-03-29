@@ -39,11 +39,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         .from('portal_users')
         .select('id, email, full_name, role, school_id, school_name, profile_image_url, phone, bio, is_active')
         .eq('id', userId)
-        .single()
-        .abortSignal(AbortSignal.timeout(5000));
+        .single();
       if (data) setProfile(data as UserProfile);
     } catch {
-      // Network/timeout — profile stays null, loading will be cleared by caller
+      // Network error — profile stays null, safety timeout handles loading state
     }
   };
 
