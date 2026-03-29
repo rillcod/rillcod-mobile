@@ -9,8 +9,8 @@ import { supabase } from '../../lib/supabase';
 import { COLORS } from '../../constants/colors';
 import { FONT_FAMILY, FONT_SIZE } from '../../constants/typography';
 import { SPACING, RADIUS } from '../../constants/spacing';
-import PremiumButton from '../../components/ui/PremiumButton';
-import PremiumInput from '../../components/ui/PremiumInput';
+import { PremiumButton } from '../../components/ui/PremiumButton';
+import { PremiumInput } from '../../components/ui/PremiumInput';
 
 export default function ForgotPasswordScreen({ navigation }: any) {
   const [email, setEmail] = useState('');

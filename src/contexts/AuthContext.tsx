@@ -6,7 +6,7 @@ interface UserProfile {
   id: string;
   email: string;
   full_name: string | null;
-  role: 'admin' | 'teacher' | 'student' | 'school';
+  role: 'admin' | 'teacher' | 'student' | 'school' | 'parent';
   school_id: string | null;
   school_name: string | null;
   profile_image_url: string | null;
