@@ -4,12 +4,12 @@
     "slug": "rillcod-academy",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "./assets/rillcod-icon-lg.png",
+    "icon": "./assets/logo.png",
     "userInterfaceStyle": "dark",
     "splash": {
-      "image": "./assets/rillcod-icon-lg.png",
+      "image": "./assets/logo.png",
       "resizeMode": "contain",
-      "backgroundColor": "#05050a"
+      "backgroundColor": "#ffffff"
     },
     "ios": {
       "supportsTablet": false,
@@ -18,10 +18,8 @@
     "android": {
       "package": "com.rillcod.academy",
       "adaptiveIcon": {
-        "backgroundColor": "#05050a",
-        "foregroundImage": "./assets/android-icon-foreground.png",
-        "backgroundImage": "./assets/android-icon-background.png",
-        "monochromeImage": "./assets/android-icon-monochrome.png"
+        "foregroundImage": "./assets/logo.png",
+        "backgroundColor": "#ffffff"
       },
       "predictiveBackGestureEnabled": false,
       "permissions": [
