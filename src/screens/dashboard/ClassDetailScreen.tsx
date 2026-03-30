@@ -13,7 +13,7 @@ import { COLORS } from '../../constants/colors';
 import { FONT_FAMILY, FONT_SIZE } from '../../constants/typography';
 import { SPACING, RADIUS } from '../../constants/spacing';
 
-type Tab = 'overview' | 'students' | 'assignments' | 'attendance' | 'grades';
+type Tab = 'overview' | 'students' | 'lessons' | 'assignments' | 'cbt' | 'attendance' | 'grades';
 
 interface ClassInfo {
   id: string;
@@ -24,6 +24,10 @@ interface ClassInfo {
   color: string | null;
   status: string;
   created_at: string;
+  start_date: string | null;
+  end_date: string | null;
+  program_id: string | null;
+  school_name: string | null;
   teacher_id: string | null;
   portal_users: { full_name: string; email: string } | null;
 }
@@ -61,6 +65,30 @@ interface GradeRow {
   submissions: number;
 }
 
+interface ClassSession {
+  id: string;
+  session_date: string;
+  start_time: string | null;
+  end_time: string | null;
+  topic: string | null;
+  notes: string | null;
+}
+
+interface Lesson {
+  id: string;
+  title: string;
+  lesson_type: string | null;
+  status: string | null;
+}
+
+interface CBTExam {
+  id: string;
+  title: string;
+  duration_minutes: number | null;
+  total_questions: number | null;
+  is_active: boolean;
+}
+
 export default function ClassDetailScreen({ navigation, route }: any) {
   const { classId } = route.params as { classId: string };
   const { profile } = useAuth();
@@ -71,6 +99,12 @@ export default function ClassDetailScreen({ navigation, route }: any) {
   const [attendance, setAttendance] = useState<Record<string, 'present' | 'absent' | 'late'>>({});
   const [savedAttendance, setSavedAttendance] = useState<AttendanceRecord[]>([]);
   const [grades, setGrades] = useState<GradeRow[]>([]);
+  const [sessions, setSessions] = useState<ClassSession[]>([]);
+  const [lessons, setLessons] = useState<Lesson[]>([]);
+  const [cbtExams, setCbtExams] = useState<CBTExam[]>([]);
+  const [sessionForm, setSessionForm] = useState({ topic: '', session_date: new Date().toISOString().slice(0, 10), start_time: '', notes: '' });
+  const [showAddSession, setShowAddSession] = useState(false);
+  const [savingSession, setSavingSession] = useState(false);
   const [activeTab, setActiveTab] = useState<Tab>('overview');
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -84,10 +118,10 @@ export default function ClassDetailScreen({ navigation, route }: any) {
   const isTeacher = profile?.role === 'teacher' || profile?.role === 'admin';
 
   const load = useCallback(async () => {
-    const [clsRes, stuRes, asnRes, attRes] = await Promise.all([
+    const [clsRes, stuRes, asnRes, attRes, sessRes] = await Promise.all([
       supabase
         .from('classes')
-        .select('*, portal_users:teacher_id(full_name, email)')
+        .select('id, name, description, schedule, max_students, color, status, created_at, start_date, end_date, program_id, school_name, teacher_id, portal_users:teacher_id(full_name, email)')
         .eq('id', classId)
         .single(),
       supabase
@@ -105,9 +139,17 @@ export default function ClassDetailScreen({ navigation, route }: any) {
         .select('id, student_id, date, status, student:student_id(full_name)')
         .eq('class_id', classId)
         .eq('date', attendanceDate),
+      supabase
+        .from('class_sessions')
+        .select('id, session_date, start_time, end_time, topic, notes')
+        .eq('class_id', classId)
+        .order('session_date', { ascending: false })
+        .limit(10),
     ]);
 
     if (clsRes.data) setClassInfo(clsRes.data as unknown as ClassInfo);
+
+    if (sessRes.data) setSessions(sessRes.data as ClassSession[]);
 
     if (stuRes.data) {
       const flat = (stuRes.data as any[]).map(r => r.portal_users).filter(Boolean);
@@ -161,12 +203,49 @@ export default function ClassDetailScreen({ navigation, route }: any) {
       setAttendance(map);
     }
 
+    // Fetch lessons and CBT if we have a program_id
+    const programId = (clsRes.data as any)?.program_id;
+    if (programId) {
+      const [lesRes, cbtRes] = await Promise.all([
+        supabase
+          .from('lessons')
+          .select('id, title, lesson_type, status')
+          .eq('program_id', programId)
+          .order('created_at', { ascending: false }),
+        supabase
+          .from('cbt_exams')
+          .select('id, title, duration_minutes, total_questions, is_active')
+          .eq('program_id', programId)
+          .order('created_at', { ascending: false }),
+      ]);
+      if (lesRes.data) setLessons(lesRes.data as Lesson[]);
+      if (cbtRes.data) setCbtExams(cbtRes.data as CBTExam[]);
+    }
+
     setLoading(false);
   }, [classId, attendanceDate]);
 
   useEffect(() => { load(); }, [load]);
 
   const onRefresh = async () => { setRefreshing(true); await load(); setRefreshing(false); };
+
+  // ── Session ────────────────────────────────────────────────────────────────
+  const saveSession = async () => {
+    if (!sessionForm.topic.trim()) { Alert.alert('Topic required'); return; }
+    setSavingSession(true);
+    const { error } = await supabase.from('class_sessions').insert({
+      class_id: classId,
+      topic: sessionForm.topic.trim(),
+      session_date: sessionForm.session_date,
+      start_time: sessionForm.start_time || null,
+      notes: sessionForm.notes || null,
+    });
+    setSavingSession(false);
+    if (error) { Alert.alert('Error', error.message); return; }
+    setShowAddSession(false);
+    setSessionForm({ topic: '', session_date: new Date().toISOString().slice(0, 10), start_time: '', notes: '' });
+    load();
+  };
 
   // ── Attendance ─────────────────────────────────────────────────────────────
   const markAttendance = (studentId: string, status: 'present' | 'absent' | 'late') => {
@@ -281,13 +360,15 @@ export default function ClassDetailScreen({ navigation, route }: any) {
           : undefined}
       />
 
-      {/* Tab bar */}
+      {/* Tab bar — horizontal scroll for 7 tabs */}
       <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.tabBar}>
         {([
-          { key: 'overview', emoji: '📋', label: 'Overview' },
-          { key: 'students', emoji: '👥', label: `Students (${students.length})` },
-          { key: 'assignments', emoji: '📝', label: `Work (${assignments.length})` },
-          { key: 'attendance', emoji: '📅', label: 'Attendance' },
+          { key: 'overview', emoji: '📋', label: 'Home' },
+          { key: 'students', emoji: '👥', label: 'Students' },
+          { key: 'lessons', emoji: '📖', label: 'Lessons' },
+          { key: 'assignments', emoji: '📝', label: 'Work' },
+          { key: 'cbt', emoji: '🎯', label: 'CBT' },
+          { key: 'attendance', emoji: '📅', label: 'Attend' },
           { key: 'grades', emoji: '📊', label: 'Grades' },
         ] as { key: Tab; emoji: string; label: string }[]).map(t => (
           <TouchableOpacity
@@ -348,6 +429,20 @@ export default function ClassDetailScreen({ navigation, route }: any) {
                   <Text style={styles.infoValue}>{classInfo.schedule}</Text>
                 </View>
               ) : null}
+              {classInfo.start_date ? (
+                <View style={[styles.infoRow, styles.infoRowBorder]}>
+                  <Text style={styles.infoEmoji}>🗓</Text>
+                  <Text style={styles.infoLabel}>Start Date</Text>
+                  <Text style={styles.infoValue}>{new Date(classInfo.start_date).toLocaleDateString('en-GB')}</Text>
+                </View>
+              ) : null}
+              {classInfo.end_date ? (
+                <View style={[styles.infoRow, styles.infoRowBorder]}>
+                  <Text style={styles.infoEmoji}>🏁</Text>
+                  <Text style={styles.infoLabel}>End Date</Text>
+                  <Text style={styles.infoValue}>{new Date(classInfo.end_date).toLocaleDateString('en-GB')}</Text>
+                </View>
+              ) : null}
               <View style={[styles.infoRow, styles.infoRowBorder]}>
                 <Text style={styles.infoEmoji}>🔖</Text>
                 <Text style={styles.infoLabel}>Status</Text>
@@ -362,9 +457,74 @@ export default function ClassDetailScreen({ navigation, route }: any) {
               </View>
             </View>
 
+            {/* Sessions section */}
+            <View style={styles.sectionHeader}>
+              <Text style={styles.sectionTitle}>📅 Sessions</Text>
+              {isTeacher && (
+                <TouchableOpacity onPress={() => setShowAddSession(v => !v)} style={styles.addSessionBtn}>
+                  <Text style={styles.addSessionBtnText}>+ Add</Text>
+                </TouchableOpacity>
+              )}
+            </View>
+
+            {/* Add session form (collapsible) */}
+            {showAddSession && isTeacher && (
+              <View style={styles.sessionForm}>
+                <TextInput
+                  style={styles.sessionInput}
+                  value={sessionForm.topic}
+                  onChangeText={v => setSessionForm(f => ({ ...f, topic: v }))}
+                  placeholder="Session topic *"
+                  placeholderTextColor={COLORS.textMuted}
+                />
+                <TextInput
+                  style={styles.sessionInput}
+                  value={sessionForm.session_date}
+                  onChangeText={v => setSessionForm(f => ({ ...f, session_date: v }))}
+                  placeholder="Date (YYYY-MM-DD)"
+                  placeholderTextColor={COLORS.textMuted}
+                />
+                <TextInput
+                  style={styles.sessionInput}
+                  value={sessionForm.start_time}
+                  onChangeText={v => setSessionForm(f => ({ ...f, start_time: v }))}
+                  placeholder="Start time e.g. 10:00"
+                  placeholderTextColor={COLORS.textMuted}
+                />
+                <TextInput
+                  style={[styles.sessionInput, { minHeight: 60, textAlignVertical: 'top' }]}
+                  value={sessionForm.notes}
+                  onChangeText={v => setSessionForm(f => ({ ...f, notes: v }))}
+                  placeholder="Notes (optional)"
+                  placeholderTextColor={COLORS.textMuted}
+                  multiline
+                />
+                <TouchableOpacity onPress={saveSession} disabled={savingSession} style={[styles.saveSessionBtn, savingSession && { opacity: 0.5 }]}>
+                  {savingSession ? <ActivityIndicator color="#fff" size="small" /> : <Text style={styles.saveSessionBtnText}>Save Session</Text>}
+                </TouchableOpacity>
+              </View>
+            )}
+
+            {sessions.length === 0 ? (
+              <Text style={styles.noSessionText}>No sessions recorded yet.</Text>
+            ) : (
+              sessions.slice(0, 5).map((s) => (
+                <View key={s.id} style={styles.sessionRow}>
+                  <View style={styles.sessionDot} />
+                  <View style={{ flex: 1, gap: 2 }}>
+                    <Text style={styles.sessionTopic}>{s.topic || 'Session'}</Text>
+                    <Text style={styles.sessionDate}>
+                      {s.session_date}{s.start_time ? ` · ${s.start_time}` : ''}
+                    </Text>
+                    {s.notes ? <Text style={styles.sessionNotes} numberOfLines={2}>{s.notes}</Text> : null}
+                  </View>
+                </View>
+              ))
+            )}
+
             {/* Quick actions */}
             {isTeacher && (
-              <View style={styles.quickRow}>
+              <View style={[styles.quickRow, { marginTop: SPACING.md }]}>
                 <TouchableOpacity style={[styles.quickBtn, { borderColor: accentColor + '50' }]}
                   onPress={() => { setActiveTab('assignments'); navigation.navigate('CreateAssignment', { classId, className: classInfo.name }); }}>
                   <Text style={styles.quickEmoji}>📝</Text>
@@ -476,6 +636,48 @@ export default function ClassDetailScreen({ navigation, route }: any) {
           </MotiView>
         )}
 
+        {/* ── LESSONS ───────────────────────────────────────────────────────── */}
+        {activeTab === 'lessons' && (
+          <MotiView from={{ opacity: 0 }} animate={{ opacity: 1 }} style={styles.pad}>
+            {lessons.length === 0 ? (
+              <View style={styles.emptyWrap}>
+                <Text style={styles.emptyEmoji}>📖</Text>
+                <Text style={styles.emptyText}>No lessons linked to this class program.</Text>
+                {isTeacher && (
+                  <TouchableOpacity onPress={() => navigation.navigate('Lessons')} style={styles.emptyBtn}>
+                    <Text style={styles.emptyBtnText}>Manage Lessons →</Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+            ) : (
+              lessons.map((lesson, i) => (
+                <MotiView key={lesson.id} from={{ opacity: 0, translateY: 6 }} animate={{ opacity: 1, translateY: 0 }} transition={{ delay: i * 30 }}>
+                  <View style={styles.lessonCard}>
+                    <View style={styles.lessonIcon}>
+                      <Text style={{ fontSize: 18 }}>
+                        {lesson.lesson_type === 'video' ? '🎥' : lesson.lesson_type === 'quiz' ? '📝' : lesson.lesson_type === 'project' ? '🔨' : '📖'}
+                      </Text>
+                    </View>
+                    <View style={{ flex: 1, gap: 3 }}>
+                      <Text style={styles.lessonTitle}>{lesson.title}</Text>
+                      <View style={{ flexDirection: 'row', gap: 6, flexWrap: 'wrap' }}>
+                        {lesson.lesson_type && (
+                          <View style={styles.typeBadge}><Text style={styles.typeBadgeText}>{lesson.lesson_type}</Text></View>
+                        )}
+                        {lesson.status && (
+                          <View style={[styles.statusBadge, { backgroundColor: lesson.status === 'published' ? COLORS.success + '20' : COLORS.warning + '20' }]}>
+                            <Text style={[styles.statusBadgeText, { color: lesson.status === 'published' ? COLORS.success : COLORS.warning }]}>{lesson.status}</Text>
+                          </View>
+                        )}
+                      </View>
+                    </View>
+                  </View>
+                </MotiView>
+              ))
+            )}
+          </MotiView>
+        )}
+
         {/* ── ASSIGNMENTS ───────────────────────────────────────────────────── */}
         {activeTab === 'assignments' && (
           <MotiView from={{ opacity: 0 }} animate={{ opacity: 1 }} style={styles.pad}>
@@ -533,6 +735,47 @@ export default function ClassDetailScreen({ navigation, route }: any) {
           </MotiView>
         )}
 
+        {/* ── CBT ───────────────────────────────────────────────────────────── */}
+        {activeTab === 'cbt' && (
+          <MotiView from={{ opacity: 0 }} animate={{ opacity: 1 }} style={styles.pad}>
+            {cbtExams.length === 0 ? (
+              <View style={styles.emptyWrap}>
+                <Text style={styles.emptyEmoji}>🎯</Text>
+                <Text style={styles.emptyText}>No CBT exams linked to this class program.</Text>
+                {isTeacher && (
+                  <TouchableOpacity onPress={() => navigation.navigate('CBT')} style={styles.emptyBtn}>
+                    <Text style={styles.emptyBtnText}>Go to CBT Centre →</Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+            ) : (
+              cbtExams.map((exam, i) => (
+                <MotiView key={exam.id} from={{ opacity: 0, translateY: 6 }} animate={{ opacity: 1, translateY: 0 }} transition={{ delay: i * 30 }}>
+                  <TouchableOpacity style={styles.cbtCard} activeOpacity={0.8} onPress={() => navigation.navigate('CBT')}>
+                    <LinearGradient colors={[exam.is_active ? COLORS.success + '08' : COLORS.border + '08', 'transparent']} style={StyleSheet.absoluteFill} />
+                    <View style={{ flex: 1, gap: 4 }}>
+                      <Text style={styles.cbtTitle}>{exam.title}</Text>
+                      <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>
+                        {exam.total_questions != null && (
+                          <Text style={styles.cbtMeta}>📋 {exam.total_questions} questions</Text>
+                        )}
+                        {exam.duration_minutes != null && (
+                          <Text style={styles.cbtMeta}>⏱ {exam.duration_minutes} min</Text>
+                        )}
+                      </View>
+                    </View>
+                    <View style={[styles.activeBadge, { backgroundColor: exam.is_active ? COLORS.success + '20' : COLORS.border }]}>
+                      <Text style={[styles.activeBadgeText, { color: exam.is_active ? COLORS.success : COLORS.textMuted }]}>
+                        {exam.is_active ? 'Active' : 'Inactive'}
+                      </Text>
+                    </View>
+                  </TouchableOpacity>
+                </MotiView>
+              ))
+            )}
+          </MotiView>
+        )}
+
         {/* ── ATTENDANCE ────────────────────────────────────────────────────── */}
         {activeTab === 'attendance' && (
           <MotiView from={{ opacity: 0 }} animate={{ opacity: 1 }} style={styles.pad}>
@@ -569,7 +812,7 @@ export default function ClassDetailScreen({ navigation, route }: any) {
               </View>
             ) : (
               <>
-                {students.map((s, i) => {
+                {students.map((s) => {
                   const status = attendance[s.id] ?? 'absent';
                   return (
                     <View key={s.id} style={styles.attRow}>
@@ -734,6 +977,50 @@ const styles = StyleSheet.create({
   removeBtn: { width: 28, height: 28, borderRadius: 14, backgroundColor: COLORS.error + '15', alignItems: 'center', justifyContent: 'center' },
   removeBtnText: { fontSize: 12, color: COLORS.error },
 
+  // Lessons
+  lessonCard: {
+    flexDirection: 'row', alignItems: 'center', gap: SPACING.md,
+    borderWidth: 1, borderColor: COLORS.border, borderRadius: RADIUS.lg,
+    padding: SPACING.md, marginBottom: SPACING.sm,
+  },
+  lessonIcon: { width: 40, height: 40, borderRadius: RADIUS.md, backgroundColor: COLORS.bgCard, alignItems: 'center', justifyContent: 'center', flexShrink: 0 },
+  lessonTitle: { fontFamily: FONT_FAMILY.bodySemi, fontSize: FONT_SIZE.sm, color: COLORS.textPrimary },
+  typeBadge: { paddingHorizontal: 8, paddingVertical: 2, borderRadius: RADIUS.sm, backgroundColor: COLORS.bgCard, borderWidth: 1, borderColor: COLORS.border },
+  typeBadgeText: { fontFamily: FONT_FAMILY.body, fontSize: FONT_SIZE.xs, color: COLORS.textMuted, textTransform: 'capitalize' },
+  statusBadge: { paddingHorizontal: 8, paddingVertical: 2, borderRadius: RADIUS.sm },
+  statusBadgeText: { fontFamily: FONT_FAMILY.bodySemi, fontSize: FONT_SIZE.xs, textTransform: 'capitalize' },
+
+  // CBT
+  cbtCard: {
+    flexDirection: 'row', alignItems: 'center', gap: SPACING.md,
+    borderWidth: 1, borderColor: COLORS.border, borderRadius: RADIUS.lg,
+    padding: SPACING.md, marginBottom: SPACING.sm, overflow: 'hidden',
+  },
+  cbtTitle: { fontFamily: FONT_FAMILY.bodySemi, fontSize: FONT_SIZE.sm, color: COLORS.textPrimary },
+  cbtMeta: { fontFamily: FONT_FAMILY.body, fontSize: FONT_SIZE.xs, color: COLORS.textMuted },
+  activeBadge: { paddingHorizontal: 10, paddingVertical: 4, borderRadius: RADIUS.md },
+  activeBadgeText: { fontFamily: FONT_FAMILY.bodySemi, fontSize: FONT_SIZE.xs },
+
+  // Sessions
+  sectionHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: SPACING.sm, marginTop: SPACING.xs },
+  sectionTitle: { fontFamily: FONT_FAMILY.bodySemi, fontSize: FONT_SIZE.sm, color: COLORS.textSecondary },
+  addSessionBtn: { paddingHorizontal: SPACING.md, paddingVertical: 5, borderRadius: RADIUS.md, backgroundColor: COLORS.primary + '20', borderWidth: 1, borderColor: COLORS.primary + '40' },
+  addSessionBtnText: { fontFamily: FONT_FAMILY.bodySemi, fontSize: FONT_SIZE.xs, color: COLORS.primary },
+  sessionForm: { borderWidth: 1, borderColor: COLORS.border, borderRadius: RADIUS.lg, padding: SPACING.md, gap: SPACING.sm, marginBottom: SPACING.md, backgroundColor: COLORS.bgCard },
+  sessionInput: {
+    backgroundColor: COLORS.bg, borderWidth: 1, borderColor: COLORS.border,
+    borderRadius: RADIUS.md, paddingHorizontal: SPACING.md, paddingVertical: 9,
+    fontFamily: FONT_FAMILY.body, fontSize: FONT_SIZE.sm, color: COLORS.textPrimary,
+  },
+  saveSessionBtn: { backgroundColor: COLORS.primary, paddingVertical: 12, borderRadius: RADIUS.md, alignItems: 'center', marginTop: 4 },
+  saveSessionBtnText: { fontFamily: FONT_FAMILY.bodySemi, fontSize: FONT_SIZE.sm, color: '#fff' },
+  sessionRow: { flexDirection: 'row', gap: SPACING.sm, paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: COLORS.border },
+  sessionDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: COLORS.primary, marginTop: 5, flexShrink: 0 },
+  sessionTopic: { fontFamily: FONT_FAMILY.bodySemi, fontSize: FONT_SIZE.sm, color: COLORS.textPrimary },
+  sessionDate: { fontFamily: FONT_FAMILY.body, fontSize: FONT_SIZE.xs, color: COLORS.textMuted },
+  sessionNotes: { fontFamily: FONT_FAMILY.body, fontSize: FONT_SIZE.xs, color: COLORS.textSecondary, lineHeight: 16 },
+  noSessionText: { fontFamily: FONT_FAMILY.body, fontSize: FONT_SIZE.sm, color: COLORS.textMuted, textAlign: 'center', paddingVertical: SPACING.md },
+
   newAsnBtn: { borderWidth: 1, borderRadius: RADIUS.md, paddingVertical: 12, alignItems: 'center', marginBottom: SPACING.md },
   newAsnText: { fontFamily: FONT_FAMILY.bodySemi, fontSize: FONT_SIZE.sm },
 
@@ -787,4 +1074,6 @@ const styles = StyleSheet.create({
   emptyWrap: { alignItems: 'center', paddingVertical: 50, gap: 12 },
   emptyEmoji: { fontSize: 36 },
   emptyText: { fontFamily: FONT_FAMILY.body, fontSize: FONT_SIZE.sm, color: COLORS.textMuted },
+  emptyBtn: { paddingHorizontal: SPACING.lg, paddingVertical: 10, borderRadius: RADIUS.md, backgroundColor: COLORS.primary + '20', borderWidth: 1, borderColor: COLORS.primary + '40' },
+  emptyBtnText: { fontFamily: FONT_FAMILY.bodySemi, fontSize: FONT_SIZE.sm, color: COLORS.primary },
 });
