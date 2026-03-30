@@ -1,11 +1,12 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity,
-  Switch, Alert, Linking,
+  Switch, Alert, Linking, TextInput, ActivityIndicator,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { MotiView } from 'moti';
 import { useAuth } from '../../contexts/AuthContext';
+import { supabase } from '../../lib/supabase';
 import { COLORS } from '../../constants/colors';
 import { FONT_FAMILY, FONT_SIZE } from '../../constants/typography';
 import { SPACING, RADIUS } from '../../constants/spacing';
@@ -30,6 +31,38 @@ export default function SettingsScreen({ navigation }: any) {
   const [pushEnabled, setPushEnabled] = useState(true);
   const [emailEnabled, setEmailEnabled] = useState(true);
   const [darkMode, setDarkMode] = useState(true);
+
+  // AI config (admin only)
+  const [aiKey, setAiKey] = useState('');
+  const [aiKeyMasked, setAiKeyMasked] = useState(true);
+  const [aiKeySaving, setAiKeySaving] = useState(false);
+  const [aiKeyLoaded, setAiKeyLoaded] = useState(false);
+  const isStaff = profile?.role === 'admin' || profile?.role === 'teacher';
+
+  useEffect(() => {
+    if (!isStaff) return;
+    supabase
+      .from('app_settings')
+      .select('value')
+      .eq('key', 'openrouter_api_key')
+      .single()
+      .then(({ data }) => {
+        setAiKey(data?.value ?? '');
+        setAiKeyLoaded(true);
+      });
+  }, [isAdmin]);
+
+  const saveAiKey = async () => {
+    const key = aiKey.trim();
+    if (!key) { Alert.alert('Empty key', 'Please enter your OpenRouter API key.'); return; }
+    setAiKeySaving(true);
+    const { error } = await supabase
+      .from('app_settings')
+      .upsert({ key: 'openrouter_api_key', value: key }, { onConflict: 'key' });
+    setAiKeySaving(false);
+    if (error) Alert.alert('Error', error.message);
+    else Alert.alert('Saved', 'AI API key updated successfully.');
+  };
 
   const sections: SettingSection[] = [
     {
@@ -225,6 +258,58 @@ export default function SettingsScreen({ navigation }: any) {
           </MotiView>
         ))}
 
+        {/* AI Configuration — admin & teacher */}
+        {isStaff && (
+          <MotiView
+            from={{ opacity: 0, translateY: 10 }}
+            animate={{ opacity: 1, translateY: 0 }}
+            transition={{ delay: 400 }}
+            style={styles.section}
+          >
+            <Text style={styles.sectionTitle}>AI Configuration</Text>
+            <View style={styles.sectionCard}>
+              <View style={{ padding: SPACING.md, gap: SPACING.sm }}>
+                <Text style={styles.rowLabel}>OpenRouter API Key</Text>
+                <Text style={[styles.rowDesc, { marginBottom: 4 }]}>
+                  Required to power the AI Tutor, Content Creator, and Code Assistant.{'\n'}
+                  Get your free key at openrouter.ai
+                </Text>
+                {!aiKeyLoaded ? (
+                  <ActivityIndicator color={COLORS.primaryLight} size="small" />
+                ) : (
+                  <>
+                    <View style={styles.aiKeyRow}>
+                      <TextInput
+                        style={styles.aiKeyInput}
+                        value={aiKey}
+                        onChangeText={setAiKey}
+                        placeholder="sk-or-v1-..."
+                        placeholderTextColor={COLORS.textMuted}
+                        secureTextEntry={aiKeyMasked}
+                        autoCapitalize="none"
+                        autoCorrect={false}
+                      />
+                      <TouchableOpacity onPress={() => setAiKeyMasked(v => !v)} style={styles.aiKeyToggle}>
+                        <Text style={{ color: COLORS.textMuted, fontSize: 18 }}>{aiKeyMasked ? '👁' : '🙈'}</Text>
+                      </TouchableOpacity>
+                    </View>
+                    <TouchableOpacity
+                      style={[styles.saveKeyBtn, aiKeySaving && { opacity: 0.6 }]}
+                      onPress={saveAiKey}
+                      disabled={aiKeySaving}
+                    >
+                      {aiKeySaving
+                        ? <ActivityIndicator color="#fff" size="small" />
+                        : <Text style={styles.saveKeyText}>Save API Key</Text>
+                      }
+                    </TouchableOpacity>
+                  </>
+                )}
+              </View>
+            </View>
+          </MotiView>
+        )}
+
         <Text style={styles.version}>Rillcod Academy v1.0.0 · © 2025 Rillcod</Text>
       </ScrollView>
     </SafeAreaView>
@@ -352,5 +437,37 @@ const styles = StyleSheet.create({
     color: COLORS.textMuted,
     marginTop: SPACING.lg,
     paddingBottom: SPACING.xl,
+  },
+  aiKeyRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255,255,255,0.05)',
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    borderRadius: RADIUS.md,
+    overflow: 'hidden',
+  },
+  aiKeyInput: {
+    flex: 1,
+    paddingHorizontal: SPACING.md,
+    paddingVertical: 10,
+    fontFamily: FONT_FAMILY.body,
+    fontSize: FONT_SIZE.sm,
+    color: COLORS.text,
+  },
+  aiKeyToggle: {
+    paddingHorizontal: SPACING.sm,
+    paddingVertical: 10,
+  },
+  saveKeyBtn: {
+    backgroundColor: COLORS.primary,
+    borderRadius: RADIUS.md,
+    paddingVertical: 11,
+    alignItems: 'center',
+  },
+  saveKeyText: {
+    fontFamily: FONT_FAMILY.bodySemi,
+    fontSize: FONT_SIZE.sm,
+    color: '#fff',
   },
 });
