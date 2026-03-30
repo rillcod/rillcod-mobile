@@ -28,6 +28,10 @@ interface SessionConfig {
   next_module: string;
   course_duration: string;
   learning_milestones: string[];
+  school_section: string;
+  fee_label: string;
+  fee_amount: string;
+  show_payment_notice: boolean;
 }
 
 interface StudentForm {
@@ -227,6 +231,10 @@ export default function ReportBuilderScreen({ navigation, route }: any) {
     next_module: '',
     course_duration: 'Termly',
     learning_milestones: [],
+    school_section: '',
+    fee_label: '',
+    fee_amount: '',
+    show_payment_notice: false,
   });
 
   const [students, setStudents] = useState<StudentRow[]>([]);
@@ -318,6 +326,10 @@ export default function ReportBuilderScreen({ navigation, route }: any) {
           : typeof data.learning_milestones === 'string'
             ? data.learning_milestones.split('\n').filter(Boolean)
             : s.learning_milestones,
+        school_section: data.school_section ?? s.school_section,
+        fee_label: data.fee_label ?? s.fee_label,
+        fee_amount: data.fee_amount != null ? String(data.fee_amount) : s.fee_amount,
+        show_payment_notice: data.show_payment_notice ?? s.show_payment_notice,
       }));
       setForm({
         theory_score: String(data.theory_score ?? '0'),
@@ -369,6 +381,10 @@ export default function ReportBuilderScreen({ navigation, route }: any) {
       next_module: sessionConfig.next_module,
       course_duration: sessionConfig.course_duration,
       learning_milestones: sessionConfig.learning_milestones,
+      school_section: sessionConfig.school_section,
+      fee_label: sessionConfig.fee_label || null,
+      fee_amount: sessionConfig.fee_amount ? parseFloat(sessionConfig.fee_amount) || null : null,
+      show_payment_notice: sessionConfig.show_payment_notice,
       theory_score: parseFloat(form.theory_score) || 0,
       practical_score: parseFloat(form.practical_score) || 0,
       attendance_score: parseFloat(form.attendance_score) || 0,
@@ -450,6 +466,24 @@ export default function ReportBuilderScreen({ navigation, route }: any) {
               <Field label="Class / Section" value={sessionConfig.section_class} onChangeText={setSession('section_class')} placeholder="e.g. JSS 2A, Basic 5" />
               <Field label="Current Module" value={sessionConfig.current_module} onChangeText={setSession('current_module')} placeholder="Topic covered this term" />
               <Field label="Next Module" value={sessionConfig.next_module} onChangeText={setSession('next_module')} placeholder="Next term's topic" />
+            </SectionBox>
+
+            <SectionBox icon="🏫" title="School & Payment (Optional)">
+              <Picker label="School Section" options={['', 'Primary', 'Secondary', 'Unified']} value={sessionConfig.school_section} onChange={setSession('school_section')} />
+              <Field label="Fee Label" value={sessionConfig.fee_label} onChangeText={setSession('fee_label')} placeholder="e.g. Coding Club Fee, Extra-Curricular Fee" />
+              <Field label="Fee Amount" value={sessionConfig.fee_amount} onChangeText={setSession('fee_amount')} placeholder="e.g. 5000 (leave blank to omit)" keyboardType="numeric" />
+              <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 4 }}>
+                <View style={{ flex: 1 }}>
+                  <Text style={f.label}>Payment Notice</Text>
+                  <Text style={[f.label, { fontSize: 10, textTransform: 'none', letterSpacing: 0 }]}>Print Rillcod payment details on the report</Text>
+                </View>
+                <Switch
+                  value={sessionConfig.show_payment_notice}
+                  onValueChange={setSession('show_payment_notice')}
+                  trackColor={{ false: COLORS.border, true: COLORS.accent + '60' }}
+                  thumbColor={sessionConfig.show_payment_notice ? COLORS.accent : COLORS.textMuted}
+                />
+              </View>
             </SectionBox>
 
             <SectionBox icon="🏆" title="Learning Milestones">
@@ -704,6 +738,73 @@ export default function ReportBuilderScreen({ navigation, route }: any) {
             </TouchableOpacity>
           </View>
 
+          {/* Report Card Preview */}
+          <View style={styles.previewCard}>
+            <LinearGradient colors={[COLORS.accent + '18', COLORS.bgCard]} style={StyleSheet.absoluteFill} />
+            <View style={styles.previewCardHeader}>
+              <Text style={styles.previewCardTitle}>📄 Report Preview</Text>
+              <View style={[styles.previewCardBadge, { backgroundColor: gradeCol + '25' }]}>
+                <Text style={[styles.previewCardGrade, { color: gradeCol }]}>{overallGrade} · {overallScore ?? '—'}%</Text>
+              </View>
+            </View>
+            <View style={styles.previewDivider} />
+            <Text style={styles.previewStudentName}>{selectedStudent.full_name}</Text>
+            <Text style={styles.previewMeta}>{sessionConfig.course_name || '—'} · {sessionConfig.report_term}</Text>
+            {sessionConfig.report_period ? <Text style={styles.previewMeta}>{sessionConfig.report_period}</Text> : null}
+            {sessionConfig.school_name ? <Text style={styles.previewMeta}>🏫 {sessionConfig.school_name}{sessionConfig.section_class ? ` · ${sessionConfig.section_class}` : ''}</Text> : null}
+            {sessionConfig.instructor_name ? <Text style={styles.previewMeta}>👩‍🏫 {sessionConfig.instructor_name}</Text> : null}
+            <View style={styles.previewDivider} />
+            {/* Score summary */}
+            {[
+              { label: 'Theory', val: form.theory_score, color: COLORS.info },
+              { label: 'Practical', val: form.practical_score, color: '#7c3aed' },
+              { label: 'Attendance', val: form.attendance_score, color: COLORS.success },
+              { label: 'Participation', val: form.participation_score, color: COLORS.warning },
+            ].map(s => {
+              const n = parseFloat(s.val);
+              if (isNaN(n)) return null;
+              return (
+                <View key={s.label} style={styles.previewScoreRow}>
+                  <Text style={styles.previewScoreLabel}>{s.label}</Text>
+                  <View style={styles.previewScoreTrack}>
+                    <View style={[styles.previewScoreFill, { width: `${Math.min(n, 100)}%` as any, backgroundColor: s.color }]} />
+                  </View>
+                  <Text style={[styles.previewScoreVal, { color: s.color }]}>{n}%</Text>
+                </View>
+              );
+            })}
+            <View style={styles.previewDivider} />
+            {/* Ratings */}
+            <View style={{ flexDirection: 'row', gap: 6, flexWrap: 'wrap' }}>
+              {form.participation_grade ? <View style={styles.previewChip}><Text style={styles.previewChipText}>💬 {form.participation_grade}</Text></View> : null}
+              {form.projects_grade ? <View style={styles.previewChip}><Text style={styles.previewChipText}>🔨 {form.projects_grade}</Text></View> : null}
+              {form.homework_grade ? <View style={styles.previewChip}><Text style={styles.previewChipText}>📖 {form.homework_grade}</Text></View> : null}
+              {form.proficiency_level ? <View style={[styles.previewChip, { backgroundColor: COLORS.accent + '18' }]}><Text style={[styles.previewChipText, { color: COLORS.accent }]}>⚡ {form.proficiency_level}</Text></View> : null}
+            </View>
+            {/* Notes */}
+            {form.key_strengths ? (
+              <View style={styles.previewNotes}>
+                <Text style={styles.previewNotesLabel}>💪 Key Strengths</Text>
+                <Text style={styles.previewNotesText}>{form.key_strengths}</Text>
+              </View>
+            ) : null}
+            {form.areas_for_growth ? (
+              <View style={styles.previewNotes}>
+                <Text style={styles.previewNotesLabel}>🎯 Areas for Growth</Text>
+                <Text style={styles.previewNotesText}>{form.areas_for_growth}</Text>
+              </View>
+            ) : null}
+            {/* Milestones */}
+            {sessionConfig.learning_milestones.length > 0 && (
+              <View style={styles.previewNotes}>
+                <Text style={styles.previewNotesLabel}>🏆 Learning Milestones</Text>
+                {sessionConfig.learning_milestones.map((m, i) => (
+                  <Text key={i} style={styles.previewNotesText}>• {m}</Text>
+                ))}
+              </View>
+            )}
+          </View>
+
           <View style={{ height: 60 }} />
         </MotiView>
       </ScrollView>
@@ -859,4 +960,26 @@ const styles = StyleSheet.create({
   emptyWrap: { alignItems: 'center', paddingVertical: 60, gap: 12 },
   emptyEmoji: { fontSize: 40 },
   emptyText: { fontFamily: FONT_FAMILY.body, fontSize: FONT_SIZE.sm, color: COLORS.textMuted },
+
+  previewCard: {
+    borderWidth: 1, borderColor: COLORS.accent + '30', borderRadius: RADIUS.xl,
+    padding: SPACING.lg, marginBottom: SPACING.md, overflow: 'hidden', gap: SPACING.sm,
+  },
+  previewCardHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  previewCardTitle: { fontFamily: FONT_FAMILY.display, fontSize: FONT_SIZE.sm, color: COLORS.textPrimary },
+  previewCardBadge: { paddingHorizontal: 12, paddingVertical: 4, borderRadius: RADIUS.full },
+  previewCardGrade: { fontFamily: FONT_FAMILY.display, fontSize: FONT_SIZE.base },
+  previewDivider: { height: 1, backgroundColor: COLORS.border, marginVertical: SPACING.xs },
+  previewStudentName: { fontFamily: FONT_FAMILY.display, fontSize: FONT_SIZE.lg, color: COLORS.textPrimary },
+  previewMeta: { fontFamily: FONT_FAMILY.body, fontSize: FONT_SIZE.xs, color: COLORS.textSecondary },
+  previewScoreRow: { flexDirection: 'row', alignItems: 'center', gap: SPACING.sm },
+  previewScoreLabel: { fontFamily: FONT_FAMILY.body, fontSize: FONT_SIZE.xs, color: COLORS.textMuted, width: 80 },
+  previewScoreTrack: { flex: 1, height: 5, backgroundColor: COLORS.border, borderRadius: 3, overflow: 'hidden' },
+  previewScoreFill: { height: 5, borderRadius: 3 },
+  previewScoreVal: { fontFamily: FONT_FAMILY.bodySemi, fontSize: FONT_SIZE.xs, width: 36, textAlign: 'right' },
+  previewChip: { paddingHorizontal: 10, paddingVertical: 4, borderRadius: 99, backgroundColor: COLORS.bgCard, borderWidth: 1, borderColor: COLORS.border },
+  previewChipText: { fontFamily: FONT_FAMILY.body, fontSize: 11, color: COLORS.textSecondary },
+  previewNotes: { gap: 3 },
+  previewNotesLabel: { fontFamily: FONT_FAMILY.bodySemi, fontSize: FONT_SIZE.xs, color: COLORS.textMuted, textTransform: 'uppercase', letterSpacing: 0.8 },
+  previewNotesText: { fontFamily: FONT_FAMILY.body, fontSize: FONT_SIZE.sm, color: COLORS.textSecondary, lineHeight: 20 },
 });

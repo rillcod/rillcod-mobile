@@ -17,15 +17,25 @@ interface ProgressReport {
   id: string;
   course_name: string;
   report_term: string;
+  report_period: string | null;
   theory_score: number | null;
   practical_score: number | null;
   attendance_score: number | null;
+  participation_score: number | null;
+  participation_grade: string | null;
+  projects_grade: string | null;
+  homework_grade: string | null;
+  proficiency_level: string | null;
   overall_score: number | null;
   overall_grade: string | null;
   is_published: boolean;
   instructor_name: string | null;
   report_date: string | null;
-  learning_milestones: string | null;
+  learning_milestones: any;  // stored as string[] in DB
+  key_strengths: string | null;
+  areas_for_growth: string | null;
+  school_name: string | null;
+  section_class: string | null;
 }
 
 interface Submission {
@@ -84,7 +94,7 @@ export default function StudentReportScreen({ navigation, route }: any) {
     const [repRes, subRes, enrRes] = await Promise.all([
       supabase
         .from('student_progress_reports')
-        .select('id, course_name, report_term, theory_score, practical_score, attendance_score, overall_score, overall_grade, is_published, instructor_name, report_date, learning_milestones')
+        .select('id, course_name, report_term, report_period, theory_score, practical_score, attendance_score, participation_score, participation_grade, projects_grade, homework_grade, proficiency_level, overall_score, overall_grade, is_published, instructor_name, report_date, learning_milestones, key_strengths, areas_for_growth, school_name, section_class')
         .eq('student_id', effectiveStudentId)
         .order('report_date', { ascending: false }),
       supabase
@@ -248,15 +258,51 @@ export default function StudentReportScreen({ navigation, route }: any) {
                                 <Text style={styles.scoreVal}>{r.attendance_score}%</Text>
                               </View>
                             )}
-                            {r.learning_milestones ? (
-                              <View style={styles.milestonesWrap}>
-                                <Text style={styles.milestonesLabel}>Milestones</Text>
-                                <Text style={styles.milestonesText}>{r.learning_milestones}</Text>
+                            {r.participation_score != null && (
+                              <View style={styles.scoreRow}>
+                                <Text style={styles.scoreLabel}>Participation</Text>
+                                <ScoreBar score={r.participation_score} color={COLORS.accent} />
+                                <Text style={styles.scoreVal}>{r.participation_score}%</Text>
                               </View>
-                            ) : null}
+                            )}
+                            {r.report_period ? <Text style={styles.reportMeta}>📅 Period: {r.report_period}</Text> : null}
+                            {r.school_name ? <Text style={styles.reportMeta}>🏫 {r.school_name}{r.section_class ? ` · ${r.section_class}` : ''}</Text> : null}
+                            {r.proficiency_level ? <Text style={styles.reportMeta}>📊 Proficiency: <Text style={{textTransform:'capitalize'}}>{r.proficiency_level}</Text></Text> : null}
+                            {(r.participation_grade || r.projects_grade || r.homework_grade) && (
+                              <View style={{ flexDirection: 'row', gap: 6, flexWrap: 'wrap', marginTop: 4 }}>
+                                {r.participation_grade && <View style={styles.ratingChip}><Text style={styles.ratingChipText}>💬 {r.participation_grade}</Text></View>}
+                                {r.projects_grade && <View style={styles.ratingChip}><Text style={styles.ratingChipText}>🔨 {r.projects_grade}</Text></View>}
+                                {r.homework_grade && <View style={styles.ratingChip}><Text style={styles.ratingChipText}>📖 {r.homework_grade}</Text></View>}
+                              </View>
+                            )}
+                            {r.key_strengths ? <View style={styles.notesBlock}><Text style={styles.notesLabel}>💪 Strengths</Text><Text style={styles.notesText}>{r.key_strengths}</Text></View> : null}
+                            {r.areas_for_growth ? <View style={styles.notesBlock}><Text style={styles.notesLabel}>🎯 Areas for Growth</Text><Text style={styles.notesText}>{r.areas_for_growth}</Text></View> : null}
+                            {(() => {
+                              let miles: string[] = [];
+                              if (Array.isArray(r.learning_milestones)) miles = r.learning_milestones;
+                              else if (typeof r.learning_milestones === 'string' && r.learning_milestones) {
+                                try { miles = JSON.parse(r.learning_milestones); } catch { miles = r.learning_milestones.split('\n').filter(Boolean); }
+                              }
+                              return miles.length > 0 ? (
+                                <View style={styles.milestonesWrap}>
+                                  <Text style={styles.milestonesLabel}>🏆 Milestones</Text>
+                                  {miles.map((m, mi) => (
+                                    <Text key={mi} style={styles.milestonesText}>• {m}</Text>
+                                  ))}
+                                </View>
+                              ) : null;
+                            })()}
                             {r.report_date ? (
                               <Text style={styles.reportDate}>📅 {new Date(r.report_date).toLocaleDateString('en-GB')}</Text>
                             ) : null}
+                            {isStaff && (
+                              <TouchableOpacity
+                                style={styles.editReportBtn}
+                                onPress={() => navigation.navigate('ReportBuilder', { studentId: effectiveStudentId, studentName })}
+                              >
+                                <Text style={styles.editReportText}>✏️ Edit in Report Builder</Text>
+                              </TouchableOpacity>
+                            )}
                           </View>
                         )}
 
@@ -440,4 +486,13 @@ const styles = StyleSheet.create({
   emptyWrap: { alignItems: 'center', paddingVertical: 40, gap: 10 },
   emptyEmoji: { fontSize: 36 },
   emptyText: { fontFamily: FONT_FAMILY.body, fontSize: FONT_SIZE.sm, color: COLORS.textMuted },
+
+  ratingChip: { paddingHorizontal: 10, paddingVertical: 4, borderRadius: 99, backgroundColor: COLORS.bgCard, borderWidth: 1, borderColor: COLORS.border },
+  ratingChipText: { fontFamily: FONT_FAMILY.body, fontSize: 11, color: COLORS.textSecondary },
+  notesBlock: { gap: 4, paddingTop: SPACING.xs },
+  notesLabel: { fontFamily: FONT_FAMILY.bodySemi, fontSize: FONT_SIZE.xs, color: COLORS.textMuted, textTransform: 'uppercase', letterSpacing: 0.8 },
+  notesText: { fontFamily: FONT_FAMILY.body, fontSize: FONT_SIZE.sm, color: COLORS.textSecondary, lineHeight: 20 },
+  editReportBtn: { marginTop: SPACING.sm, paddingVertical: 9, borderRadius: RADIUS.md, backgroundColor: COLORS.accent + '18', alignItems: 'center', borderWidth: 1, borderColor: COLORS.accent + '40' },
+  editReportText: { fontFamily: FONT_FAMILY.bodySemi, fontSize: FONT_SIZE.sm, color: COLORS.accent },
+  reportMeta2: { fontFamily: FONT_FAMILY.body, fontSize: FONT_SIZE.xs, color: COLORS.textSecondary },
 });
