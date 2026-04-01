@@ -18,8 +18,12 @@ interface Program { id: string; name: string; description: string | null; diffic
 const ENROLLMENT_TYPES = ['school', 'bootcamp', 'online', 'in_person'];
 const DIFF_COLORS: Record<string, string> = { beginner: COLORS.success, intermediate: COLORS.warning, advanced: COLORS.error };
 
-export default function EnrolStudentsScreen({ navigation }: any) {
+export default function EnrolStudentsScreen({ navigation, route }: any) {
   const { profile } = useAuth();
+  const params = (route?.params ?? {}) as { classId?: string; className?: string; programId?: string };
+  const targetClassId = params.classId;
+  const targetClassName = params.className;
+  const presetProgramId = params.programId;
   const [step, setStep] = useState<'students' | 'program' | 'confirm'>('students');
   const [students, setStudents] = useState<Student[]>([]);
   const [programs, setPrograms] = useState<Program[]>([]);
@@ -31,14 +35,26 @@ export default function EnrolStudentsScreen({ navigation }: any) {
   const [submitting, setSubmitting] = useState(false);
 
   const load = useCallback(async () => {
-    const [studRes, progRes] = await Promise.all([
-      supabase.from('portal_users').select('id, full_name, email, school_name, section_class').eq('role', 'student').eq('is_active', true).order('full_name').limit(300),
-      supabase.from('programs').select('id, name, description, difficulty_level, price').eq('is_active', true).order('name'),
-    ]);
+    let studentQuery = supabase.from('portal_users').select('id, full_name, email, school_name, section_class').eq('role', 'student').eq('is_active', true).order('full_name').limit(300);
+    let programQuery = supabase.from('programs').select('id, name, description, difficulty_level, price').eq('is_active', true).order('name');
+
+    if ((profile?.role === 'teacher' || profile?.role === 'school') && profile?.school_id) {
+      studentQuery = studentQuery.eq('school_id', profile.school_id);
+      programQuery = programQuery.eq('school_id', profile.school_id);
+    }
+
+    const [studRes, progRes] = await Promise.all([studentQuery, programQuery]);
     if (studRes.data) setStudents(studRes.data as Student[]);
-    if (progRes.data) setPrograms(progRes.data as Program[]);
+    if (progRes.data) {
+      const nextPrograms = progRes.data as Program[];
+      setPrograms(nextPrograms);
+      if (presetProgramId) {
+        const found = nextPrograms.find((program) => program.id === presetProgramId);
+        if (found) setSelectedProgram(found);
+      }
+    }
     setLoading(false);
-  }, []);
+  }, [profile?.role, profile?.school_id, presetProgramId]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -58,6 +74,7 @@ export default function EnrolStudentsScreen({ navigation }: any) {
     if (!selectedProgram || selectedStudents.size === 0) return;
     setSubmitting(true);
     try {
+      const studentIds = Array.from(selectedStudents);
       const rows = Array.from(selectedStudents).map(sid => ({
         user_id: sid,
         program_id: selectedProgram.id,
@@ -70,6 +87,13 @@ export default function EnrolStudentsScreen({ navigation }: any) {
       }));
       const { error } = await supabase.from('enrollments').upsert(rows, { onConflict: 'user_id,program_id' });
       if (error) throw error;
+      if (targetClassId) {
+        const { error: classError } = await supabase
+          .from('portal_users')
+          .update({ class_id: targetClassId, section_class: targetClassName ?? null })
+          .in('id', studentIds);
+        if (classError) throw classError;
+      }
       Alert.alert('✅ Enrolled!', `${selectedStudents.size} student${selectedStudents.size > 1 ? 's' : ''} enrolled in ${selectedProgram.name}.`, [
         { text: 'Done', onPress: () => navigation.goBack() },
       ]);
@@ -90,7 +114,15 @@ export default function EnrolStudentsScreen({ navigation }: any) {
         </TouchableOpacity>
         <View style={{ flex: 1 }}>
           <Text style={styles.title}>Enrol Students</Text>
-          <Text style={styles.subtitle}>{step === 'students' ? 'Select students' : step === 'program' ? 'Choose programme' : 'Confirm enrolment'}</Text>
+          <Text style={styles.subtitle}>
+            {targetClassName
+              ? `${targetClassName} · ${step === 'students' ? 'Select students' : step === 'program' ? 'Choose programme' : 'Confirm enrolment'}`
+              : step === 'students'
+                ? 'Select students'
+                : step === 'program'
+                  ? 'Choose programme'
+                  : 'Confirm enrolment'}
+          </Text>
         </View>
       </View>
 

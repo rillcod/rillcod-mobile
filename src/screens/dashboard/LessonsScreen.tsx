@@ -1,224 +1,487 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useMemo, useState, useCallback } from 'react';
 import {
-  View, Text, StyleSheet, ScrollView, TouchableOpacity,
-  TextInput, RefreshControl, ActivityIndicator, Alert, Platform,
+  View,
+  Text,
+  StyleSheet,
+  ScrollView,
+  TouchableOpacity,
+  TextInput,
+  RefreshControl,
+  ActivityIndicator,
+  Alert,
+  Platform,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { MotiView } from 'moti';
 import { LinearGradient } from 'expo-linear-gradient';
+
 import { useAuth } from '../../contexts/AuthContext';
 import { supabase } from '../../lib/supabase';
-import { COLORS } from '../../constants/colors';
+import { useTheme } from '../../contexts/ThemeContext';
+import { ScreenHeader } from '../../components/ui/ScreenHeader';
 import { FONT_FAMILY, FONT_SIZE } from '../../constants/typography';
 import { SPACING, RADIUS } from '../../constants/spacing';
 
-interface Lesson {
+interface LessonListItem {
   id: string;
   title: string;
-  type: string | null;
+  lesson_type: string | null;
   course_id: string | null;
-  content: any;
-  is_published: boolean;
-  created_at: string;
+  duration_minutes: number | null;
+  order_index: number | null;
+  status: string | null;
+  created_at: string | null;
   created_by: string | null;
-  courses?: { title: string } | null;
+  courses?: {
+    title: string | null;
+    programs?: {
+      name: string | null;
+    } | null;
+  } | null;
 }
 
-const TYPE_COLORS: Record<string, string> = {
-  academic: COLORS.info,
-  project: COLORS.accent,
-  interactive: '#7c3aed',
-  video: COLORS.error,
+const TYPE_ACCENTS: Record<string, { tone: string; icon: string }> = {
+  video: { tone: '#D1494E', icon: 'V' },
+  reading: { tone: '#2F6FDD', icon: 'R' },
+  interactive: { tone: '#E8742B', icon: 'I' },
+  'hands-on': { tone: '#0F9D7A', icon: 'H' },
+  workshop: { tone: '#7B61FF', icon: 'W' },
+  coding: { tone: '#172439', icon: 'C' },
 };
-const TYPE_EMOJIS: Record<string, string> = {
-  academic: '📖', project: '🔬', interactive: '🎮', video: '🎬',
-};
+
+function getTypeMeta(type: string | null, fallback: string) {
+  return TYPE_ACCENTS[type ?? ''] ?? { tone: fallback, icon: 'L' };
+}
 
 export default function LessonsScreen({ navigation }: any) {
   const { profile } = useAuth();
-  const [lessons, setLessons] = useState<Lesson[]>([]);
-  const [filtered, setFiltered] = useState<Lesson[]>([]);
+  const { colors } = useTheme();
+  const styles = getStyles(colors);
+
+  const [lessons, setLessons] = useState<LessonListItem[]>([]);
   const [search, setSearch] = useState('');
   const [typeFilter, setTypeFilter] = useState('all');
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
-  const isStaff = profile?.role === 'admin' || profile?.role === 'teacher';
+  const isStaff = ['admin', 'teacher', 'school'].includes(profile?.role ?? '');
 
-  const load = useCallback(async () => {
-    let q = supabase
-      .from('lessons')
-      .select('id, title, type, course_id, is_published, created_at, created_by, courses(title)')
-      .order('created_at', { ascending: false })
-      .limit(100);
+  const loadLessons = useCallback(async () => {
+    try {
+      let query = supabase
+        .from('lessons')
+        .select(`
+          id,
+          title,
+          lesson_type,
+          course_id,
+          duration_minutes,
+          order_index,
+          status,
+          created_at,
+          created_by,
+          courses (
+            title,
+            programs (
+              name
+            )
+          )
+        `)
+        .order('order_index', { ascending: true, nullsFirst: false })
+        .order('created_at', { ascending: false });
 
-    if (!isStaff) q = q.eq('is_published', true);
-    if (profile?.role === 'teacher' && profile.id) q = q.eq('created_by', profile.id);
+      if (!isStaff) {
+        query = query.eq('status', 'active');
+      }
 
-    const { data, error } = await q;
-    if (error) console.warn('lessons:', error.message);
-    if (data) { setLessons(data as any); setFiltered(data as any); }
-    setLoading(false);
-  }, [profile]);
+      if (profile?.role === 'teacher' && profile.id) {
+        query = query.eq('created_by', profile.id);
+      }
 
-  useEffect(() => { load(); }, [load]);
+      const { data, error } = await query.limit(120);
+      if (error) throw error;
+      setLessons((data as LessonListItem[]) ?? []);
+    } catch (error: any) {
+      Alert.alert('Lessons', error.message || 'Unable to load lessons.');
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
+  }, [isStaff, profile?.id, profile?.role]);
 
   useEffect(() => {
-    let list = lessons;
-    if (typeFilter !== 'all') list = list.filter(l => l.type === typeFilter);
-    if (search.trim()) {
-      const q = search.toLowerCase();
-      list = list.filter(l => l.title.toLowerCase().includes(q));
-    }
-    setFiltered(list);
-  }, [search, typeFilter, lessons]);
+    loadLessons();
+  }, [loadLessons]);
 
-  const togglePublish = async (lesson: Lesson) => {
-    const next = !lesson.is_published;
-    await supabase.from('lessons').update({ is_published: next }).eq('id', lesson.id);
-    setLessons(prev => prev.map(l => l.id === lesson.id ? { ...l, is_published: next } : l));
+  const availableTypes = useMemo(() => {
+    const values = Array.from(new Set(lessons.map((lesson) => lesson.lesson_type).filter(Boolean)));
+    return ['all', ...values] as string[];
+  }, [lessons]);
+
+  const filtered = useMemo(() => {
+    const needle = search.trim().toLowerCase();
+    return lessons.filter((lesson) => {
+      const matchesType = typeFilter === 'all' || lesson.lesson_type === typeFilter;
+      const matchesSearch =
+        !needle ||
+        lesson.title.toLowerCase().includes(needle) ||
+        (lesson.courses?.title ?? '').toLowerCase().includes(needle) ||
+        (lesson.courses?.programs?.name ?? '').toLowerCase().includes(needle);
+      return matchesType && matchesSearch;
+    });
+  }, [lessons, search, typeFilter]);
+
+  const activeCount = lessons.filter((lesson) => lesson.status === 'active').length;
+
+  const onToggleStatus = async (lesson: LessonListItem) => {
+    const nextStatus = lesson.status === 'active' ? 'draft' : 'active';
+    try {
+      const { error } = await supabase
+        .from('lessons')
+        .update({ status: nextStatus, updated_at: new Date().toISOString() })
+        .eq('id', lesson.id);
+      if (error) throw error;
+      setLessons((prev) =>
+        prev.map((item) => (item.id === lesson.id ? { ...item, status: nextStatus } : item)),
+      );
+    } catch (error: any) {
+      Alert.alert('Lesson Status', error.message || 'Unable to update lesson status.');
+    }
   };
 
-  const types = ['all', 'academic', 'project', 'interactive', 'video'];
-  const published = lessons.filter(l => l.is_published).length;
-
-  if (loading) return <View style={styles.loadWrap}><ActivityIndicator color={COLORS.primary} size="large" /></View>;
+  if (loading) {
+    return (
+      <View style={styles.loadingWrap}>
+        <ActivityIndicator color={colors.primary} size="large" />
+      </View>
+    );
+  }
 
   return (
     <SafeAreaView style={styles.safe}>
-      {/* Header */}
-      <View style={styles.header}>
-        <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}>
-          <Text style={styles.backArrow}>←</Text>
-        </TouchableOpacity>
-        <View style={{ flex: 1 }}>
-          <Text style={styles.title}>Lessons</Text>
-          <Text style={styles.subtitle}>{lessons.length} lessons · {published} published</Text>
-        </View>
-        {isStaff && (
-          <TouchableOpacity
-            onPress={() => Alert.alert('Create Lesson', 'Use the web dashboard to create AI-powered lessons with full editor.')}
-            style={styles.addBtn}
-          >
-            <Text style={styles.addBtnText}>+ New</Text>
+      <ScreenHeader
+        title="Lesson Engine"
+        subtitle={`${lessons.length} lessons � ${activeCount} active`}
+        onBack={() => navigation.goBack()}
+      />
+
+      <View style={styles.searchWrap}>
+        <Text style={[styles.searchIcon, { color: colors.textMuted }]}>S</Text>
+        <TextInput
+          style={styles.searchInput}
+          placeholder="Search lessons, courses, programs"
+          placeholderTextColor={colors.textMuted}
+          value={search}
+          onChangeText={setSearch}
+        />
+        {!!search && (
+          <TouchableOpacity onPress={() => setSearch('')}>
+            <Text style={[styles.clearBtn, { color: colors.textMuted }]}>X</Text>
           </TouchableOpacity>
         )}
       </View>
 
-      {/* Type filter */}
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ flexGrow: 0 }}>
-        <View style={{ flexDirection: 'row', gap: 8, paddingHorizontal: SPACING.xl, paddingBottom: SPACING.sm }}>
-          {types.map(t => {
-            const active = typeFilter === t;
-            const col = TYPE_COLORS[t] || COLORS.primary;
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.filtersScroll}>
+        <View style={styles.filtersRow}>
+          {availableTypes.map((type) => {
+            const active = typeFilter === type;
+            const meta = getTypeMeta(type === 'all' ? null : type, colors.primary);
             return (
-              <TouchableOpacity key={t} onPress={() => setTypeFilter(t)}
-                style={[styles.typeChip, active && { backgroundColor: col + '22', borderColor: col }]}>
-                <Text style={{ fontSize: 14 }}>{t === 'all' ? '📚' : TYPE_EMOJIS[t] || '📖'}</Text>
-                <Text style={[styles.typeChipText, active && { color: col }]}>{t}</Text>
+              <TouchableOpacity
+                key={type}
+                onPress={() => setTypeFilter(type)}
+                style={[
+                  styles.filterChip,
+                  {
+                    borderColor: active ? meta.tone : colors.border,
+                    backgroundColor: active ? `${meta.tone}18` : colors.bgCard,
+                  },
+                ]}
+              >
+                <Text style={[styles.filterGlyph, { color: active ? meta.tone : colors.textMuted }]}>
+                  {type === 'all' ? 'A' : meta.icon}
+                </Text>
+                <Text
+                  style={[
+                    styles.filterText,
+                    { color: active ? meta.tone : colors.textMuted },
+                  ]}
+                >
+                  {type === 'all' ? 'All' : type}
+                </Text>
               </TouchableOpacity>
             );
           })}
         </View>
       </ScrollView>
 
-      {/* Search */}
-      <View style={styles.searchWrap}>
-        <Text>🔍</Text>
-        <TextInput style={styles.searchInput} placeholder="Search lessons…" placeholderTextColor={COLORS.textMuted}
-          value={search} onChangeText={setSearch} />
-        {!!search && <TouchableOpacity onPress={() => setSearch('')}><Text style={styles.clearBtn}>✕</Text></TouchableOpacity>}
-      </View>
-
       <ScrollView
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={async () => { setRefreshing(true); await load(); setRefreshing(false); }} tintColor={COLORS.primary} />}
-        contentContainerStyle={styles.list}
         showsVerticalScrollIndicator={false}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={() => {
+              setRefreshing(true);
+              loadLessons();
+            }}
+            tintColor={colors.primary}
+          />
+        }
+        contentContainerStyle={styles.list}
       >
         {filtered.length === 0 ? (
           <View style={styles.emptyWrap}>
-            <Text style={{ fontSize: 40 }}>📖</Text>
-            <Text style={styles.emptyText}>No lessons found.</Text>
-            {isStaff && <Text style={styles.emptyHint}>Create lessons from the web dashboard for rich AI-powered content.</Text>}
+            <Text style={[styles.emptyTitle, { color: colors.textPrimary }]}>No matching lessons</Text>
+            <Text style={[styles.emptyText, { color: colors.textMuted }]}>Try another search or switch the lesson type filter.</Text>
           </View>
-        ) : filtered.map((l, i) => {
-          const tc = TYPE_COLORS[l.type || ''] || COLORS.textMuted;
-          return (
-            <MotiView key={l.id} from={{ opacity: 0, translateX: -10 }} animate={{ opacity: 1, translateX: 0 }} transition={{ delay: i * 30 }}>
-              <TouchableOpacity
-                style={styles.card}
-                activeOpacity={0.8}
-                onPress={() => Alert.alert(l.title, 'Full lesson viewer available in the web app.')}
+        ) : (
+          filtered.map((lesson, index) => {
+            const meta = getTypeMeta(lesson.lesson_type, colors.primary);
+            const active = lesson.status === 'active';
+            return (
+              <MotiView
+                key={lesson.id}
+                from={{ opacity: 0, translateY: 10 }}
+                animate={{ opacity: 1, translateY: 0 }}
+                transition={{ delay: Math.min(index * 40, 240) }}
               >
-                <LinearGradient colors={[tc + '10', 'transparent']} style={StyleSheet.absoluteFill} />
-                <View style={{ flex: 1 }}>
-                  <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 8 }}>
-                    <Text style={{ fontSize: 20 }}>{TYPE_EMOJIS[l.type || ''] || '📖'}</Text>
-                    <View style={{ flex: 1 }}>
-                      <Text style={styles.cardTitle} numberOfLines={2}>{l.title}</Text>
-                      {(l.courses as any)?.title && (
-                        <Text style={styles.cardCourse}>📚 {(l.courses as any).title}</Text>
+                <TouchableOpacity
+                  activeOpacity={0.88}
+                  onPress={() => navigation.navigate('LessonDetail', { lessonId: lesson.id })}
+                  style={[styles.card, { backgroundColor: colors.bgCard, borderColor: colors.border }]}
+                >
+                  <LinearGradient
+                    colors={[`${meta.tone}18`, 'transparent']}
+                    start={{ x: 0, y: 0 }}
+                    end={{ x: 1, y: 1 }}
+                    style={StyleSheet.absoluteFill}
+                  />
+
+                  <View style={[styles.iconBadge, { backgroundColor: `${meta.tone}18`, borderColor: `${meta.tone}40` }]}>
+                    <Text style={[styles.iconGlyph, { color: meta.tone }]}>{meta.icon}</Text>
+                  </View>
+
+                  <View style={styles.cardContent}>
+                    <View style={styles.cardHeader}>
+                      <Text style={[styles.cardTitle, { color: colors.textPrimary }]} numberOfLines={2}>
+                        {lesson.title}
+                      </Text>
+                      {isStaff && (
+                        <TouchableOpacity
+                          onPress={() => onToggleStatus(lesson)}
+                          style={[
+                            styles.statusButton,
+                            {
+                              backgroundColor: active ? `${colors.success}18` : `${colors.warning}18`,
+                              borderColor: active ? `${colors.success}40` : `${colors.warning}40`,
+                            },
+                          ]}
+                        >
+                          <Text
+                            style={[
+                              styles.statusButtonText,
+                              { color: active ? colors.success : colors.warning },
+                            ]}
+                          >
+                            {active ? 'Live' : 'Draft'}
+                          </Text>
+                        </TouchableOpacity>
                       )}
                     </View>
-                  </View>
-                  <View style={{ flexDirection: 'row', gap: 6, marginTop: SPACING.sm, flexWrap: 'wrap', alignItems: 'center' }}>
-                    {l.type && (
-                      <View style={[styles.typeBadge, { backgroundColor: tc + '22', borderColor: tc + '44' }]}>
-                        <Text style={[styles.typeBadgeText, { color: tc }]}>{l.type}</Text>
+
+                    <Text style={[styles.cardMeta, { color: colors.textMuted }]}>
+                      {(lesson.courses?.programs?.name ?? 'Program').toUpperCase()} � {(lesson.courses?.title ?? 'Course').toUpperCase()}
+                    </Text>
+
+                    <View style={styles.tagRow}>
+                      <View style={[styles.metaChip, { backgroundColor: `${meta.tone}18`, borderColor: `${meta.tone}36` }]}>
+                        <Text style={[styles.metaChipText, { color: meta.tone }]}>
+                          {(lesson.lesson_type ?? 'lesson').toUpperCase()}
+                        </Text>
                       </View>
-                    )}
-                    <View style={[styles.publishBadge, { backgroundColor: l.is_published ? COLORS.success + '22' : COLORS.warning + '22' }]}>
-                      <Text style={[styles.publishBadgeText, { color: l.is_published ? COLORS.success : COLORS.warning }]}>
-                        {l.is_published ? '✓ Published' : '⏸ Draft'}
-                      </Text>
+                      <View style={[styles.metaChip, { backgroundColor: `${colors.info}16`, borderColor: `${colors.info}32` }]}>
+                        <Text style={[styles.metaChipText, { color: colors.info }]}>
+                          {(lesson.duration_minutes ?? 45)} MIN
+                        </Text>
+                      </View>
+                      {lesson.order_index !== null && (
+                        <View style={[styles.metaChip, { backgroundColor: `${colors.primary}14`, borderColor: `${colors.primary}28` }]}>
+                          <Text style={[styles.metaChipText, { color: colors.primary }]}>STEP {lesson.order_index + 1}</Text>
+                        </View>
+                      )}
                     </View>
-                    <Text style={styles.dateText}>
-                      {new Date(l.created_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: '2-digit' })}
+
+                    <Text style={[styles.cardFooter, { color: colors.textMuted }]}>
+                      {active ? 'Active for learners' : 'Hidden from learners'} � {lesson.created_at ? new Date(lesson.created_at).toLocaleDateString() : 'No date'}
                     </Text>
                   </View>
-                </View>
-                {isStaff && (
-                  <TouchableOpacity onPress={() => togglePublish(l)} style={styles.toggleBtn}>
-                    <Text style={styles.toggleBtnText}>{l.is_published ? '⏸' : '▶'}</Text>
-                  </TouchableOpacity>
-                )}
-              </TouchableOpacity>
-            </MotiView>
-          );
-        })}
+                </TouchableOpacity>
+              </MotiView>
+            );
+          })
+        )}
         <View style={{ height: 32 }} />
       </ScrollView>
     </SafeAreaView>
   );
 }
 
-const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: COLORS.bg },
-  loadWrap: { flex: 1, backgroundColor: COLORS.bg, alignItems: 'center', justifyContent: 'center' },
-  header: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: SPACING.xl, paddingTop: SPACING.md, paddingBottom: SPACING.sm, gap: SPACING.md },
-  backBtn: { width: 36, height: 36, borderRadius: RADIUS.md, borderWidth: 1, borderColor: COLORS.border, alignItems: 'center', justifyContent: 'center' },
-  backArrow: { fontSize: 18, color: COLORS.textPrimary },
-  title: { fontFamily: FONT_FAMILY.display, fontSize: FONT_SIZE['2xl'], color: COLORS.textPrimary },
-  subtitle: { fontFamily: FONT_FAMILY.body, fontSize: FONT_SIZE.xs, color: COLORS.textMuted, marginTop: 2 },
-  addBtn: { paddingHorizontal: 14, paddingVertical: 7, borderRadius: RADIUS.full, backgroundColor: COLORS.primary },
-  addBtnText: { fontFamily: FONT_FAMILY.bodySemi, fontSize: FONT_SIZE.xs, color: '#fff' },
-  typeChip: { flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 12, paddingVertical: 6, borderRadius: RADIUS.full, borderWidth: 1, borderColor: COLORS.border, backgroundColor: COLORS.bgCard },
-  typeChipText: { fontFamily: FONT_FAMILY.bodySemi, fontSize: FONT_SIZE.xs, color: COLORS.textMuted, textTransform: 'capitalize' },
-  searchWrap: { flexDirection: 'row', alignItems: 'center', gap: SPACING.sm, marginHorizontal: SPACING.xl, marginBottom: SPACING.md, backgroundColor: COLORS.bgCard, borderWidth: 1, borderColor: COLORS.border, borderRadius: RADIUS.lg, paddingHorizontal: SPACING.md, paddingVertical: Platform.OS === 'ios' ? 10 : 6 },
-  searchInput: { flex: 1, fontFamily: FONT_FAMILY.body, fontSize: FONT_SIZE.sm, color: COLORS.textPrimary },
-  clearBtn: { fontSize: 12, color: COLORS.textMuted, paddingHorizontal: 4 },
-  list: { paddingHorizontal: SPACING.xl },
-  card: { flexDirection: 'row', alignItems: 'flex-start', backgroundColor: COLORS.bgCard, borderWidth: 1, borderColor: COLORS.border, borderRadius: RADIUS.lg, padding: SPACING.md, marginBottom: SPACING.sm, overflow: 'hidden', gap: SPACING.sm },
-  cardTitle: { fontFamily: FONT_FAMILY.bodySemi, fontSize: FONT_SIZE.sm, color: COLORS.textPrimary, lineHeight: 20 },
-  cardCourse: { fontFamily: FONT_FAMILY.body, fontSize: FONT_SIZE.xs, color: COLORS.textMuted, marginTop: 3 },
-  typeBadge: { borderWidth: 1, borderRadius: RADIUS.full, paddingHorizontal: 7, paddingVertical: 2 },
-  typeBadgeText: { fontFamily: FONT_FAMILY.bodySemi, fontSize: 10, textTransform: 'capitalize' },
-  publishBadge: { borderRadius: RADIUS.full, paddingHorizontal: 7, paddingVertical: 2 },
-  publishBadgeText: { fontFamily: FONT_FAMILY.bodySemi, fontSize: 10 },
-  dateText: { fontFamily: FONT_FAMILY.body, fontSize: 10, color: COLORS.textMuted },
-  toggleBtn: { width: 32, height: 32, borderRadius: RADIUS.md, backgroundColor: COLORS.bg, borderWidth: 1, borderColor: COLORS.border, alignItems: 'center', justifyContent: 'center', flexShrink: 0 },
-  toggleBtnText: { fontSize: 14 },
-  emptyWrap: { alignItems: 'center', paddingVertical: 60, gap: 12 },
-  emptyText: { fontFamily: FONT_FAMILY.bodySemi, fontSize: FONT_SIZE.base, color: COLORS.textSecondary },
-  emptyHint: { fontFamily: FONT_FAMILY.body, fontSize: FONT_SIZE.sm, color: COLORS.textMuted, textAlign: 'center', maxWidth: 280, lineHeight: 20 },
-});
+const getStyles = (colors: any) =>
+  StyleSheet.create({
+    safe: { flex: 1, backgroundColor: colors.bg },
+    loadingWrap: {
+      flex: 1,
+      backgroundColor: colors.bg,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    searchWrap: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: SPACING.sm,
+      marginHorizontal: SPACING.xl,
+      marginTop: SPACING.sm,
+      marginBottom: SPACING.md,
+      backgroundColor: colors.bgCard,
+      borderWidth: 1,
+      borderColor: colors.border,
+      borderRadius: RADIUS.lg,
+      paddingHorizontal: SPACING.md,
+      paddingVertical: Platform.OS === 'ios' ? 10 : 6,
+    },
+    searchIcon: {
+      fontFamily: FONT_FAMILY.bodyBold,
+      fontSize: 12,
+      letterSpacing: 1.2,
+    },
+    searchInput: {
+      flex: 1,
+      color: colors.textPrimary,
+      fontFamily: FONT_FAMILY.body,
+      fontSize: FONT_SIZE.sm,
+    },
+    clearBtn: {
+      fontFamily: FONT_FAMILY.bodyBold,
+      fontSize: 11,
+      letterSpacing: 1,
+    },
+    filtersScroll: { flexGrow: 0 },
+    filtersRow: {
+      flexDirection: 'row',
+      gap: 8,
+      paddingHorizontal: SPACING.xl,
+      paddingBottom: SPACING.sm,
+    },
+    filterChip: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 6,
+      paddingHorizontal: 12,
+      paddingVertical: 8,
+      borderRadius: RADIUS.full,
+      borderWidth: 1,
+    },
+    filterGlyph: {
+      fontFamily: FONT_FAMILY.display,
+      fontSize: 11,
+    },
+    filterText: {
+      fontFamily: FONT_FAMILY.bodySemi,
+      fontSize: FONT_SIZE.xs,
+      textTransform: 'capitalize',
+    },
+    list: {
+      paddingHorizontal: SPACING.xl,
+      paddingBottom: SPACING.xl,
+    },
+    emptyWrap: {
+      alignItems: 'center',
+      paddingVertical: 72,
+      gap: 10,
+    },
+    emptyTitle: {
+      fontFamily: FONT_FAMILY.display,
+      fontSize: FONT_SIZE.xl,
+    },
+    emptyText: {
+      fontFamily: FONT_FAMILY.body,
+      fontSize: FONT_SIZE.sm,
+      textAlign: 'center',
+      maxWidth: 280,
+      lineHeight: 20,
+    },
+    card: {
+      flexDirection: 'row',
+      gap: SPACING.md,
+      padding: SPACING.md,
+      borderWidth: 1,
+      borderRadius: RADIUS.xl,
+      marginBottom: SPACING.sm,
+      overflow: 'hidden',
+    },
+    iconBadge: {
+      width: 48,
+      height: 48,
+      borderRadius: RADIUS.lg,
+      alignItems: 'center',
+      justifyContent: 'center',
+      borderWidth: 1,
+    },
+    iconGlyph: {
+      fontFamily: FONT_FAMILY.display,
+      fontSize: 16,
+    },
+    cardContent: {
+      flex: 1,
+      gap: 8,
+    },
+    cardHeader: {
+      flexDirection: 'row',
+      alignItems: 'flex-start',
+      gap: 10,
+    },
+    cardTitle: {
+      flex: 1,
+      fontFamily: FONT_FAMILY.bodyBold,
+      fontSize: FONT_SIZE.base,
+      lineHeight: 21,
+    },
+    statusButton: {
+      borderWidth: 1,
+      borderRadius: RADIUS.full,
+      paddingHorizontal: 10,
+      paddingVertical: 5,
+    },
+    statusButtonText: {
+      fontFamily: FONT_FAMILY.bodyBold,
+      fontSize: 10,
+      letterSpacing: 0.6,
+      textTransform: 'uppercase',
+    },
+    cardMeta: {
+      fontFamily: FONT_FAMILY.mono,
+      fontSize: 9,
+      letterSpacing: 0.8,
+      lineHeight: 14,
+    },
+    tagRow: {
+      flexDirection: 'row',
+      gap: 8,
+      flexWrap: 'wrap',
+    },
+    metaChip: {
+      borderWidth: 1,
+      borderRadius: RADIUS.full,
+      paddingHorizontal: 8,
+      paddingVertical: 4,
+    },
+    metaChipText: {
+      fontFamily: FONT_FAMILY.bodyBold,
+      fontSize: 9,
+      letterSpacing: 0.8,
+    },
+    cardFooter: {
+      fontFamily: FONT_FAMILY.body,
+      fontSize: 11,
+    },
+  });

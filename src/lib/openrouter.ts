@@ -1,19 +1,29 @@
-/**
- * OpenRouter AI helper — direct from mobile.
- * Primary: gemini-2.0-flash  | Fallback: qwen3-235b:free → glm-z1-flash:free
- *
+﻿/**
+ * OpenRouter AI helper aligned to the web AI engine.
  * NOTE: For production, proxy through a Supabase Edge Function so the key
  * is never shipped in the bundle.
  */
 
 const OPENROUTER_BASE = 'https://openrouter.ai/api/v1';
 
-// Cascade: try each model in order, return first successful reply
 const MODELS_CASCADE = [
   'google/gemini-2.0-flash-001',
+  'x-ai/grok-2-1212',
+  'moonshotai/kimi-k2.5',
+  'deepseek/deepseek-chat-v3-5',
+  'deepseek/deepseek-chat',
+  'deepseek/deepseek-r1:free',
   'qwen/qwen3-235b-a22b:free',
   'qwen/qwen3-30b-a3b:free',
+  'qwen/qwen3-14b:free',
+  'minimax/minimax-01',
+  'zhipuai/glm-4-flash:free',
   'zhipuai/glm-z1-flash:free',
+  'stepfun/step-3-5-flash',
+  'xiaomi/mimo-v2-flash:free',
+  'google/gemini-2.0-flash-lite-001',
+  'meta-llama/llama-3.3-70b-instruct',
+  'mistralai/mistral-large-2411',
   'meta-llama/llama-3.1-8b-instruct:free',
   'mistralai/mistral-7b-instruct:free',
 ];
@@ -30,7 +40,6 @@ interface CallAIOptions {
   apiKey: string;
 }
 
-/** Call OpenRouter with automatic model fallback. Returns the reply text or throws. */
 export async function callAI({
   messages,
   maxTokens = 1024,
@@ -41,6 +50,9 @@ export async function callAI({
 
   for (const model of MODELS_CASCADE) {
     try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 25000);
+
       const res = await fetch(`${OPENROUTER_BASE}/chat/completions`, {
         method: 'POST',
         headers: {
@@ -49,6 +61,7 @@ export async function callAI({
           'HTTP-Referer': 'https://rillcod.com',
           'X-Title': 'Rillcod Academy',
         },
+        signal: controller.signal,
         body: JSON.stringify({
           model,
           messages,
@@ -57,9 +70,11 @@ export async function callAI({
         }),
       });
 
+      clearTimeout(timeout);
+
       if (!res.ok) {
         const err = await res.text();
-        console.warn(`[openrouter] ${model} → ${res.status}:`, err);
+        console.warn(`[openrouter] ${model} -> ${res.status}:`, err);
         continue;
       }
 
@@ -74,10 +89,6 @@ export async function callAI({
   throw new Error('All AI models failed. Please check your connection and try again.');
 }
 
-/**
- * Generate an educational image using Pollinations.ai (free, no auth).
- * Returns a URL string.
- */
 export function pollinationsImageUrl(prompt: string, width = 768, height = 512): string {
   const safe = encodeURIComponent(
     `Educational illustration: ${prompt}. Child-friendly, colourful, classroom-safe, digital art style.`

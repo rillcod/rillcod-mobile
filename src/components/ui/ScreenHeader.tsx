@@ -1,7 +1,7 @@
 import React from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, Image, Platform } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
-import { COLORS } from '../../constants/colors';
+import { useTheme } from '../../contexts/ThemeContext';
 import { FONT_FAMILY, FONT_SIZE, LETTER_SPACING } from '../../constants/typography';
 import { SPACING, RADIUS } from '../../constants/spacing';
 
@@ -14,11 +14,15 @@ interface Props {
   accentColor?: string;
 }
 
-export function ScreenHeader({ title, subtitle, onBack, rightAction, showLogo = false, accentColor = COLORS.primary }: Props) {
+export function ScreenHeader({ title, subtitle, onBack, rightAction, showLogo = false, accentColor }: Props) {
+  const { colors, isDark } = useTheme();
+  const styles = getStyles(colors, isDark);
+  const resolvedAccent = accentColor ?? colors.primary;
+
   return (
     <View style={styles.container}>
       <LinearGradient
-        colors={['rgba(122,6,6,0.08)', 'transparent']}
+        colors={isDark ? ['rgba(240,138,75,0.16)', 'rgba(23,27,34,0)'] : ['rgba(198,93,46,0.12)', 'rgba(255,253,252,0)']}
         style={StyleSheet.absoluteFill}
       />
 
@@ -41,44 +45,46 @@ export function ScreenHeader({ title, subtitle, onBack, rightAction, showLogo = 
         {rightAction ? (
           <TouchableOpacity
             onPress={rightAction.onPress}
-            style={[styles.rightBtn, { borderColor: (rightAction.color ?? accentColor) + '50', backgroundColor: (rightAction.color ?? accentColor) + '15' }]}
+            style={[styles.rightBtn, { borderColor: (rightAction.color ?? resolvedAccent) + '40', backgroundColor: (rightAction.color ?? resolvedAccent) + '14' }]}
             activeOpacity={0.8}
           >
-            <Text style={[styles.rightBtnText, { color: rightAction.color ?? accentColor }]}>{rightAction.label}</Text>
+            <Text style={[styles.rightBtnText, { color: rightAction.color ?? resolvedAccent }]}>{rightAction.label}</Text>
           </TouchableOpacity>
         ) : <View style={styles.rightPlaceholder} />}
       </View>
 
-      <View style={[styles.accentLine, { backgroundColor: accentColor }]} />
+      <View style={[styles.accentLine, { backgroundColor: resolvedAccent }]} />
     </View>
   );
 }
 
-const styles = StyleSheet.create({
+const getStyles = (colors: { bgCard: string; border: string; textPrimary: string; textMuted: string; borderLight: string }, isDark: boolean) => StyleSheet.create({
   container: {
     paddingTop: Platform.OS === 'ios' ? 0 : SPACING.xs,
     paddingHorizontal: SPACING.xl,
     paddingBottom: SPACING.sm,
     overflow: 'hidden',
+    borderBottomWidth: 1,
+    borderBottomColor: colors.borderLight,
   },
   row: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: SPACING.sm,
-    paddingVertical: SPACING.sm,
+    paddingVertical: SPACING.xs,
   },
   backBtn: {
     width: 36,
     height: 36,
     borderRadius: RADIUS.md,
     borderWidth: 1,
-    borderColor: COLORS.border,
-    backgroundColor: COLORS.bgCard,
+    borderColor: colors.border,
+    backgroundColor: isDark ? 'rgba(255,255,255,0.04)' : colors.bgCard,
     alignItems: 'center',
     justifyContent: 'center',
     flexShrink: 0,
   },
-  backArrow: { fontSize: 18, color: COLORS.textPrimary, lineHeight: 22 },
+  backArrow: { fontSize: 18, color: colors.textPrimary, lineHeight: 22 },
   logoWrap: {
     width: 36,
     height: 36,
@@ -91,14 +97,16 @@ const styles = StyleSheet.create({
   title: {
     fontFamily: FONT_FAMILY.display,
     fontSize: FONT_SIZE['2xl'],
-    color: COLORS.textPrimary,
+    color: colors.textPrimary,
+    letterSpacing: LETTER_SPACING.tight,
   },
   subtitle: {
     fontFamily: FONT_FAMILY.body,
     fontSize: FONT_SIZE.xs,
-    color: COLORS.textMuted,
-    marginTop: 2,
+    color: colors.textMuted,
+    marginTop: 3,
     letterSpacing: LETTER_SPACING.wide,
+    textTransform: 'uppercase',
   },
   rightBtn: {
     paddingHorizontal: SPACING.md,
@@ -116,8 +124,8 @@ const styles = StyleSheet.create({
   rightPlaceholder: { width: 36 },
   accentLine: {
     height: 2,
-    width: 32,
+    width: 42,
     borderRadius: 1,
-    marginTop: 2,
+    marginTop: 4,
   },
 });

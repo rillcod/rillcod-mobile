@@ -8,10 +8,12 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { MotiView } from 'moti';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useAuth } from '../../contexts/AuthContext';
+import { useTheme } from '../../contexts/ThemeContext';
 import { supabase } from '../../lib/supabase';
-import { COLORS } from '../../constants/colors';
 import { FONT_FAMILY, FONT_SIZE } from '../../constants/typography';
 import { SPACING, RADIUS } from '../../constants/spacing';
+import { ScreenHeader } from '../../components/ui/ScreenHeader';
+import { useHaptics } from '../../hooks/useHaptics';
 
 interface Program { id: string; name: string; }
 
@@ -37,6 +39,10 @@ function formatDate(d: string): string {
 
 export default function CoursesScreen({ navigation }: any) {
   const { profile } = useAuth();
+  const { colors, isDark } = useTheme();
+  const styles = getStyles(colors);
+  const { light } = useHaptics();
+
   const [courses, setCourses] = useState<Course[]>([]);
   const [programs, setPrograms] = useState<Program[]>([]);
   const [loading, setLoading] = useState(true);
@@ -68,7 +74,6 @@ export default function CoursesScreen({ navigation }: any) {
         if (error) throw error;
         data = (rows ?? []) as unknown as Course[];
       } else {
-        // Student: get enrolled programs → courses in those programs
         const { data: enrollments } = await supabase
           .from('enrollments')
           .select('program_id')
@@ -122,7 +127,6 @@ export default function CoursesScreen({ navigation }: any) {
     }
   };
 
-  // Group by program
   const filtered = courses.filter(c =>
     c.title.toLowerCase().includes(search.toLowerCase())
   );
@@ -141,53 +145,60 @@ export default function CoursesScreen({ navigation }: any) {
   const renderCourse = (course: Course, idx: number) => (
     <MotiView
       key={course.id}
-      from={{ opacity: 0, translateY: 12 }}
+      from={{ opacity: 0, translateY: 10 }}
       animate={{ opacity: 1, translateY: 0 }}
-      transition={{ delay: idx * 40, type: 'timing', duration: 300 }}
-      style={styles.courseCard}
+      transition={{ delay: idx * 40 }}
     >
-      <View style={styles.courseRow}>
-        <View style={styles.courseInfo}>
-          <Text style={styles.courseTitle} numberOfLines={2}>{course.title}</Text>
-          {course.description ? (
-            <Text style={styles.courseDesc} numberOfLines={2}>{course.description}</Text>
-          ) : null}
-          <View style={styles.chipRow}>
-            {course.programs && (
-              <View style={[styles.chip, { backgroundColor: COLORS.primaryPale }]}>
-                <Text style={[styles.chipText, { color: COLORS.primaryLight }]}>
-                  {(course.programs as any).name}
-                </Text>
-              </View>
-            )}
-            {course.duration_hours ? (
-              <View style={[styles.chip, { backgroundColor: 'rgba(59,130,246,0.12)' }]}>
-                <Text style={[styles.chipText, { color: COLORS.info }]}>
-                  {formatDuration(course.duration_hours)}
-                </Text>
-              </View>
+      <TouchableOpacity 
+        style={[styles.courseCard, { borderColor: colors.border, backgroundColor: colors.bgCard }]}
+        activeOpacity={0.8}
+        onPress={() => navigation.navigate('CourseDetail', { programId: course.program_id || '', title: course.title })}
+      >
+        <View style={styles.courseRow}>
+          <View style={styles.courseInfo}>
+            <Text style={[styles.courseTitle, { color: colors.textPrimary }]} numberOfLines={2}>{course.title}</Text>
+            {course.description ? (
+              <Text style={[styles.courseDesc, { color: colors.textMuted }]} numberOfLines={2}>{course.description}</Text>
             ) : null}
+            <View style={styles.chipRow}>
+              {course.programs && (
+                <View style={[styles.chip, { backgroundColor: colors.primaryPale }]}>
+                  <Text style={[styles.chipText, { color: colors.primary }]}>
+                    {(course.programs as any).name}
+                  </Text>
+                </View>
+              )}
+              {course.duration_hours ? (
+                <View style={[styles.chip, { backgroundColor: colors.info + '15' }]}>
+                  <Text style={[styles.chipText, { color: colors.info }]}>
+                    {formatDuration(course.duration_hours)}
+                  </Text>
+                </View>
+              ) : null}
+            </View>
+          </View>
+          <View style={styles.courseRight}>
+            <View style={[styles.activeBadge, { backgroundColor: course.is_active ? colors.success + '15' : colors.error + '10' }]}>
+              <View style={[styles.dot, { backgroundColor: course.is_active ? colors.success : colors.error }]} />
+              <Text style={[styles.activeText, { color: course.is_active ? colors.success : colors.error }]}>
+                {course.is_active ? 'ACTIVE' : 'OFFLINE'}
+              </Text>
+            </View>
+            <Text style={[styles.courseDate, { color: colors.textMuted }]}>{formatDate(course.created_at)}</Text>
           </View>
         </View>
-        <View style={styles.courseRight}>
-          <View style={[styles.activeBadge, { backgroundColor: course.is_active ? 'rgba(16,185,129,0.15)' : 'rgba(239,68,68,0.1)' }]}>
-            <View style={[styles.dot, { backgroundColor: course.is_active ? COLORS.success : COLORS.error }]} />
-            <Text style={[styles.activeText, { color: course.is_active ? COLORS.success : COLORS.error }]}>
-              {course.is_active ? 'Active' : 'Inactive'}
-            </Text>
-          </View>
-          <Text style={styles.courseDate}>{formatDate(course.created_at)}</Text>
-        </View>
-      </View>
+      </TouchableOpacity>
     </MotiView>
   );
 
   const renderSection = ({ item: key }: { item: string }) => (
     <View style={styles.section}>
       <View style={styles.sectionHeader}>
-        <LinearGradient colors={COLORS.gradPrimary} style={styles.sectionDot} />
-        <Text style={styles.sectionTitle}>{key}</Text>
-        <Text style={styles.sectionCount}>{grouped[key].length}</Text>
+        <LinearGradient colors={colors.gradPrimary} style={styles.sectionDot} />
+        <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>{key.toUpperCase()}</Text>
+        <View style={[styles.sectionCount, { backgroundColor: colors.bgCard, borderColor: colors.border }]}>
+          <Text style={{ color: colors.textSecondary, fontSize: 10, fontWeight: 'bold' }}>{grouped[key].length}</Text>
+        </View>
       </View>
       {grouped[key].map((c, i) => renderCourse(c, i))}
     </View>
@@ -195,44 +206,33 @@ export default function CoursesScreen({ navigation }: any) {
 
   return (
     <SafeAreaView style={styles.safe}>
-      {/* Header */}
-      <View style={styles.header}>
-        <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}>
-          <Text style={styles.backArrow}>←</Text>
-        </TouchableOpacity>
-        <Text style={styles.headerTitle}>Courses</Text>
-        {isAdmin && (
-          <TouchableOpacity style={styles.addBtn} onPress={() => setShowModal(true)}>
-            <LinearGradient colors={COLORS.gradPrimary} style={styles.addBtnInner}>
-              <Text style={styles.addBtnText}>+ Add</Text>
-            </LinearGradient>
-          </TouchableOpacity>
-        )}
-      </View>
+      <ScreenHeader
+        title="COURSES"
+        onBack={() => navigation.goBack()}
+        rightAction={isAdmin ? { label: '+ ADD', onPress: () => { setShowModal(true); light(); } } : undefined}
+      />
 
       {/* Stats */}
       <View style={styles.statsRow}>
-        <View style={styles.statCard}>
-          <Text style={styles.statNum}>{courses.length}</Text>
-          <Text style={styles.statLabel}>Total</Text>
-        </View>
-        <View style={styles.statCard}>
-          <Text style={[styles.statNum, { color: COLORS.success }]}>{totalActive}</Text>
-          <Text style={styles.statLabel}>Active</Text>
-        </View>
-        <View style={styles.statCard}>
-          <Text style={[styles.statNum, { color: COLORS.info }]}>{programCount}</Text>
-          <Text style={styles.statLabel}>Programs</Text>
-        </View>
+        {[
+          { label: 'TOTAL', value: courses.length, color: colors.textPrimary },
+          { label: 'ACTIVE', value: totalActive, color: colors.success },
+          { label: 'PROGRAMS', value: programCount, color: colors.info },
+        ].map(s => (
+          <View key={s.label} style={[styles.statCard, { borderColor: colors.border, backgroundColor: colors.bgCard }]}>
+            <Text style={[styles.statNum, { color: s.color }]}>{s.value}</Text>
+            <Text style={[styles.statLabel, { color: colors.textMuted }]}>{s.label}</Text>
+          </View>
+        ))}
       </View>
 
       {/* Search */}
-      <View style={styles.searchWrap}>
+      <View style={[styles.searchWrap, { borderColor: colors.border, backgroundColor: colors.bgCard }]}>
         <Text style={styles.searchIcon}>🔍</Text>
         <TextInput
-          style={styles.searchInput}
-          placeholder="Search courses..."
-          placeholderTextColor={COLORS.textMuted}
+          style={[styles.searchInput, { color: colors.textPrimary }]}
+          placeholder="FILTER COURSES..."
+          placeholderTextColor={colors.textMuted}
           value={search}
           onChangeText={setSearch}
         />
@@ -240,20 +240,20 @@ export default function CoursesScreen({ navigation }: any) {
 
       {loading ? (
         <View style={styles.center}>
-          <ActivityIndicator size="large" color={COLORS.primary} />
+          <ActivityIndicator size="large" color={colors.primary} />
         </View>
       ) : groupKeys.length === 0 ? (
         <View style={styles.center}>
-          <Text style={styles.emptyEmoji}>📚</Text>
-          <Text style={styles.emptyText}>No courses found</Text>
+          <Text style={styles.emptyEmoji}>🌑</Text>
+          <Text style={[styles.emptyText, { color: colors.textMuted }]}>NO COURSES DETECTED</Text>
         </View>
       ) : (
         <FlatList
           data={groupKeys}
           keyExtractor={k => k}
           renderItem={renderSection}
-          contentContainerStyle={{ paddingHorizontal: SPACING.base, paddingBottom: 40 }}
-          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={COLORS.primary} />}
+          contentContainerStyle={{ paddingHorizontal: SPACING.xl, paddingBottom: 40 }}
+          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.primary} />}
           showsVerticalScrollIndicator={false}
         />
       )}
@@ -261,60 +261,48 @@ export default function CoursesScreen({ navigation }: any) {
       {/* Add Course Modal */}
       <Modal visible={showModal} animationType="slide" transparent>
         <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.modalOverlay}>
-          <View style={styles.modalSheet}>
-            <View style={styles.modalHandle} />
-            <Text style={styles.modalTitle}>Add Course</Text>
+          <View style={[styles.modalSheet, { backgroundColor: colors.bgCard, borderColor: colors.border }]}>
+            <View style={[styles.modalHandle, { backgroundColor: colors.border }]} />
+            <Text style={[styles.modalTitle, { color: colors.textPrimary }]}>ADD NEW COURSE</Text>
             <ScrollView showsVerticalScrollIndicator={false}>
-              <Text style={styles.label}>Title *</Text>
-              <TextInput style={styles.input} placeholder="Course title" placeholderTextColor={COLORS.textMuted}
+              <Text style={[styles.label, { color: colors.textMuted }]}>COURSE TITLE</Text>
+              <TextInput style={[styles.input, { color: colors.textPrimary, borderColor: colors.border }]} placeholder="E.G. ADVANCED ROBOTICS" placeholderTextColor={colors.textMuted}
                 value={formTitle} onChangeText={setFormTitle} />
 
-              <Text style={styles.label}>Description</Text>
-              <TextInput style={[styles.input, styles.textArea]} placeholder="Course description" placeholderTextColor={COLORS.textMuted}
+              <Text style={[styles.label, { color: colors.textMuted, marginTop: 16 }]}>DESCRIPTION</Text>
+              <TextInput style={[styles.input, styles.textArea, { color: colors.textPrimary, borderColor: colors.border }]} placeholder="MODULE DESCRIPTION..." placeholderTextColor={colors.textMuted}
                 value={formDesc} onChangeText={setFormDesc} multiline numberOfLines={3} />
 
-              <Text style={styles.label}>Duration (hours)</Text>
-              <TextInput style={styles.input} placeholder="e.g. 40" placeholderTextColor={COLORS.textMuted}
+              <Text style={[styles.label, { color: colors.textMuted, marginTop: 16 }]}>DURATION (HOURS)</Text>
+              <TextInput style={[styles.input, { color: colors.textPrimary, borderColor: colors.border }]} placeholder="40" placeholderTextColor={colors.textMuted}
                 value={formDuration} onChangeText={setFormDuration} keyboardType="numeric" />
 
-              <Text style={styles.label}>Program</Text>
-              <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: SPACING.md }}>
-                <TouchableOpacity
-                  style={[styles.programPill, !formProgramId && styles.programPillActive]}
-                  onPress={() => setFormProgramId('')}
-                >
-                  <Text style={[styles.programPillText, !formProgramId && styles.programPillTextActive]}>None</Text>
-                </TouchableOpacity>
+              <Text style={[styles.label, { color: colors.textMuted, marginTop: 16 }]}>LINK TO PROGRAM</Text>
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: SPACING.lg }}>
                 {programs.map(p => (
                   <TouchableOpacity
                     key={p.id}
-                    style={[styles.programPill, formProgramId === p.id && styles.programPillActive]}
+                    style={[styles.programPill, { borderColor: colors.border }, formProgramId === p.id && { borderColor: colors.primary, backgroundColor: colors.primary + '10' }]}
                     onPress={() => setFormProgramId(p.id)}
                   >
-                    <Text style={[styles.programPillText, formProgramId === p.id && styles.programPillTextActive]}>{p.name}</Text>
+                    <Text style={[styles.programPillText, { color: colors.textMuted }, formProgramId === p.id && { color: colors.primary, fontWeight: 'bold' }]}>{p.name.toUpperCase()}</Text>
                   </TouchableOpacity>
                 ))}
               </ScrollView>
 
-              <View style={styles.switchRow}>
-                <Text style={styles.label}>Active</Text>
-                <Switch value={formActive} onValueChange={setFormActive}
-                  trackColor={{ false: COLORS.border, true: COLORS.primary }}
-                  thumbColor={formActive ? COLORS.primaryLight : COLORS.textMuted} />
-              </View>
-
               <View style={styles.modalActions}>
-                <TouchableOpacity style={styles.cancelBtn} onPress={() => setShowModal(false)}>
-                  <Text style={styles.cancelBtnText}>Cancel</Text>
+                <TouchableOpacity style={[styles.cancelBtn, { borderColor: colors.border }]} onPress={() => setShowModal(false)}>
+                  <Text style={[styles.cancelBtnText, { color: colors.textSecondary }]}>CANCEL</Text>
                 </TouchableOpacity>
                 <TouchableOpacity style={styles.saveBtn} onPress={handleSave} disabled={saving}>
-                  <LinearGradient colors={COLORS.gradPrimary} style={styles.saveBtnInner}>
+                  <LinearGradient colors={colors.gradPrimary} style={styles.saveBtnInner}>
                     {saving
                       ? <ActivityIndicator size="small" color="#fff" />
-                      : <Text style={styles.saveBtnText}>Save Course</Text>}
+                      : <Text style={styles.saveBtnText}>INITIALIZE COURSE</Text>}
                   </LinearGradient>
                 </TouchableOpacity>
               </View>
+              <View style={{ height: 40 }} />
             </ScrollView>
           </View>
         </KeyboardAvoidingView>
@@ -323,60 +311,54 @@ export default function CoursesScreen({ navigation }: any) {
   );
 }
 
-const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: COLORS.bg },
-  header: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: SPACING.base, paddingVertical: SPACING.md, gap: SPACING.sm },
-  backBtn: { width: 36, height: 36, borderRadius: RADIUS.md, borderWidth: 1, borderColor: COLORS.border, alignItems: 'center', justifyContent: 'center' },
-  backArrow: { fontSize: 18, color: COLORS.textPrimary },
-  headerTitle: { flex: 1, fontSize: FONT_SIZE.lg, fontFamily: FONT_FAMILY.heading, color: COLORS.textPrimary },
-  addBtn: { borderRadius: RADIUS.md, overflow: 'hidden' },
-  addBtnInner: { paddingHorizontal: SPACING.md, paddingVertical: SPACING.sm },
-  addBtnText: { fontSize: FONT_SIZE.sm, fontFamily: FONT_FAMILY.bodySemi, color: '#fff' },
-  statsRow: { flexDirection: 'row', paddingHorizontal: SPACING.base, gap: SPACING.sm, marginBottom: SPACING.sm },
-  statCard: { flex: 1, backgroundColor: COLORS.bgCard, borderRadius: RADIUS.lg, borderWidth: 1, borderColor: COLORS.border, padding: SPACING.md, alignItems: 'center' },
-  statNum: { fontSize: FONT_SIZE.xl, fontFamily: FONT_FAMILY.display, color: COLORS.textPrimary },
-  statLabel: { fontSize: FONT_SIZE.xs, fontFamily: FONT_FAMILY.body, color: COLORS.textMuted, marginTop: 2 },
-  searchWrap: { flexDirection: 'row', alignItems: 'center', marginHorizontal: SPACING.base, marginBottom: SPACING.md, backgroundColor: COLORS.bgCard, borderRadius: RADIUS.lg, borderWidth: 1, borderColor: COLORS.border, paddingHorizontal: SPACING.md },
-  searchIcon: { fontSize: 14, marginRight: SPACING.sm },
-  searchInput: { flex: 1, paddingVertical: SPACING.sm, fontSize: FONT_SIZE.base, fontFamily: FONT_FAMILY.body, color: COLORS.textPrimary },
+const getStyles = (colors: any) => StyleSheet.create({
+  safe: { flex: 1, backgroundColor: colors.bg },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
-  emptyEmoji: { fontSize: 48, marginBottom: SPACING.md },
-  emptyText: { fontSize: FONT_SIZE.md, fontFamily: FONT_FAMILY.body, color: COLORS.textMuted },
-  section: { marginBottom: SPACING.lg },
-  sectionHeader: { flexDirection: 'row', alignItems: 'center', marginBottom: SPACING.sm, gap: SPACING.sm },
-  sectionDot: { width: 8, height: 8, borderRadius: 4 },
-  sectionTitle: { flex: 1, fontSize: FONT_SIZE.base, fontFamily: FONT_FAMILY.heading, color: COLORS.textPrimary },
-  sectionCount: { fontSize: FONT_SIZE.sm, fontFamily: FONT_FAMILY.body, color: COLORS.textMuted, backgroundColor: COLORS.bgCard, borderRadius: RADIUS.full, paddingHorizontal: 8, paddingVertical: 2 },
-  courseCard: { backgroundColor: COLORS.bgCard, borderRadius: RADIUS.lg, borderWidth: 1, borderColor: COLORS.border, padding: SPACING.md, marginBottom: SPACING.sm },
-  courseRow: { flexDirection: 'row', gap: SPACING.sm },
+  emptyEmoji: { fontSize: 44, marginBottom: 12 },
+  emptyText: { fontFamily: FONT_FAMILY.mono, fontSize: 10, letterSpacing: 2 },
+
+  statsRow: { flexDirection: 'row', paddingHorizontal: SPACING.xl, gap: SPACING.sm, marginBottom: SPACING.lg, marginTop: SPACING.md },
+  statCard: { flex: 1, borderRadius: RADIUS.sm, borderWidth: 1, padding: SPACING.md, alignItems: 'center' },
+  statNum: { fontSize: FONT_SIZE.xl, fontFamily: FONT_FAMILY.display },
+  statLabel: { fontSize: 8, fontFamily: FONT_FAMILY.bodyBold, letterSpacing: 1, marginTop: 2 },
+
+  searchWrap: { flexDirection: 'row', alignItems: 'center', marginHorizontal: SPACING.xl, marginBottom: SPACING.lg, borderRadius: RADIUS.sm, borderWidth: 1, paddingHorizontal: SPACING.md },
+  searchIcon: { fontSize: 14, marginRight: SPACING.sm },
+  searchInput: { flex: 1, paddingVertical: 12, fontSize: 12, fontFamily: FONT_FAMILY.mono },
+
+  section: { marginBottom: SPACING.xl },
+  sectionHeader: { flexDirection: 'row', alignItems: 'center', marginBottom: SPACING.md, gap: SPACING.md },
+  sectionDot: { width: 4, height: 16 },
+  sectionTitle: { flex: 1, fontSize: 12, fontFamily: FONT_FAMILY.bodyBold, letterSpacing: 1 },
+  sectionCount: { borderWidth: 1, borderRadius: 4, paddingHorizontal: 6, paddingVertical: 2 },
+
+  courseCard: { borderRadius: RADIUS.sm, borderWidth: 1, padding: SPACING.lg, marginBottom: SPACING.sm },
+  courseRow: { flexDirection: 'row', gap: SPACING.md },
   courseInfo: { flex: 1 },
-  courseTitle: { fontSize: FONT_SIZE.base, fontFamily: FONT_FAMILY.bodySemi, color: COLORS.textPrimary, marginBottom: 4 },
-  courseDesc: { fontSize: FONT_SIZE.sm, fontFamily: FONT_FAMILY.body, color: COLORS.textSecondary, marginBottom: SPACING.sm },
+  courseTitle: { fontSize: 15, fontFamily: FONT_FAMILY.bodyBold, marginBottom: 4 },
+  courseDesc: { fontSize: 12, fontFamily: FONT_FAMILY.body, marginBottom: SPACING.md, lineHeight: 18 },
   chipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
-  chip: { borderRadius: RADIUS.full, paddingHorizontal: 8, paddingVertical: 3 },
-  chipText: { fontSize: FONT_SIZE.xs, fontFamily: FONT_FAMILY.bodySemi },
+  chip: { borderRadius: RADIUS.xs, paddingHorizontal: 8, paddingVertical: 3 },
+  chipText: { fontSize: 9, fontFamily: FONT_FAMILY.bodyBold, textTransform: 'uppercase' },
   courseRight: { alignItems: 'flex-end', gap: SPACING.sm },
-  activeBadge: { flexDirection: 'row', alignItems: 'center', borderRadius: RADIUS.full, paddingHorizontal: 8, paddingVertical: 3, gap: 4 },
-  dot: { width: 6, height: 6, borderRadius: 3 },
-  activeText: { fontSize: FONT_SIZE.xs, fontFamily: FONT_FAMILY.bodySemi },
-  courseDate: { fontSize: FONT_SIZE.xs, fontFamily: FONT_FAMILY.body, color: COLORS.textMuted },
-  // Modal
-  modalOverlay: { flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.6)' },
-  modalSheet: { backgroundColor: '#0f0f1a', borderTopLeftRadius: RADIUS['2xl'], borderTopRightRadius: RADIUS['2xl'], padding: SPACING.xl, maxHeight: '90%' },
-  modalHandle: { width: 40, height: 4, backgroundColor: COLORS.border, borderRadius: 2, alignSelf: 'center', marginBottom: SPACING.lg },
-  modalTitle: { fontSize: FONT_SIZE.lg, fontFamily: FONT_FAMILY.heading, color: COLORS.textPrimary, marginBottom: SPACING.lg },
-  label: { fontSize: FONT_SIZE.sm, fontFamily: FONT_FAMILY.bodySemi, color: COLORS.textSecondary, marginBottom: 6, marginTop: SPACING.sm },
-  input: { backgroundColor: COLORS.bgCard, borderWidth: 1, borderColor: COLORS.border, borderRadius: RADIUS.lg, paddingHorizontal: SPACING.md, paddingVertical: SPACING.sm, fontSize: FONT_SIZE.base, fontFamily: FONT_FAMILY.body, color: COLORS.textPrimary },
+  activeBadge: { flexDirection: 'row', alignItems: 'center', borderRadius: RADIUS.xs, paddingHorizontal: 8, paddingVertical: 4, gap: 6 },
+  dot: { width: 4, height: 4, borderRadius: 2 },
+  activeText: { fontSize: 8, fontFamily: FONT_FAMILY.bodyBold, letterSpacing: 1 },
+  courseDate: { fontSize: 9, fontFamily: FONT_FAMILY.mono },
+
+  modalOverlay: { flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.8)' },
+  modalSheet: { borderTopLeftRadius: RADIUS.lg, borderTopRightRadius: RADIUS.lg, borderTopWidth: 1, padding: SPACING.xl, maxHeight: '90%' },
+  modalHandle: { width: 32, height: 3, borderRadius: 2, alignSelf: 'center', marginBottom: SPACING.xl },
+  modalTitle: { fontSize: FONT_SIZE.lg, fontFamily: FONT_FAMILY.display, marginBottom: SPACING.xl, letterSpacing: 1 },
+  label: { fontSize: 9, fontFamily: FONT_FAMILY.bodyBold, letterSpacing: 1, marginBottom: 8 },
+  input: { borderWidth: 1, borderRadius: RADIUS.sm, paddingHorizontal: 16, paddingVertical: 12, fontSize: 13, fontFamily: FONT_FAMILY.body },
   textArea: { minHeight: 80, textAlignVertical: 'top' },
-  switchRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: SPACING.sm },
-  programPill: { borderRadius: RADIUS.full, borderWidth: 1, borderColor: COLORS.border, paddingHorizontal: SPACING.md, paddingVertical: SPACING.xs, marginRight: SPACING.sm },
-  programPillActive: { backgroundColor: COLORS.primaryPale, borderColor: COLORS.primary },
-  programPillText: { fontSize: FONT_SIZE.sm, fontFamily: FONT_FAMILY.body, color: COLORS.textMuted },
-  programPillTextActive: { color: COLORS.primaryLight, fontFamily: FONT_FAMILY.bodySemi },
-  modalActions: { flexDirection: 'row', gap: SPACING.sm, marginTop: SPACING.xl },
-  cancelBtn: { flex: 1, padding: SPACING.md, borderRadius: RADIUS.lg, borderWidth: 1, borderColor: COLORS.border, alignItems: 'center' },
-  cancelBtnText: { fontSize: FONT_SIZE.base, fontFamily: FONT_FAMILY.bodySemi, color: COLORS.textSecondary },
-  saveBtn: { flex: 2, borderRadius: RADIUS.lg, overflow: 'hidden' },
-  saveBtnInner: { padding: SPACING.md, alignItems: 'center' },
-  saveBtnText: { fontSize: FONT_SIZE.base, fontFamily: FONT_FAMILY.bodySemi, color: '#fff' },
+  programPill: { borderRadius: RADIUS.sm, borderWidth: 1, paddingHorizontal: 12, paddingVertical: 6, marginRight: 8 },
+  programPillText: { fontSize: 10, fontFamily: FONT_FAMILY.bodyBold },
+  modalActions: { flexDirection: 'row', gap: SPACING.md, marginTop: SPACING.xl },
+  cancelBtn: { flex: 1, padding: 16, borderRadius: RADIUS.sm, borderWidth: 1, alignItems: 'center' },
+  cancelBtnText: { fontSize: 11, fontFamily: FONT_FAMILY.bodyBold, letterSpacing: 1 },
+  saveBtn: { flex: 2, borderRadius: RADIUS.sm, overflow: 'hidden' },
+  saveBtnInner: { padding: 16, alignItems: 'center' },
+  saveBtnText: { fontSize: 11, fontFamily: FONT_FAMILY.bodyBold, color: '#fff', letterSpacing: 1 },
 });

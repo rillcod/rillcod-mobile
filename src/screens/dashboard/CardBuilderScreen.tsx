@@ -6,6 +6,8 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { MotiView } from 'moti';
 import { LinearGradient } from 'expo-linear-gradient';
+import * as Print from 'expo-print';
+import * as Sharing from 'expo-sharing';
 import { useAuth } from '../../contexts/AuthContext';
 import { supabase } from '../../lib/supabase';
 import { COLORS } from '../../constants/colors';
@@ -63,7 +65,7 @@ function IDCard({ student }: { student: StudentRecord }) {
       <DotGrid />
 
       {/* Top bar */}
-      <LinearGradient colors={COLORS.gradPrimary} style={styles.idCardTopBar}>
+      <LinearGradient colors={COLORS.gradPrimary as [string, string, ...string[]]} style={styles.idCardTopBar}>
         <View style={styles.idCardTopBarContent}>
           {/* Logo mark placeholder */}
           <View style={styles.logoMark}>
@@ -79,8 +81,8 @@ function IDCard({ student }: { student: StudentRecord }) {
       {/* Avatar + name */}
       <View style={styles.idCardBody}>
         <View style={styles.avatarSection}>
-          <LinearGradient colors={['rgba(122,6,6,0.4)', 'rgba(122,6,6,0.1)']} style={styles.avatarRing}>
-            <LinearGradient colors={COLORS.gradPrimary} style={styles.avatarInner}>
+          <LinearGradient colors={['rgba(122,6,6,0.4)', 'rgba(122,6,6,0.1)'] as [string, string]} style={styles.avatarRing}>
+            <LinearGradient colors={COLORS.gradPrimary as [string, string, ...string[]]} style={styles.avatarInner}>
               <Text style={styles.avatarInitials}>{initials}</Text>
             </LinearGradient>
           </LinearGradient>
@@ -135,7 +137,7 @@ function IDCard({ student }: { student: StudentRecord }) {
       </View>
 
       {/* Bottom red bar */}
-      <LinearGradient colors={COLORS.gradPrimary} style={styles.idCardBottomBar}>
+      <LinearGradient colors={COLORS.gradPrimary as [string, string, ...string[]]} style={styles.idCardBottomBar}>
         <Text style={styles.validText}>✦  Valid 2025 – 2026  ✦</Text>
         <Text style={styles.websiteText}>rillcod.com</Text>
       </LinearGradient>
@@ -150,6 +152,7 @@ export default function CardBuilderScreen({ navigation }: any) {
   const [results, setResults] = useState<StudentRecord[]>([]);
   const [searching, setSearching] = useState(false);
   const [selected, setSelected] = useState<StudentRecord | null>(null);
+  const [exporting, setExporting] = useState(false);
 
   const handleSearch = useCallback(async (text: string) => {
     setSearch(text);
@@ -183,6 +186,76 @@ export default function CardBuilderScreen({ navigation }: any) {
     setStep('search');
   };
 
+  const handleExportCard = async () => {
+    if (!selected) return;
+    try {
+      setExporting(true);
+      const html = `
+        <html>
+          <head>
+            <meta charset="utf-8" />
+            <style>
+              body { font-family: Arial, sans-serif; background: #0f172a; padding: 24px; }
+              .card { width: 760px; margin: 0 auto; border-radius: 28px; overflow: hidden; background: linear-gradient(180deg, #111827, #0f172a); color: #fff; border: 1px solid rgba(244,164,98,0.3); }
+              .top { padding: 24px 28px; background: linear-gradient(90deg, ${COLORS.gradPrimary[0]}, ${COLORS.gradPrimary[1]}); display: flex; align-items: center; gap: 16px; }
+              .logo { width: 48px; height: 48px; border-radius: 12px; background: rgba(255,255,255,0.18); display: flex; align-items: center; justify-content: center; font-size: 26px; font-weight: 700; }
+              .top h1 { margin: 0; font-size: 24px; letter-spacing: 1px; }
+              .top p { margin: 4px 0 0; font-size: 12px; letter-spacing: 2px; text-transform: uppercase; }
+              .body { padding: 30px 28px; }
+              .hero { text-align: center; margin-bottom: 24px; }
+              .avatar { width: 92px; height: 92px; border-radius: 46px; background: linear-gradient(135deg, ${COLORS.gradPrimary[0]}, ${COLORS.gradPrimary[1]}); margin: 0 auto 14px; display: flex; align-items: center; justify-content: center; font-size: 32px; font-weight: 700; }
+              .name { font-size: 28px; font-weight: 700; margin: 0; }
+              .pill { display: inline-block; margin-top: 10px; padding: 6px 12px; border-radius: 999px; background: rgba(244,164,98,0.18); color: ${COLORS.primaryLight}; font-size: 12px; text-transform: uppercase; letter-spacing: 1px; }
+              .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+              .item { border: 1px solid rgba(148,163,184,0.2); border-radius: 16px; padding: 16px; background: rgba(255,255,255,0.04); }
+              .label { font-size: 11px; text-transform: uppercase; letter-spacing: 1px; color: #94A3B8; margin-bottom: 8px; }
+              .value { font-size: 20px; font-weight: 700; color: #fff; word-break: break-word; }
+              .bottom { padding: 16px 28px; background: linear-gradient(90deg, ${COLORS.gradPrimary[0]}, ${COLORS.gradPrimary[1]}); display: flex; justify-content: space-between; font-size: 12px; letter-spacing: 1px; }
+            </style>
+          </head>
+          <body>
+            <div class="card">
+              <div class="top">
+                <div class="logo">R</div>
+                <div>
+                  <h1>RILLCOD ACADEMY</h1>
+                  <p>Student ID Card</p>
+                </div>
+              </div>
+              <div class="body">
+                <div class="hero">
+                  <div class="avatar">${getInitials(selected.full_name)}</div>
+                  <p class="name">${selected.full_name}</p>
+                  <div class="pill">Student</div>
+                </div>
+                <div class="grid">
+                  <div class="item"><div class="label">ID Number</div><div class="value">${shortId(selected.id)}</div></div>
+                  <div class="item"><div class="label">Class / Grade</div><div class="value">${selected.section_class ?? 'N/A'}</div></div>
+                  <div class="item"><div class="label">School</div><div class="value">${selected.school_name ?? 'Rillcod Academy'}</div></div>
+                  <div class="item"><div class="label">Enrolled</div><div class="value">${enrollYear(selected.created_at)}</div></div>
+                </div>
+              </div>
+              <div class="bottom">
+                <span>Valid 2025 - 2026</span>
+                <span>rillcod.com</span>
+              </div>
+            </div>
+          </body>
+        </html>
+      `;
+      const { uri } = await Print.printToFileAsync({ html });
+      if (await Sharing.isAvailableAsync()) {
+        await Sharing.shareAsync(uri, { UTI: '.pdf', mimeType: 'application/pdf' });
+      } else {
+        Alert.alert('Export Ready', uri);
+      }
+    } catch (e: any) {
+      Alert.alert('Export Failed', e.message ?? 'Unable to export student card.');
+    } finally {
+      setExporting(false);
+    }
+  };
+
   // ---- STEP 1: Search ----
   if (step === 'search') {
     return (
@@ -201,7 +274,7 @@ export default function CardBuilderScreen({ navigation }: any) {
             transition={{ type: 'timing', duration: 400 }}
           >
             <View style={styles.stepHero}>
-              <LinearGradient colors={['rgba(122,6,6,0.15)', 'rgba(122,6,6,0.03)']} style={styles.stepHeroCard}>
+              <LinearGradient colors={['rgba(122,6,6,0.15)', 'rgba(122,6,6,0.03)'] as [string, string]} style={styles.stepHeroCard}>
                 <Text style={styles.stepHeroEmoji}>🪪</Text>
                 <Text style={styles.stepHeroTitle}>Generate Student ID Card</Text>
                 <Text style={styles.stepHeroSubtitle}>Search for a student to generate their ID card</Text>
@@ -289,18 +362,19 @@ export default function CardBuilderScreen({ navigation }: any) {
 
         {/* Action buttons */}
         <View style={styles.actionButtons}>
-          <TouchableOpacity
-            style={styles.shareBtn}
-            onPress={() => Alert.alert(
-              'Share ID Card',
-              'In production, this exports the card as a high-quality PNG or PDF and opens the system share sheet.',
-              [{ text: 'Got it' }]
-            )}
-          >
-            <LinearGradient colors={COLORS.gradPrimary} style={styles.shareBtnInner}>
-              <Text style={styles.shareBtnText}>📤  Share Card</Text>
-            </LinearGradient>
-          </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.shareBtn}
+              onPress={handleExportCard}
+              disabled={exporting}
+            >
+              <LinearGradient colors={COLORS.gradPrimary as [string, string, ...string[]]} style={styles.shareBtnInner}>
+                {exporting ? (
+                  <ActivityIndicator size="small" color="#fff" />
+                ) : (
+                  <Text style={styles.shareBtnText}>Share Card PDF</Text>
+                )}
+              </LinearGradient>
+            </TouchableOpacity>
 
           <TouchableOpacity style={styles.newCardBtn} onPress={handleNewCard}>
             <Text style={styles.newCardBtnText}>🔄  New Card</Text>

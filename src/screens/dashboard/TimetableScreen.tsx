@@ -25,28 +25,33 @@ interface TimetableSlot {
 
 interface Timetable {
   id: string;
-  name: string;
+  title: string;
   academic_year: string | null;
   term: string | null;
   is_active: boolean;
+  section: string | null;
 }
 
 const DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'];
 const DAY_COLORS = [COLORS.admin, '#7c3aed', COLORS.info, COLORS.success, COLORS.gold];
+const TODAY = new Date().toLocaleDateString('en-US', { weekday: 'long' });
 
 export default function TimetableScreen({ navigation }: any) {
   const { profile } = useAuth();
   const [timetables, setTimetables] = useState<Timetable[]>([]);
   const [selectedId, setSelectedId] = useState<string>('');
   const [slots, setSlots] = useState<TimetableSlot[]>([]);
-  const [selectedDay, setSelectedDay] = useState('Monday');
+  const [selectedDay, setSelectedDay] = useState(DAYS.includes(TODAY) ? TODAY : 'Monday');
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+
+  const isTeacher = profile?.role === 'teacher';
+  const isStudent = profile?.role === 'student';
 
   const loadTimetables = useCallback(async () => {
     let q = supabase
       .from('timetables')
-      .select('id, name, academic_year, term, is_active')
+      .select('id, title, academic_year, term, is_active, section')
       .order('is_active', { ascending: false })
       .limit(20);
 
@@ -84,7 +89,11 @@ export default function TimetableScreen({ navigation }: any) {
     setRefreshing(false);
   };
 
-  const daySlots = slots.filter(s => s.day_of_week === selectedDay);
+  const activeTimetable = timetables.find((t) => t.id === selectedId) ?? null;
+  const visibleSlots = isTeacher ? slots.filter((slot) => slot.teacher_name === profile?.full_name) : slots;
+  const daySlots = visibleSlots.filter(s => s.day_of_week === selectedDay);
+  const todaySlots = visibleSlots.filter((slot) => slot.day_of_week === (DAYS.includes(TODAY) ? TODAY : selectedDay));
+  const totalSessions = visibleSlots.length;
 
   if (loading) {
     return (
@@ -120,11 +129,37 @@ export default function TimetableScreen({ navigation }: any) {
         </TouchableOpacity>
         <View style={{ flex: 1 }}>
           <Text style={styles.title}>Timetable</Text>
-          {timetables.find(t => t.id === selectedId) && (
-            <Text style={styles.subtitle}>{timetables.find(t => t.id === selectedId)?.name}</Text>
+          {activeTimetable && (
+            <Text style={styles.subtitle}>{activeTimetable.title}</Text>
           )}
         </View>
       </View>
+
+      <View style={styles.summaryRow}>
+        <View style={styles.summaryCard}>
+          <Text style={styles.summaryValue}>{todaySlots.length}</Text>
+          <Text style={styles.summaryLabel}>{TODAY === selectedDay ? 'Today' : 'Today Queue'}</Text>
+        </View>
+        <View style={styles.summaryCard}>
+          <Text style={styles.summaryValue}>{totalSessions}</Text>
+          <Text style={styles.summaryLabel}>{isTeacher ? 'My Slots' : isStudent ? 'Visible Slots' : 'All Slots'}</Text>
+        </View>
+        <View style={styles.summaryCard}>
+          <Text style={styles.summaryValue}>{activeTimetable?.section || 'All'}</Text>
+          <Text style={styles.summaryLabel}>Section</Text>
+        </View>
+      </View>
+
+      {activeTimetable && (
+        <View style={styles.banner}>
+          <Text style={styles.bannerTitle}>{activeTimetable.title}</Text>
+          <Text style={styles.bannerMeta}>
+            {(activeTimetable.term || 'Current term')}
+            {activeTimetable.academic_year ? ` · ${activeTimetable.academic_year}` : ''}
+            {activeTimetable.section ? ` · ${activeTimetable.section}` : ''}
+          </Text>
+        </View>
+      )}
 
       {/* Timetable picker if multiple */}
       {timetables.length > 1 && (
@@ -133,10 +168,10 @@ export default function TimetableScreen({ navigation }: any) {
             <TouchableOpacity
               key={t.id}
               onPress={() => setSelectedId(t.id)}
-              style={[styles.ttPill, selectedId === t.id && styles.ttPillActive]}
+                style={[styles.ttPill, selectedId === t.id && styles.ttPillActive]}
             >
               <Text style={[styles.ttPillText, selectedId === t.id && styles.ttPillTextActive]}>
-                {t.name} {t.is_active ? '●' : ''}
+                {t.title} {t.is_active ? '●' : ''}
               </Text>
             </TouchableOpacity>
           ))}
@@ -146,7 +181,7 @@ export default function TimetableScreen({ navigation }: any) {
       {/* Day tabs */}
       <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.dayTabs}>
         {DAYS.map((day, i) => {
-          const count = slots.filter(s => s.day_of_week === day).length;
+          const count = visibleSlots.filter(s => s.day_of_week === day).length;
           return (
             <TouchableOpacity
               key={day}
@@ -213,6 +248,13 @@ const styles = StyleSheet.create({
   backArrow: { fontSize: 18, color: COLORS.textPrimary },
   title: { fontFamily: FONT_FAMILY.display, fontSize: FONT_SIZE['2xl'], color: COLORS.textPrimary },
   subtitle: { fontFamily: FONT_FAMILY.body, fontSize: FONT_SIZE.xs, color: COLORS.textMuted, marginTop: 2 },
+  summaryRow: { flexDirection: 'row', gap: SPACING.sm, paddingHorizontal: SPACING.xl, paddingBottom: SPACING.sm },
+  summaryCard: { flex: 1, backgroundColor: COLORS.bgCard, borderWidth: 1, borderColor: COLORS.border, borderRadius: RADIUS.md, padding: SPACING.sm },
+  summaryValue: { fontFamily: FONT_FAMILY.display, fontSize: FONT_SIZE.base, color: COLORS.textPrimary },
+  summaryLabel: { fontFamily: FONT_FAMILY.body, fontSize: FONT_SIZE.xs, color: COLORS.textMuted, marginTop: 2 },
+  banner: { marginHorizontal: SPACING.xl, marginBottom: SPACING.md, backgroundColor: COLORS.bgCard, borderWidth: 1, borderColor: COLORS.border, borderRadius: RADIUS.lg, padding: SPACING.md },
+  bannerTitle: { fontFamily: FONT_FAMILY.display, fontSize: FONT_SIZE.base, color: COLORS.textPrimary },
+  bannerMeta: { fontFamily: FONT_FAMILY.body, fontSize: FONT_SIZE.xs, color: COLORS.textMuted, marginTop: 4 },
 
   ttPicker: { paddingHorizontal: SPACING.xl, paddingBottom: SPACING.sm, gap: SPACING.sm },
   ttPill: { paddingHorizontal: 14, paddingVertical: 6, borderRadius: RADIUS.full, borderWidth: 1, borderColor: COLORS.border, backgroundColor: COLORS.bgCard },

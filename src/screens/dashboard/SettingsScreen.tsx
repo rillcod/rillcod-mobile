@@ -50,7 +50,7 @@ export default function SettingsScreen({ navigation }: any) {
         setAiKey(data?.value ?? '');
         setAiKeyLoaded(true);
       });
-  }, [isAdmin]);
+  }, [isStaff]);
 
   const saveAiKey = async () => {
     const key = aiKey.trim();
@@ -453,7 +453,7 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
     fontFamily: FONT_FAMILY.body,
     fontSize: FONT_SIZE.sm,
-    color: COLORS.text,
+    color: COLORS.textPrimary,
   },
   aiKeyToggle: {
     paddingHorizontal: SPACING.sm,

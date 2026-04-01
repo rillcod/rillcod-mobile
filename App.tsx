@@ -18,6 +18,7 @@ import {
 } from '@expo-google-fonts/inter';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { AuthProvider } from './src/contexts/AuthContext';
+import { ThemeProvider, useTheme } from './src/contexts/ThemeContext';
 import AppNavigator from './src/navigation/AppNavigator';
 import { usePushNotifications } from './src/hooks/usePushNotifications';
 
@@ -26,7 +27,14 @@ SplashScreen.preventAutoHideAsync();
 
 function AppInner() {
   usePushNotifications();
-  return <AppNavigator />;
+  const { colors, theme } = useTheme();
+  
+  return (
+    <View style={{ flex: 1, backgroundColor: colors.bg }}>
+      <StatusBar style={theme === 'dark' ? 'light' : 'dark'} backgroundColor={colors.bg} />
+      <AppNavigator />
+    </View>
+  );
 }
 
 export default function App() {
@@ -52,11 +60,12 @@ export default function App() {
 
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
-      <View style={{ flex: 1, backgroundColor: '#05050a' }} onLayout={onLayoutRootView}>
-        <StatusBar style="light" backgroundColor="#05050a" />
-        <AuthProvider>
-          <AppInner />
-        </AuthProvider>
+      <View style={{ flex: 1 }} onLayout={onLayoutRootView}>
+        <ThemeProvider>
+          <AuthProvider>
+            <AppInner />
+          </AuthProvider>
+        </ThemeProvider>
       </View>
     </GestureHandlerRootView>
   );

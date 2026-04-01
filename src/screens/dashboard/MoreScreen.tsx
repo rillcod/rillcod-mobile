@@ -1,439 +1,410 @@
 import React from 'react';
 import {
-  View, Text, StyleSheet, ScrollView, TouchableOpacity, Image,
+  View,
+  Text,
+  StyleSheet,
+  ScrollView,
+  TouchableOpacity,
+  TextInput,
+  Dimensions,
 } from 'react-native';
+import { LinearGradient } from 'expo-linear-gradient';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { MotiView } from 'moti';
 import { useAuth } from '../../contexts/AuthContext';
 import { COLORS } from '../../constants/colors';
-import { FONT_FAMILY, FONT_SIZE } from '../../constants/typography';
+import { FONT_FAMILY, FONT_SIZE, LETTER_SPACING } from '../../constants/typography';
 import { SPACING, RADIUS } from '../../constants/spacing';
+import { getPortalSectionsForRole, type PortalMenuItem } from '../../config/portalSections';
 
-interface MenuItem {
-  emoji: string;
-  label: string;
-  description: string;
-  screen: string;
-  color: string;
-}
-interface MenuSection {
-  title: string;
-  items: MenuItem[];
-}
-
-// ── Admin nav ─────────────────────────────────────────────────────────────────
-const ADMIN_SECTIONS: MenuSection[] = [
-  {
-    title: 'People',
-    items: [
-      { emoji: '🏫', label: 'Schools',           description: 'Partner schools',             screen: 'Schools',          color: COLORS.info },
-      { emoji: '👩‍🏫', label: 'Teachers',          description: 'Manage teachers',             screen: 'Teachers',         color: '#7c3aed' },
-      { emoji: '👥', label: 'Students',           description: 'All enrolled students',       screen: 'Students',         color: COLORS.admin },
-      { emoji: '📋', label: 'Register Students',  description: 'Bulk-register new students',  screen: 'BulkRegister',     color: COLORS.info },
-      { emoji: '🎓', label: 'Enrol Students',     description: 'Enrol into programmes',       screen: 'EnrolStudents',    color: COLORS.success },
-      { emoji: '🗑️', label: 'Wipe Students',      description: 'Archive or remove students',  screen: 'WipeStudents',     color: COLORS.error },
-      { emoji: '🪪', label: 'Card Builder',        description: 'Generate student ID cards',   screen: 'CardBuilder',      color: COLORS.gold },
-      { emoji: '👤', label: 'Users',              description: 'All portal user accounts',    screen: 'Users',            color: '#7c3aed' },
-      { emoji: '✅', label: 'Approvals',           description: 'Pending account approvals',   screen: 'Approvals',        color: COLORS.success },
-    ],
-  },
-  {
-    title: 'Academics',
-    items: [
-      { emoji: '🎯', label: 'Programs',    description: 'Learning programmes',      screen: 'Programs',    color: COLORS.primary },
-      { emoji: '📖', label: 'Courses',     description: 'Courses & modules',        screen: 'Courses',     color: '#7c3aed' },
-      { emoji: '📚', label: 'Classes',     description: 'Manage classes',           screen: 'Classes',     color: '#7c3aed' },
-      { emoji: '📝', label: 'Assignments', description: 'View & grade assignments', screen: 'Assignments', color: COLORS.info },
-      { emoji: '🔬', label: 'Projects',    description: 'Lab & portfolio projects', screen: 'Projects',    color: COLORS.accent },
-      { emoji: '📊', label: 'Grades',      description: 'Grades & scores',          screen: 'Grades',      color: COLORS.success },
-      { emoji: '🎯', label: 'CBT Exams',   description: 'Computer-based tests',     screen: 'CBT',         color: COLORS.admin },
-      { emoji: '📋', label: 'Attendance',  description: 'Mark & view attendance',   screen: 'Attendance',  color: COLORS.warning },
-      { emoji: '📅', label: 'Timetable',   description: 'Class schedules',          screen: 'Timetable',   color: COLORS.success },
-    ],
-  },
-  {
-    title: 'Content',
-    items: [
-      { emoji: '📚', label: 'Library',       description: 'Educational resources',        screen: 'Library',      color: COLORS.info },
-      { emoji: '🏆', label: 'Leaderboard',   description: 'Student rankings & XP',        screen: 'Leaderboard',  color: COLORS.gold },
-      { emoji: '📡', label: 'Live Sessions', description: 'Scheduled live classes',        screen: 'LiveSessions', color: COLORS.admin },
-      { emoji: '💬', label: 'Engage',        description: 'Student discussion hub',        screen: 'Engage',       color: COLORS.accent },
-      { emoji: '🔐', label: 'Vault',         description: 'Personal code snippet storage', screen: 'Vault',        color: '#7c3aed' },
-      { emoji: '🎮', label: 'Missions',      description: 'Daily coding challenges',       screen: 'Missions',     color: COLORS.success },
-      { emoji: '🧪', label: 'Protocol',      description: 'Structured learning pathway',   screen: 'Protocol',     color: COLORS.info },
-    ],
-  },
-  {
-    title: 'Reports',
-    items: [
-      { emoji: '🏗️', label: 'Report Builder',     description: 'Build student report cards',  screen: 'ReportBuilder',      color: COLORS.accent },
-      { emoji: '📈', label: 'Progress Reports',    description: 'Student report cards',         screen: 'Reports',            color: COLORS.accent },
-      { emoji: '🏅', label: 'Manage Certificates', description: 'Issue & revoke certificates',  screen: 'ManageCertificates', color: COLORS.gold },
-      { emoji: '📊', label: 'Analytics',           description: 'Platform analytics',           screen: 'Analytics',          color: COLORS.info },
-    ],
-  },
-  {
-    title: 'Finance',
-    items: [
-      { emoji: '💳', label: 'Payments', description: 'Invoices & transactions', screen: 'Payments', color: COLORS.gold },
-    ],
-  },
-  {
-    title: 'AI & Tools',
-    items: [
-      { emoji: '🤖', label: 'AI Hub', description: 'Tutor, generator & code lab', screen: 'AI', color: '#7c3aed' },
-    ],
-  },
-  {
-    title: 'System',
-    items: [
-      { emoji: '💬', label: 'Messages',    description: 'Chat with teachers & staff',   screen: 'Messages',    color: COLORS.info },
-      { emoji: '📰', label: 'Newsletters', description: 'Create & send newsletters',    screen: 'Newsletters', color: COLORS.accent },
-      { emoji: '⚙️', label: 'Settings',    description: 'App preferences & account',   screen: 'Settings',    color: COLORS.textSecondary },
-    ],
-  },
-];
-
-// ── Teacher nav ───────────────────────────────────────────────────────────────
-const TEACHER_SECTIONS: MenuSection[] = [
-  {
-    title: 'Teaching',
-    items: [
-      { emoji: '📚', label: 'My Classes',  description: 'Your assigned classes',     screen: 'Classes',     color: '#7c3aed' },
-      { emoji: '📖', label: 'Lessons',     description: 'Manage lesson content',     screen: 'Lessons',     color: COLORS.info },
-      { emoji: '📝', label: 'Assignments', description: 'Create & grade work',       screen: 'Assignments', color: COLORS.accent },
-      { emoji: '🔬', label: 'Projects',    description: 'Lab & portfolio projects',  screen: 'Projects',    color: COLORS.accent },
-      { emoji: '🎯', label: 'CBT Exams',   description: 'Computer-based tests',      screen: 'CBT',         color: COLORS.admin },
-      { emoji: '📋', label: 'Attendance',  description: 'Mark student attendance',   screen: 'Attendance',  color: COLORS.warning },
-      { emoji: '📅', label: 'Timetable',   description: 'Your class schedule',       screen: 'Timetable',   color: COLORS.success },
-    ],
-  },
-  {
-    title: 'Students',
-    items: [
-      { emoji: '👥', label: 'Students',          description: 'Your students',             screen: 'Students',   color: COLORS.admin },
-      { emoji: '📋', label: 'Register Students', description: 'Add new students',          screen: 'BulkRegister', color: COLORS.info },
-      { emoji: '📊', label: 'Grades',            description: 'Student grades & scores',   screen: 'Grades',     color: COLORS.success },
-    ],
-  },
-  {
-    title: 'Reports',
-    items: [
-      { emoji: '🏗️', label: 'Report Builder',     description: 'Build student report cards', screen: 'ReportBuilder',      color: COLORS.accent },
-      { emoji: '📈', label: 'Progress Reports',    description: 'Student report cards',        screen: 'Reports',            color: COLORS.accent },
-      { emoji: '🏅', label: 'Manage Certificates', description: 'Issue & revoke certificates', screen: 'ManageCertificates', color: COLORS.gold },
-    ],
-  },
-  {
-    title: 'Content',
-    items: [
-      { emoji: '📚', label: 'Library',         description: 'Educational resources',  screen: 'Library',     color: COLORS.info },
-      { emoji: '💻', label: 'Code Playground', description: 'AI coding environment',  screen: 'AI',          color: '#7c3aed' },
-      { emoji: '🏆', label: 'Leaderboard',     description: 'Student rankings & XP',  screen: 'Leaderboard', color: COLORS.gold },
-    ],
-  },
-  {
-    title: 'Community',
-    items: [
-      { emoji: '💬', label: 'Engage',    description: 'Student discussion hub',        screen: 'Engage',   color: COLORS.accent },
-      { emoji: '🔐', label: 'Vault',     description: 'Personal code snippets',        screen: 'Vault',    color: '#7c3aed' },
-      { emoji: '🎮', label: 'Missions',  description: 'Daily coding challenges',       screen: 'Missions', color: COLORS.success },
-      { emoji: '🧪', label: 'Protocol',  description: 'Structured learning pathway',   screen: 'Protocol', color: COLORS.info },
-    ],
-  },
-  {
-    title: 'More',
-    items: [
-      { emoji: '📡', label: 'Live Sessions', description: 'Scheduled live classes',  screen: 'LiveSessions', color: COLORS.admin },
-      { emoji: '💬', label: 'Messages',      description: 'Chat with staff',          screen: 'Messages',     color: COLORS.info },
-      { emoji: '📰', label: 'Newsletters',   description: 'School communications',    screen: 'Newsletters',  color: COLORS.accent },
-      { emoji: '⚙️', label: 'Settings',      description: 'App preferences',          screen: 'Settings',     color: COLORS.textSecondary },
-    ],
-  },
-];
-
-// ── School role nav ───────────────────────────────────────────────────────────
-const SCHOOL_SECTIONS: MenuSection[] = [
-  {
-    title: 'Overview',
-    items: [
-      { emoji: '🏫', label: 'School Overview', description: 'Dashboard & statistics',    screen: 'SchoolOverview', color: COLORS.primary },
-    ],
-  },
-  {
-    title: 'Academics',
-    items: [
-      { emoji: '👥', label: 'My Students', description: 'Enrolled students',         screen: 'Students',     color: COLORS.admin },
-      { emoji: '📚', label: 'Classes',     description: 'Your school classes',       screen: 'Classes',      color: '#7c3aed' },
-      { emoji: '📋', label: 'Attendance',  description: 'Student attendance',        screen: 'Attendance',   color: COLORS.warning },
-      { emoji: '📅', label: 'Timetable',   description: 'Class schedules',           screen: 'Timetable',    color: COLORS.success },
-      { emoji: '📡', label: 'Live Sessions', description: 'Scheduled live classes',  screen: 'LiveSessions', color: COLORS.admin },
-    ],
-  },
-  {
-    title: 'Reports',
-    items: [
-      { emoji: '📈', label: 'Student Reports', description: 'View student report cards', screen: 'Reports',    color: COLORS.accent },
-      { emoji: '📊', label: 'Grades',          description: 'Student grades & scores',   screen: 'Grades',     color: COLORS.success },
-      { emoji: '📉', label: 'Performance',     description: 'School analytics overview', screen: 'Analytics',  color: COLORS.info },
-    ],
-  },
-  {
-    title: 'Finance',
-    items: [
-      { emoji: '💳', label: 'Payments', description: 'Fee invoices & transactions', screen: 'Payments', color: COLORS.gold },
-    ],
-  },
-  {
-    title: 'More',
-    items: [
-      { emoji: '💬', label: 'Messages', description: 'Chat with Rillcod staff', screen: 'Messages', color: COLORS.info },
-      { emoji: '⚙️', label: 'Settings', description: 'App preferences',         screen: 'Settings', color: COLORS.textSecondary },
-    ],
-  },
-];
-
-// ── Student nav ───────────────────────────────────────────────────────────────
-const STUDENT_SECTIONS: MenuSection[] = [
-  {
-    title: 'Learning',
-    items: [
-      { emoji: '📖', label: 'Courses',     description: 'Your enrolled courses',    screen: 'Courses',     color: '#7c3aed' },
-      { emoji: '📝', label: 'Assignments', description: 'Tasks & submissions',      screen: 'Assignments', color: COLORS.info },
-      { emoji: '🔬', label: 'Projects',    description: 'Lab & portfolio projects', screen: 'Projects',    color: COLORS.accent },
-      { emoji: '📊', label: 'Grades',      description: 'Your grades & scores',     screen: 'Grades',      color: COLORS.success },
-      { emoji: '📋', label: 'Attendance',  description: 'Your attendance record',   screen: 'Attendance',  color: COLORS.warning },
-      { emoji: '📅', label: 'Timetable',   description: 'Your class schedule',      screen: 'Timetable',   color: COLORS.success },
-      { emoji: '🎯', label: 'CBT Exams',   description: 'Practice & sit exams',     screen: 'CBT',         color: COLORS.admin },
-    ],
-  },
-  {
-    title: 'Reports',
-    items: [
-      { emoji: '📋', label: 'My Report Card',   description: 'Your progress report',  screen: 'Reports',       color: COLORS.accent },
-      { emoji: '🏆', label: 'My Certificates',  description: 'Earned certificates',    screen: 'Certificates',  color: COLORS.gold },
-    ],
-  },
-  {
-    title: 'Community',
-    items: [
-      { emoji: '🏆', label: 'Leaderboard', description: 'Student rankings & XP',       screen: 'Leaderboard', color: COLORS.gold },
-      { emoji: '💬', label: 'Engage',      description: 'Discussion hub',               screen: 'Engage',      color: COLORS.accent },
-      { emoji: '🔐', label: 'Vault',       description: 'Your code snippet storage',    screen: 'Vault',       color: '#7c3aed' },
-      { emoji: '🎮', label: 'Missions',    description: 'Daily coding challenges',      screen: 'Missions',    color: COLORS.success },
-      { emoji: '🧪', label: 'Protocol',    description: 'Structured learning pathway',  screen: 'Protocol',    color: COLORS.info },
-    ],
-  },
-  {
-    title: 'AI & Tools',
-    items: [
-      { emoji: '🤖', label: 'AI Tutor', description: 'Study with AI', screen: 'AI', color: '#7c3aed' },
-    ],
-  },
-  {
-    title: 'More',
-    items: [
-      { emoji: '📡', label: 'Live Sessions', description: 'Join live classes',    screen: 'LiveSessions', color: COLORS.admin },
-      { emoji: '📚', label: 'Library',       description: 'Educational resources', screen: 'Library',      color: COLORS.info },
-      { emoji: '💬', label: 'Messages',      description: 'Chat with teachers',    screen: 'Messages',     color: COLORS.info },
-      { emoji: '⚙️', label: 'Settings',      description: 'App preferences',       screen: 'Settings',     color: COLORS.textSecondary },
-    ],
-  },
-];
-
-// ── Parent nav ────────────────────────────────────────────────────────────────
-const PARENT_SECTIONS: MenuSection[] = [
-  {
-    title: 'Parent Portal',
-    items: [
-      { emoji: '👨‍👩‍👧‍👦', label: 'My Children',   description: "View children's progress",    screen: 'MyChildren',         color: COLORS.accentLight },
-      { emoji: '📋', label: 'Attendance',      description: "Child's attendance",           screen: 'ParentAttendance',   color: COLORS.warning },
-      { emoji: '📊', label: 'Grades',          description: "Child's grades",               screen: 'ParentGrades',       color: COLORS.success },
-      { emoji: '🏆', label: 'Certificates',    description: "Child's certificates",         screen: 'ParentCertificates', color: COLORS.gold },
-      { emoji: '📈', label: 'Results',         description: "Child's report cards",         screen: 'ParentResults',      color: COLORS.accent },
-      { emoji: '💰', label: 'Invoices',        description: 'Fees & payment history',       screen: 'ParentInvoices',     color: COLORS.warning },
-    ],
-  },
-  {
-    title: 'More',
-    items: [
-      { emoji: '💬', label: 'Messages', description: 'Chat with school & staff', screen: 'Messages', color: COLORS.info },
-      { emoji: '⚙️', label: 'Settings', description: 'App preferences',          screen: 'Settings', color: COLORS.textSecondary },
-    ],
-  },
-];
-
-function getSectionsForRole(role: string): MenuSection[] {
-  switch (role) {
-    case 'admin':   return ADMIN_SECTIONS;
-    case 'teacher': return TEACHER_SECTIONS;
-    case 'school':  return SCHOOL_SECTIONS;
-    case 'parent':  return PARENT_SECTIONS;
-    default:        return STUDENT_SECTIONS;
-  }
-}
+const ROLE_LABELS: Record<string, string> = {
+  admin: 'Administrator',
+  teacher: 'Teacher Workspace',
+  school: 'School Partner',
+  student: 'Student Workspace',
+  parent: 'Parent Portal',
+};
 
 export default function MoreScreen({ navigation }: any) {
   const { profile } = useAuth();
-  const role = profile?.role ?? 'student';
-  const sections = getSectionsForRole(role);
+  const [search, setSearch] = React.useState('');
 
-  const roleLabel: Record<string, string> = {
-    admin: 'Administrator',
-    teacher: 'Teacher',
-    school: 'School Partner',
-    student: 'Student',
-    parent: 'Parent',
-  };
+  const role = profile?.role ?? 'student';
+  const sections = getPortalSectionsForRole(role);
+  const query = search.trim().toLowerCase();
+
+  const filteredSections = sections
+    .map((section) => ({
+      ...section,
+      items: section.items.filter((item) => {
+        if (!query) return true;
+        return item.label.toLowerCase().includes(query) || item.description.toLowerCase().includes(query);
+      }),
+    }))
+    .filter((section) => section.items.length > 0);
+
+  const featuredItems = filteredSections.flatMap((section) => section.items.filter((item) => item.featured)).slice(0, 4);
+  const totalItems = filteredSections.reduce((count, section) => count + section.items.length, 0);
 
   return (
     <SafeAreaView style={styles.safe}>
       <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
+        <MotiView from={{ opacity: 0, translateY: -12 }} animate={{ opacity: 1, translateY: 0 }} style={styles.hero}>
+          <LinearGradient colors={['rgba(244,164,98,0.12)', 'rgba(244,164,98,0.03)']} style={StyleSheet.absoluteFill} />
+          <View style={styles.heroTop}>
+            <View>
+              <Text style={styles.eyebrow}>Workspace Hub</Text>
+              <Text style={styles.title}>Everything in one place.</Text>
+              <Text style={styles.subtitle}>{ROLE_LABELS[role] ?? 'Portal'} with organized access to tools, reports, communication, and setup.</Text>
+            </View>
+            <View style={styles.rolePill}>
+              <View style={styles.roleDot} />
+              <Text style={styles.roleText}>{ROLE_LABELS[role] ?? 'Portal'}</Text>
+            </View>
+          </View>
 
-        {/* Header */}
-        <MotiView
-          from={{ opacity: 0, translateY: -10 }}
-          animate={{ opacity: 1, translateY: 0 }}
-          style={styles.header}
-        >
-          <Text style={styles.title}>More</Text>
-          <Text style={styles.subtitle}>{roleLabel[role] ?? 'Dashboard'} menu</Text>
+          <View style={styles.searchWrap}>
+            <Text style={styles.searchIcon}>Search</Text>
+            <TextInput
+              style={styles.searchInput}
+              placeholder="Find a tool or page"
+              placeholderTextColor={COLORS.textMuted}
+              value={search}
+              onChangeText={setSearch}
+            />
+            {search.length > 0 && (
+              <TouchableOpacity onPress={() => setSearch('')}>
+                <Text style={styles.clearBtn}>Clear</Text>
+              </TouchableOpacity>
+            )}
+          </View>
+
+          <View style={styles.metaRow}>
+            <View style={styles.metaCard}>
+              <Text style={styles.metaValue}>{filteredSections.length}</Text>
+              <Text style={styles.metaLabel}>Sections</Text>
+            </View>
+            <View style={styles.metaCard}>
+              <Text style={styles.metaValue}>{totalItems}</Text>
+              <Text style={styles.metaLabel}>Tools</Text>
+            </View>
+          </View>
         </MotiView>
 
-        {/* Sections */}
-        {sections.map((section, si) => (
+        {featuredItems.length > 0 && (
+          <View style={styles.block}>
+            <View style={styles.blockHeader}>
+              <Text style={styles.blockTitle}>Top Actions</Text>
+              <Text style={styles.blockHint}>Most used</Text>
+            </View>
+            <View style={styles.featuredGrid}>
+              {featuredItems.map((item, index) => (
+                <PortalCard key={`${item.screen}-${index}`} item={item} onPress={() => navigation.navigate(item.screen)} featured />
+              ))}
+            </View>
+          </View>
+        )}
+
+        {filteredSections.map((section, sectionIndex) => (
           <MotiView
             key={section.title}
             from={{ opacity: 0, translateY: 10 }}
             animate={{ opacity: 1, translateY: 0 }}
-            transition={{ delay: si * 50 }}
-            style={styles.section}
+            transition={{ delay: 80 + sectionIndex * 60 }}
+            style={styles.block}
           >
-            <Text style={styles.sectionTitle}>{section.title}</Text>
-            <View style={styles.grid}>
-              {section.items.map((item) => (
-                <TouchableOpacity
-                  key={item.label + item.screen}
-                  style={styles.menuItem}
-                  onPress={() => navigation.navigate(item.screen)}
-                  activeOpacity={0.75}
-                >
-                  <View style={[styles.iconWrap, { backgroundColor: item.color + '22' }]}>
-                    <Text style={styles.icon}>{item.emoji}</Text>
-                  </View>
-                  <Text style={styles.menuLabel}>{item.label}</Text>
-                  <Text style={styles.menuDesc} numberOfLines={1}>{item.description}</Text>
-                </TouchableOpacity>
+            <View style={styles.blockHeader}>
+              <Text style={styles.blockTitle}>{section.title}</Text>
+              <Text style={styles.blockHint}>{section.items.length} items</Text>
+            </View>
+            <View style={styles.listWrap}>
+              {section.items.map((item, itemIndex) => (
+                <PortalRow key={`${item.screen}-${itemIndex}`} item={item} onPress={() => navigation.navigate(item.screen)} />
               ))}
             </View>
           </MotiView>
         ))}
 
-        {/* Brand footer */}
-        <MotiView
-          from={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          transition={{ delay: 400 }}
-          style={styles.brandFooter}
-        >
-          <Image
-            source={require('../../../assets/rillcod-icon.png')}
-            style={styles.brandLogo}
-            resizeMode="cover"
-          />
-          <Text style={styles.brandName}>Rillcod Academy</Text>
-          <Text style={styles.brandTagline}>Empowering Future Leaders Through Code</Text>
-        </MotiView>
+        {filteredSections.length === 0 && (
+          <View style={styles.emptyState}>
+            <Text style={styles.emptyTitle}>No results found</Text>
+            <Text style={styles.emptyText}>Try a different keyword or clear the search to view your full workspace.</Text>
+          </View>
+        )}
       </ScrollView>
     </SafeAreaView>
   );
 }
 
+function PortalCard({ item, onPress, featured = false }: { item: PortalMenuItem; onPress: () => void; featured?: boolean }) {
+  return (
+    <TouchableOpacity style={[styles.featuredCard, featured && styles.featuredCardWide]} onPress={onPress} activeOpacity={0.82}>
+      <View style={[styles.glyphBox, { backgroundColor: item.color + '18', borderColor: item.color + '33' }]}>
+        <Text style={[styles.glyphText, { color: item.color }]}>{item.glyph}</Text>
+      </View>
+      <Text style={styles.featuredLabel}>{item.label}</Text>
+      <Text style={styles.featuredDesc} numberOfLines={2}>{item.description}</Text>
+    </TouchableOpacity>
+  );
+}
+
+function PortalRow({ item, onPress }: { item: PortalMenuItem; onPress: () => void }) {
+  return (
+    <TouchableOpacity style={styles.rowCard} onPress={onPress} activeOpacity={0.82}>
+      <View style={[styles.rowGlyph, { backgroundColor: item.color + '18', borderColor: item.color + '33' }]}>
+        <Text style={[styles.rowGlyphText, { color: item.color }]}>{item.glyph}</Text>
+      </View>
+      <View style={styles.rowBody}>
+        <Text style={styles.rowTitle}>{item.label}</Text>
+        <Text style={styles.rowDesc}>{item.description}</Text>
+      </View>
+      <Text style={styles.rowArrow}>Open</Text>
+    </TouchableOpacity>
+  );
+}
+
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: COLORS.bg },
-  scroll: { paddingBottom: 40 },
-  header: {
-    paddingHorizontal: SPACING.base,
-    paddingTop: SPACING.lg,
-    paddingBottom: SPACING.md,
+  scroll: { paddingBottom: 28 },
+  hero: {
+    marginHorizontal: SPACING.xl,
+    marginTop: SPACING.lg,
+    padding: SPACING.xl,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    backgroundColor: COLORS.bgCard,
+    borderRadius: RADIUS.md,
+    overflow: 'hidden',
+    gap: SPACING.lg,
+  },
+  heroTop: { gap: SPACING.base },
+  eyebrow: {
+    fontFamily: FONT_FAMILY.bodyBold,
+    fontSize: FONT_SIZE.xs,
+    color: COLORS.primary,
+    textTransform: 'uppercase',
+    letterSpacing: LETTER_SPACING.ultra,
+    marginBottom: 8,
   },
   title: {
     fontFamily: FONT_FAMILY.display,
     fontSize: FONT_SIZE['3xl'],
     color: COLORS.textPrimary,
+    letterSpacing: LETTER_SPACING.tight,
   },
   subtitle: {
+    marginTop: 8,
     fontFamily: FONT_FAMILY.body,
     fontSize: FONT_SIZE.sm,
-    color: COLORS.textMuted,
-    marginTop: 4,
+    lineHeight: 20,
+    color: COLORS.textSecondary,
+    maxWidth: 520,
   },
-  section: {
-    marginHorizontal: SPACING.base,
-    marginBottom: SPACING.lg,
+  rolePill: {
+    alignSelf: 'flex-start',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    backgroundColor: COLORS.bg,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: RADIUS.sm,
   },
-  sectionTitle: {
+  roleDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: COLORS.primary },
+  roleText: {
     fontFamily: FONT_FAMILY.bodySemi,
+    fontSize: FONT_SIZE.xs,
+    color: COLORS.textPrimary,
+    textTransform: 'uppercase',
+    letterSpacing: LETTER_SPACING.wider,
+  },
+  searchWrap: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    backgroundColor: COLORS.bg,
+    borderRadius: RADIUS.sm,
+    paddingHorizontal: SPACING.md,
+    minHeight: 50,
+  },
+  searchIcon: {
+    fontFamily: FONT_FAMILY.bodyBold,
     fontSize: FONT_SIZE.xs,
     color: COLORS.textMuted,
     textTransform: 'uppercase',
-    letterSpacing: 1.5,
-    marginBottom: SPACING.sm,
+    letterSpacing: LETTER_SPACING.wider,
   },
-  grid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: SPACING.sm,
+  searchInput: {
+    flex: 1,
+    fontFamily: FONT_FAMILY.body,
+    fontSize: FONT_SIZE.base,
+    color: COLORS.textPrimary,
+    paddingVertical: 12,
   },
-  menuItem: {
-    width: '47%',
-    backgroundColor: COLORS.bgCard,
+  clearBtn: {
+    fontFamily: FONT_FAMILY.bodySemi,
+    fontSize: FONT_SIZE.xs,
+    color: COLORS.primary,
+    textTransform: 'uppercase',
+    letterSpacing: LETTER_SPACING.wider,
+  },
+  metaRow: { flexDirection: 'row', gap: SPACING.md },
+  metaCard: {
+    flex: 1,
     borderWidth: 1,
     borderColor: COLORS.border,
-    borderRadius: RADIUS.lg,
-    padding: SPACING.base,
-    gap: SPACING.xs + 2,
+    backgroundColor: COLORS.bg,
+    padding: SPACING.md,
+    borderRadius: RADIUS.sm,
   },
-  iconWrap: {
-    width: 44,
-    height: 44,
-    borderRadius: RADIUS.md,
+  metaValue: {
+    fontFamily: FONT_FAMILY.display,
+    fontSize: FONT_SIZE.xl,
+    color: COLORS.textPrimary,
+  },
+  metaLabel: {
+    marginTop: 4,
+    fontFamily: FONT_FAMILY.bodyBold,
+    fontSize: FONT_SIZE.xs,
+    color: COLORS.textMuted,
+    textTransform: 'uppercase',
+    letterSpacing: LETTER_SPACING.widest,
+  },
+  block: { marginTop: SPACING.xl },
+  blockHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: SPACING.xl,
+    marginBottom: SPACING.md,
+  },
+  blockTitle: {
+    fontFamily: FONT_FAMILY.displayMed,
+    fontSize: FONT_SIZE.lg,
+    color: COLORS.textPrimary,
+  },
+  blockHint: {
+    fontFamily: FONT_FAMILY.bodyBold,
+    fontSize: FONT_SIZE.xs,
+    color: COLORS.textMuted,
+    textTransform: 'uppercase',
+    letterSpacing: LETTER_SPACING.wider,
+  },
+  featuredGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: SPACING.md,
+    paddingHorizontal: SPACING.xl,
+  },
+  featuredCard: {
+    width: (Dimensions.get('window').width - SPACING.xl * 2 - SPACING.md) / 2,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    backgroundColor: COLORS.bgCard,
+    padding: SPACING.md,
+    borderRadius: RADIUS.sm,
+    minHeight: 150,
+  },
+  featuredCardWide: {
+    justifyContent: 'space-between',
+  },
+  glyphBox: {
+    width: 48,
+    height: 48,
+    borderWidth: 1,
+    borderRadius: RADIUS.sm,
     alignItems: 'center',
     justifyContent: 'center',
-    marginBottom: SPACING.xs,
+    marginBottom: SPACING.md,
   },
-  icon: { fontSize: 22 },
-  menuLabel: {
+  glyphText: {
+    fontFamily: FONT_FAMILY.bodyBold,
+    fontSize: FONT_SIZE.md,
+    letterSpacing: LETTER_SPACING.wider,
+  },
+  featuredLabel: {
+    fontFamily: FONT_FAMILY.displayMed,
+    fontSize: FONT_SIZE.md,
+    color: COLORS.textPrimary,
+  },
+  featuredDesc: {
+    marginTop: 6,
+    fontFamily: FONT_FAMILY.body,
+    fontSize: FONT_SIZE.xs,
+    lineHeight: 18,
+    color: COLORS.textSecondary,
+  },
+  listWrap: {
+    paddingHorizontal: SPACING.xl,
+    gap: SPACING.sm,
+  },
+  rowCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: SPACING.md,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    backgroundColor: COLORS.bgCard,
+    borderRadius: RADIUS.sm,
+    padding: SPACING.md,
+  },
+  rowGlyph: {
+    width: 44,
+    height: 44,
+    borderWidth: 1,
+    borderRadius: RADIUS.sm,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  rowGlyphText: {
+    fontFamily: FONT_FAMILY.bodyBold,
+    fontSize: FONT_SIZE.sm,
+    letterSpacing: LETTER_SPACING.wider,
+  },
+  rowBody: { flex: 1 },
+  rowTitle: {
     fontFamily: FONT_FAMILY.bodySemi,
     fontSize: FONT_SIZE.base,
     color: COLORS.textPrimary,
   },
-  menuDesc: {
+  rowDesc: {
+    marginTop: 2,
     fontFamily: FONT_FAMILY.body,
     fontSize: FONT_SIZE.xs,
-    color: COLORS.textMuted,
+    color: COLORS.textSecondary,
   },
-  brandFooter: {
+  rowArrow: {
+    fontFamily: FONT_FAMILY.bodyBold,
+    fontSize: FONT_SIZE.xs,
+    color: COLORS.primary,
+    textTransform: 'uppercase',
+    letterSpacing: LETTER_SPACING.wider,
+  },
+  emptyState: {
+    marginHorizontal: SPACING.xl,
+    marginTop: SPACING['2xl'],
+    padding: SPACING.xl,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    backgroundColor: COLORS.bgCard,
+    borderRadius: RADIUS.sm,
     alignItems: 'center',
-    gap: SPACING.sm,
-    paddingTop: SPACING.xl,
-    paddingBottom: SPACING.xl,
   },
-  brandLogo: {
-    width: 72,
-    height: 72,
-    borderRadius: RADIUS.xl,
-    overflow: 'hidden',
-  },
-  brandName: {
-    fontFamily: FONT_FAMILY.display,
+  emptyTitle: {
+    fontFamily: FONT_FAMILY.displayMed,
     fontSize: FONT_SIZE.lg,
     color: COLORS.textPrimary,
   },
-  brandTagline: {
+  emptyText: {
+    marginTop: 8,
     fontFamily: FONT_FAMILY.body,
     fontSize: FONT_SIZE.sm,
-    color: COLORS.textMuted,
+    color: COLORS.textSecondary,
     textAlign: 'center',
+    lineHeight: 20,
   },
 });

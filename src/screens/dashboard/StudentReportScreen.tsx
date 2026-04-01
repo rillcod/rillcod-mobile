@@ -87,8 +87,10 @@ export default function StudentReportScreen({ navigation, route }: any) {
   const [refreshing, setRefreshing] = useState(false);
   const [expandedReport, setExpandedReport] = useState<string | null>(null);
 
-  const isStaff = profile?.role === 'admin' || profile?.role === 'teacher';
-  const effectiveStudentId = isStaff ? studentId : profile?.id;
+  const canEdit = profile?.role === 'admin' || profile?.role === 'teacher' || profile?.role === 'school';
+  const isParent = profile?.role === 'parent';
+  const isOwnReport = profile?.role === 'student';
+  const effectiveStudentId = canEdit || isParent ? studentId : profile?.id;
 
   const load = useCallback(async () => {
     const [repRes, subRes, enrRes] = await Promise.all([
@@ -130,7 +132,7 @@ export default function StudentReportScreen({ navigation, route }: any) {
   }
 
   // Aggregate stats
-  const publishedReports = reports.filter(r => r.is_published || isStaff);
+  const publishedReports = reports.filter(r => r.is_published || canEdit);
   const avgScore = publishedReports.length > 0
     ? Math.round(publishedReports.filter(r => r.overall_score != null).reduce((s, r) => s + (r.overall_score ?? 0), 0) / publishedReports.filter(r => r.overall_score != null).length)
     : null;
@@ -143,7 +145,15 @@ export default function StudentReportScreen({ navigation, route }: any) {
   return (
     <SafeAreaView style={styles.safe}>
       <ScreenHeader
-        title={studentName ? `${studentName}'s Report` : 'Student Report'}
+        title={
+          isOwnReport
+            ? 'My Report'
+            : studentName
+              ? `${studentName}'s Report`
+              : isParent
+                ? 'Child Report'
+                : 'Student Report'
+        }
         onBack={() => navigation.goBack()}
         accentColor={COLORS.accent}
       />
@@ -295,7 +305,7 @@ export default function StudentReportScreen({ navigation, route }: any) {
                             {r.report_date ? (
                               <Text style={styles.reportDate}>📅 {new Date(r.report_date).toLocaleDateString('en-GB')}</Text>
                             ) : null}
-                            {isStaff && (
+                            {canEdit && (
                               <TouchableOpacity
                                 style={styles.editReportBtn}
                                 onPress={() => navigation.navigate('ReportBuilder', { studentId: effectiveStudentId, studentName })}

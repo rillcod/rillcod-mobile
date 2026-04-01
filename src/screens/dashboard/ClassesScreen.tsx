@@ -17,9 +17,12 @@ interface ClassItem {
   name: string;
   description: string | null;
   teacher_name: string | null;
+  program_name: string | null;
   student_count: number;
   school_name: string | null;
   created_at: string;
+  status: string | null;
+  current_students: number | null;
 }
 
 const CLASS_COLORS = [COLORS.admin, '#7c3aed', COLORS.info, COLORS.success, COLORS.gold, COLORS.accent];
@@ -37,7 +40,7 @@ export default function ClassesScreen({ navigation }: any) {
   const load = useCallback(async () => {
     let q = supabase
       .from('classes')
-      .select('id, name, description, school_name, created_at, portal_users:teacher_id(full_name)')
+      .select('id, name, description, current_students, status, created_at, programs(name), schools(name), portal_users!classes_teacher_id_fkey(full_name)')
       .order('created_at', { ascending: false })
       .limit(100);
 
@@ -47,16 +50,23 @@ export default function ClassesScreen({ navigation }: any) {
     const { data } = await q;
     if (data) {
       const items: ClassItem[] = (data as any[]).map(c => ({
-        ...c,
+        id: c.id,
+        name: c.name,
+        description: c.description,
         teacher_name: c.portal_users?.full_name ?? null,
-        student_count: 0,
+        program_name: c.programs?.name ?? null,
+        school_name: c.schools?.name ?? null,
+        current_students: c.current_students ?? 0,
+        status: c.status ?? null,
+        created_at: c.created_at,
+        student_count: c.current_students ?? 0,
       }));
 
-      // Fetch real student counts in parallel
+      // Refresh counts from live student records when possible.
       if (items.length > 0) {
         const counts = await Promise.all(
           items.map(c =>
-            supabase.from('class_enrollments').select('id', { count: 'exact', head: true }).eq('class_id', c.id)
+            supabase.from('portal_users').select('id', { count: 'exact', head: true }).eq('class_id', c.id).eq('role', 'student')
           )
         );
         counts.forEach((res, i) => { items[i].student_count = res.count ?? 0; });
@@ -99,7 +109,7 @@ export default function ClassesScreen({ navigation }: any) {
         </TouchableOpacity>
         <View style={{ flex: 1 }}>
           <Text style={styles.title}>{isTeacher ? 'My Classes' : 'Classes'}</Text>
-          <Text style={styles.subtitle}>{classes.length} total</Text>
+          <Text style={styles.subtitle}>{classes.length} total classes</Text>
         </View>
         {(profile?.role === 'admin' || profile?.role === 'teacher') && (
           <TouchableOpacity onPress={() => navigation.navigate('AddClass')} style={styles.addBtn}>
@@ -145,9 +155,12 @@ export default function ClassesScreen({ navigation }: any) {
                   <View style={styles.cardContent}>
                     <Text style={styles.className}>{c.name}</Text>
                     {c.description ? <Text style={styles.classDesc} numberOfLines={2}>{c.description}</Text> : null}
+                    {c.program_name ? <Text style={styles.programMeta}>Program: {c.program_name}</Text> : null}
                     <View style={styles.metaRow}>
                       {c.teacher_name ? <Text style={styles.meta}>👩‍🏫 {c.teacher_name}</Text> : null}
                       {c.school_name ? <Text style={styles.meta}>🏫 {c.school_name}</Text> : null}
+                      {c.status ? <Text style={styles.meta}>Status: {c.status}</Text> : null}
+                      <Text style={styles.meta}>Students: {c.student_count}</Text>
                     </View>
                   </View>
                   <View style={[styles.arrow, { borderColor: color + '50' }]}>
@@ -191,6 +204,7 @@ const styles = StyleSheet.create({
   cardContent: { flex: 1, padding: SPACING.md, gap: 4 },
   className: { fontFamily: FONT_FAMILY.display, fontSize: FONT_SIZE.base, color: COLORS.textPrimary },
   classDesc: { fontFamily: FONT_FAMILY.body, fontSize: FONT_SIZE.xs, color: COLORS.textMuted, lineHeight: 16 },
+  programMeta: { fontFamily: FONT_FAMILY.bodySemi, fontSize: FONT_SIZE.xs, color: COLORS.primaryLight },
   metaRow: { flexDirection: 'row', flexWrap: 'wrap', gap: SPACING.md, marginTop: 4 },
   meta: { fontFamily: FONT_FAMILY.body, fontSize: FONT_SIZE.xs, color: COLORS.textSecondary },
   arrow: { width: 36, height: 36, borderRadius: RADIUS.md, borderWidth: 1, alignItems: 'center', justifyContent: 'center', marginRight: SPACING.sm },

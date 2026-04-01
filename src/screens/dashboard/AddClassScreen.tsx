@@ -14,7 +14,7 @@ import { FONT_FAMILY, FONT_SIZE } from '../../constants/typography';
 import { SPACING, RADIUS } from '../../constants/spacing';
 
 interface Teacher { id: string; full_name: string; email: string }
-interface Program { id: string; title: string }
+interface Program { id: string; name: string }
 
 const CLASS_COLORS = ['#7c3aed', '#0891b2', '#059669', '#d97706', '#dc2626', '#7c3aed'];
 
@@ -66,7 +66,7 @@ export default function AddClassScreen({ navigation }: any) {
     tq.then(({ data }) => { if (data) setTeachers(data as Teacher[]); });
 
     // Load programs/courses
-    supabase.from('programs').select('id, title').eq('is_active', true).limit(100)
+    supabase.from('programs').select('id, name').eq('is_active', true).limit(100)
       .then(({ data }) => { if (data) setPrograms(data as Program[]); });
   }, [isAdmin, profile]);
 
@@ -82,13 +82,11 @@ export default function AddClassScreen({ navigation }: any) {
       teacher_id: form.teacher_id || null,
       program_id: form.program_id || null,
       school_id: profile?.school_id || null,
-      school_name: profile?.school_name || null,
       max_students: parseInt(form.max_students) || 30,
+      current_students: 0,
       start_date: form.start_date || null,
       end_date: form.end_date || null,
       schedule: form.schedule.trim() || null,
-      color: form.color,
-      created_by: profile?.id,
       status: 'active',
     });
 
@@ -189,12 +187,12 @@ export default function AddClassScreen({ navigation }: any) {
                     <TouchableOpacity
                       key={p.id}
                       onPress={() => {
-                        setForm(f => ({ ...f, program_id: p.id, program_title: p.title }));
+                        setForm(f => ({ ...f, program_id: p.id, program_title: p.name }));
                         setShowProgramPicker(false);
                       }}
                       style={[styles.dropItem, form.program_id === p.id && styles.dropItemActive]}
                     >
-                      <Text style={[styles.dropItemText, form.program_id === p.id && styles.dropItemTextActive]}>{p.title}</Text>
+                      <Text style={[styles.dropItemText, form.program_id === p.id && styles.dropItemTextActive]}>{p.name}</Text>
                     </TouchableOpacity>
                   ))}
                   {programs.length === 0 && (

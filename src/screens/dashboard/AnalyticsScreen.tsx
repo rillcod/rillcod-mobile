@@ -1,15 +1,20 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  View, Text, StyleSheet, ScrollView, TouchableOpacity,
-  RefreshControl, ActivityIndicator,
+  View,
+  Text,
+  StyleSheet,
+  ScrollView,
+  RefreshControl,
+  ActivityIndicator,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { MotiView } from 'moti';
 import { useAuth } from '../../contexts/AuthContext';
 import { supabase } from '../../lib/supabase';
 import { COLORS } from '../../constants/colors';
-import { FONT_FAMILY, FONT_SIZE } from '../../constants/typography';
+import { FONT_FAMILY, FONT_SIZE, LETTER_SPACING } from '../../constants/typography';
 import { SPACING, RADIUS } from '../../constants/spacing';
+import { AdminCollectionHeader } from '../../components/ui/AdminCollectionHeader';
 
 interface Stats {
   totalStudents: number;
@@ -19,71 +24,113 @@ interface Stats {
   pendingApprovals: number;
   publishedReports: number;
   avgProgress: number;
+  totalRevenue: number;
+  pendingRevenue: number;
+}
+
+interface SchoolEnrollment {
+  name: string;
+  count: number;
 }
 
 interface AtRisk {
   id: string;
   name: string;
   lastLogin: string | null;
-  avgGrade: number | null;
 }
 
-interface ProgBar {
+interface MetricBar {
   label: string;
   value: number;
-  max: number;
   color: string;
+}
+
+function daysSince(date: string | null) {
+  if (!date) return null;
+  return Math.floor((Date.now() - new Date(date).getTime()) / 86400000);
 }
 
 export default function AnalyticsScreen({ navigation }: any) {
   const { profile } = useAuth();
   const [stats, setStats] = useState<Stats | null>(null);
+  const [schoolEnrollments, setSchoolEnrollments] = useState<SchoolEnrollment[]>([]);
   const [atRisk, setAtRisk] = useState<AtRisk[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
   const load = useCallback(async () => {
     if (!profile) return;
+
     try {
       const isAdmin = profile.role === 'admin';
 
-      let studentsQ = supabase.from('portal_users').select('id, last_sign_in_at', { count: 'exact' }).eq('role', 'student');
-      let teachersQ = supabase.from('portal_users').select('id', { count: 'exact' }).eq('role', 'teacher').eq('is_active', true);
-      let schoolsQ = supabase.from('schools').select('id', { count: 'exact' }).eq('status', 'approved');
-      let pendingQ = supabase.from('students').select('id', { count: 'exact' }).eq('status', 'pending');
-      let reportsQ = supabase.from('student_progress_reports').select('id', { count: 'exact' }).eq('is_published', true);
+      let studentsQuery = supabase.from('portal_users').select('id, last_sign_in_at', { count: 'exact' }).eq('role', 'student');
+      let teachersQuery = supabase.from('portal_users').select('id', { count: 'exact' }).eq('role', 'teacher').eq('is_active', true);
+      let schoolsQuery = supabase.from('schools').select('id, name', { count: 'exact' }).eq('status', 'approved');
+      let pendingQuery = supabase.from('students').select('id', { count: 'exact' }).eq('status', 'pending');
+      let reportsQuery = supabase.from('student_progress_reports').select('id', { count: 'exact' }).eq('is_published', true);
+      let invoicesQuery = supabase.from('invoices').select('amount, status');
 
-      if (!isAdmin && profile.school_id) {
-        studentsQ = studentsQ.eq('school_id', profile.school_id) as any;
+      if (!isAdmin && (profile.school_id || profile.school_name)) {
+        const sid = profile.school_id;
+        if (sid) {
+          studentsQuery = studentsQuery.eq('school_id', sid) as any;
+          teachersQuery = teachersQuery.eq('school_id', sid) as any;
+          schoolsQuery = schoolsQuery.eq('id', sid);
+          pendingQuery = pendingQuery.eq('school_id', sid) as any;
+          reportsQuery = reportsQuery.eq('school_id', sid) as any;
+          invoicesQuery = invoicesQuery.eq('school_id', sid);
+        }
       }
 
-      const [stuRes, tchRes, schRes, pendRes, repRes] = await Promise.all([
-        studentsQ,
-        teachersQ,
-        schoolsQ,
-        pendingQ,
-        reportsQ,
+      const [studentsRes, teachersRes, schoolsRes, pendingRes, reportsRes, invoicesRes] = await Promise.all([
+        studentsQuery,
+        teachersQuery,
+        schoolsQuery,
+        pendingQuery,
+        reportsQuery,
+        invoicesQuery,
       ]);
 
-      const total = stuRes.count ?? 0;
-      const now = Date.now();
-      const active = ((stuRes.data ?? []) as any[]).filter(s => {
+      // Calculate Revenue
+      const invoices = (invoicesRes.data ?? []) as any[];
+      const totalRevenue = invoices.filter(i => i.status === 'paid').reduce((s, i) => s + (i.amount || 0), 0);
+      const pendingRevenue = invoices.filter(i => ['pending', 'overdue'].includes(i.status)).reduce((s, i) => s + (i.amount || 0), 0);
+
+      const totalStudents = studentsRes.count ?? 0;
+      const activeThreshold = 7 * 24 * 60 * 60 * 1000;
+      const activeStudents = ((studentsRes.data ?? []) as any[]).filter((s) => {
         if (!s.last_sign_in_at) return false;
-        const diff = now - new Date(s.last_sign_in_at).getTime();
-        return diff < 7 * 24 * 60 * 60 * 1000; // active in last 7 days
+        return Date.now() - new Date(s.last_sign_in_at).getTime() < activeThreshold;
       }).length;
 
       setStats({
-        totalStudents: total,
-        activeStudents: active,
-        totalTeachers: tchRes.count ?? 0,
-        totalSchools: schRes.count ?? 0,
-        pendingApprovals: pendRes.count ?? 0,
-        publishedReports: repRes.count ?? 0,
-        avgProgress: total > 0 ? Math.round((active / total) * 100) : 0,
+        totalStudents,
+        activeStudents,
+        totalTeachers: teachersRes.count ?? 0,
+        totalSchools: isAdmin ? (schoolsRes.count ?? 0) : 1,
+        pendingApprovals: pendingRes.count ?? 0,
+        publishedReports: reportsRes.count ?? 0,
+        avgProgress: totalStudents > 0 ? Math.round((activeStudents / totalStudents) * 100) : 0,
+        totalRevenue,
+        pendingRevenue,
       });
 
-      // At-risk: students not signed in for 7+ days
+      // Enrollment Distribution (Admin Only)
+      if (isAdmin) {
+        const { data: dist } = await supabase.from('portal_users').select('school_id, schools(name)').eq('role', 'student');
+        const counts: Record<string, number> = {};
+        dist?.forEach((d: any) => {
+           const name = d.schools?.name || 'Individual';
+           counts[name] = (counts[name] || 0) + 1;
+        });
+        const sortedDist = Object.entries(counts)
+          .map(([name, count]) => ({ name, count }))
+          .sort((a, b) => b.count - a.count)
+          .slice(0, 5);
+        setSchoolEnrollments(sortedDist);
+      }
+
       const { data: riskStudents } = await supabase
         .from('portal_users')
         .select('id, full_name, last_sign_in_at')
@@ -94,17 +141,15 @@ export default function AnalyticsScreen({ navigation }: any) {
 
       setAtRisk(
         ((riskStudents ?? []) as any[])
-          .filter(s => {
-            if (!s.last_sign_in_at) return true;
-            const diff = now - new Date(s.last_sign_in_at).getTime();
-            return diff > 7 * 24 * 60 * 60 * 1000;
+          .filter((student) => {
+            if (!student.last_sign_in_at) return true;
+            return Date.now() - new Date(student.last_sign_in_at).getTime() > 7 * 24 * 60 * 60 * 1000;
           })
           .slice(0, 5)
-          .map(s => ({
-            id: s.id,
-            name: s.full_name ?? 'Unknown',
-            lastLogin: s.last_sign_in_at,
-            avgGrade: null,
+          .map((student) => ({
+            id: student.id,
+            name: student.full_name ?? 'Unknown Student',
+            lastLogin: student.last_sign_in_at,
           }))
       );
     } finally {
@@ -113,159 +158,183 @@ export default function AnalyticsScreen({ navigation }: any) {
     }
   }, [profile]);
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    load();
+  }, [load]);
 
-  if (!['admin', 'teacher', 'school'].includes(profile?.role ?? '')) {
+  const allowed = ['admin', 'teacher', 'school'].includes(profile?.role ?? '');
+
+  const kpis = useMemo(
+    () =>
+      stats
+        ? [
+            { label: 'Students', value: stats.totalStudents, color: COLORS.info, code: 'ST' },
+            { label: 'Active 7d', value: stats.activeStudents, color: COLORS.success, code: 'AC' },
+            { label: 'Teachers', value: stats.totalTeachers, color: COLORS.primary, code: 'TC' },
+            { label: 'Schools', value: stats.totalSchools, color: COLORS.warning, code: 'SC' },
+            { label: 'Revenue (P)', value: (stats.totalRevenue / 1000).toFixed(1) + 'k', color: COLORS.success, code: 'RV' },
+            { label: 'Pending', value: (stats.pendingRevenue / 1000).toFixed(1) + 'k', color: COLORS.error, code: 'PN' },
+          ]
+        : [],
+    [stats]
+  );
+
+  const metricBars: MetricBar[] = stats
+    ? [
+        { label: 'Active engagement', value: stats.avgProgress, color: COLORS.success },
+        {
+          label: 'Approval flow health',
+          value: stats.pendingApprovals > 0 ? Math.max(0, 100 - Math.round((stats.pendingApprovals / Math.max(stats.totalStudents, 1)) * 100)) : 100,
+          color: COLORS.info,
+        },
+        {
+          label: 'Report coverage',
+          value: stats.totalStudents > 0 ? Math.round((stats.publishedReports / stats.totalStudents) * 100) : 0,
+          color: COLORS.primary,
+        },
+      ]
+    : [];
+
+  if (!allowed) {
     return (
       <SafeAreaView style={styles.safe}>
-        <View style={styles.center}>
-          <Text style={styles.noAccess}>Access restricted to staff</Text>
+        <View style={styles.accessWrap}>
+          <Text style={styles.accessCode}>NA</Text>
+          <Text style={styles.accessText}>Analytics is restricted to staff roles.</Text>
         </View>
       </SafeAreaView>
     );
   }
 
-  const kpiCards = stats ? [
-    { label: 'Total Students', value: stats.totalStudents, emoji: '👥', color: COLORS.info },
-    { label: 'Active (7d)', value: stats.activeStudents, emoji: '🟢', color: COLORS.success },
-    { label: 'Teachers', value: stats.totalTeachers, emoji: '👨‍🏫', color: COLORS.teacher },
-    { label: 'Schools', value: stats.totalSchools, emoji: '🏫', color: COLORS.school },
-    { label: 'Pending', value: stats.pendingApprovals, emoji: '⏳', color: COLORS.warning },
-    { label: 'Reports', value: stats.publishedReports, emoji: '📊', color: COLORS.primary },
-  ] : [];
-
-  const progBars: ProgBar[] = stats ? [
-    { label: 'Active Engagement Rate', value: stats.avgProgress, max: 100, color: COLORS.success },
-    { label: 'Approval Rate', value: stats.pendingApprovals > 0 ? Math.max(0, 100 - Math.round((stats.pendingApprovals / (stats.totalStudents || 1)) * 100)) : 100, max: 100, color: COLORS.info },
-    { label: 'Report Coverage', value: stats.totalStudents > 0 ? Math.round((stats.publishedReports / stats.totalStudents) * 100) : 0, max: 100, color: COLORS.primary },
-  ] : [];
-
   return (
     <SafeAreaView style={styles.safe}>
+      <AdminCollectionHeader
+        title="Analytics"
+        subtitle="Platform performance and engagement overview"
+        onBack={() => navigation.goBack()}
+        colors={COLORS}
+      />
+
       <ScrollView
         contentContainerStyle={styles.scroll}
         showsVerticalScrollIndicator={false}
         refreshControl={
           <RefreshControl
             refreshing={refreshing}
-            onRefresh={() => { setRefreshing(true); load(); }}
+            onRefresh={() => {
+              setRefreshing(true);
+              load();
+            }}
             tintColor={COLORS.primary}
           />
         }
       >
-        {/* Header */}
-        <View style={styles.header}>
-          <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}>
-            <Text style={styles.backIcon}>←</Text>
-          </TouchableOpacity>
-          <View>
-            <Text style={styles.title}>Analytics</Text>
-            <Text style={styles.subtitle}>Platform performance overview</Text>
-          </View>
-        </View>
-
         {loading ? (
-          <View style={styles.center}><ActivityIndicator color={COLORS.primary} size="large" /></View>
+          <View style={styles.loadingWrap}>
+            <ActivityIndicator color={COLORS.primary} size="large" />
+            <Text style={styles.loadingText}>Loading analytics...</Text>
+          </View>
         ) : (
           <>
-            {/* KPI Grid */}
-            <MotiView
-              from={{ opacity: 0, translateY: 10 }}
-              animate={{ opacity: 1, translateY: 0 }}
-              style={styles.kpiGrid}
-            >
-              {kpiCards.map((card, i) => (
-                <View key={card.label} style={styles.kpiCard}>
-                  <Text style={styles.kpiEmoji}>{card.emoji}</Text>
-                  <Text style={[styles.kpiValue, { color: card.color }]}>{card.value}</Text>
-                  <Text style={styles.kpiLabel}>{card.label}</Text>
-                </View>
+            <View style={styles.kpiGrid}>
+              {kpis.map((kpi, index) => (
+                <MotiView
+                  key={kpi.label}
+                  from={{ opacity: 0, translateY: 10 }}
+                  animate={{ opacity: 1, translateY: 0 }}
+                  transition={{ delay: index * 40 }}
+                  style={styles.kpiCard}
+                >
+                  <Text style={[styles.kpiCode, { color: kpi.color }]}>{kpi.code}</Text>
+                  <Text style={styles.kpiValue}>{kpi.value}</Text>
+                  <Text style={styles.kpiLabel}>{kpi.label}</Text>
+                </MotiView>
               ))}
-            </MotiView>
+            </View>
 
-            {/* Progress bars */}
-            <MotiView
-              from={{ opacity: 0, translateY: 12 }}
-              animate={{ opacity: 1, translateY: 0 }}
-              transition={{ delay: 100 }}
-              style={styles.section}
-            >
+            <View style={styles.section}>
               <Text style={styles.sectionTitle}>Key Metrics</Text>
-              <View style={styles.card}>
-                {progBars.map((bar, i) => (
-                  <View key={bar.label} style={[styles.progRow, i > 0 && { marginTop: SPACING.md }]}>
-                    <View style={styles.progLabelRow}>
-                      <Text style={styles.progLabel}>{bar.label}</Text>
-                      <Text style={[styles.progValue, { color: bar.color }]}>{bar.value}%</Text>
+              <View style={styles.panel}>
+                {metricBars.map((bar, index) => (
+                  <View key={bar.label} style={[styles.metricRow, index > 0 && styles.metricRowGap]}>
+                    <View style={styles.metricHeader}>
+                      <Text style={styles.metricLabel}>{bar.label}</Text>
+                      <Text style={[styles.metricValue, { color: bar.color }]}>{bar.value}%</Text>
                     </View>
-                    <View style={styles.barBg}>
+                    <View style={styles.track}>
                       <MotiView
                         from={{ width: '0%' as any }}
                         animate={{ width: `${bar.value}%` as any }}
-                        transition={{ type: 'timing', duration: 800, delay: 200 + i * 100 }}
-                        style={[styles.barFill, { backgroundColor: bar.color }]}
+                        transition={{ type: 'timing', duration: 700, delay: index * 120 }}
+                        style={[styles.fill, { backgroundColor: bar.color }]}
                       />
                     </View>
                   </View>
                 ))}
               </View>
-            </MotiView>
+            </View>
 
-            {/* At-risk students */}
-            {atRisk.length > 0 && (
-              <MotiView
-                from={{ opacity: 0, translateY: 12 }}
-                animate={{ opacity: 1, translateY: 0 }}
-                transition={{ delay: 200 }}
-                style={styles.section}
-              >
-                <Text style={styles.sectionTitle}>⚠️ At-Risk Students</Text>
-                <View style={styles.card}>
-                  {atRisk.map((s, i) => {
-                    const daysSince = s.lastLogin
-                      ? Math.floor((Date.now() - new Date(s.lastLogin).getTime()) / 86400000)
-                      : null;
+            {schoolEnrollments.length > 0 && (
+              <View style={styles.section}>
+                <Text style={styles.sectionTitle}>Top Schools by Enrollment</Text>
+                <View style={styles.panel}>
+                  {schoolEnrollments.map((school, index) => {
+                    const percent = Math.round((school.count / (stats?.totalStudents || 1)) * 100);
                     return (
-                      <View
-                        key={s.id}
-                        style={[styles.riskRow, i < atRisk.length - 1 && styles.riskRowBorder]}
-                      >
-                        <View style={[styles.riskAvatar, { backgroundColor: daysSince && daysSince > 14 ? COLORS.error + '22' : COLORS.warning + '22' }]}>
-                          <Text style={{ fontSize: 18 }}>⚠️</Text>
+                      <View key={school.name} style={[styles.metricRow, index > 0 && styles.metricRowGap]}>
+                        <View style={styles.metricHeader}>
+                          <Text style={styles.metricLabel} numberOfLines={1}>{school.name.toUpperCase()}</Text>
+                          <Text style={[styles.metricValue, { color: COLORS.textMuted }]}>{school.count} Students</Text>
                         </View>
-                        <View style={{ flex: 1 }}>
-                          <Text style={styles.riskName}>{s.name}</Text>
-                          <Text style={styles.riskSub}>
-                            {daysSince != null ? `${daysSince} days inactive` : 'Never logged in'}
-                          </Text>
-                        </View>
-                        <View style={[
-                          styles.riskBadge,
-                          {
-                            backgroundColor: daysSince && daysSince > 14 ? COLORS.error + '22' : COLORS.warning + '22',
-                            borderColor: daysSince && daysSince > 14 ? COLORS.error : COLORS.warning,
-                          },
-                        ]}>
-                          <Text style={[
-                            styles.riskBadgeText,
-                            { color: daysSince && daysSince > 14 ? COLORS.error : COLORS.warning },
-                          ]}>
-                            {daysSince && daysSince > 14 ? 'High Risk' : 'At Risk'}
-                          </Text>
+                        <View style={styles.track}>
+                          <MotiView
+                            from={{ width: '0%' as any }}
+                            animate={{ width: `${percent}%` as any }}
+                            transition={{ type: 'timing', duration: 700, delay: index * 100 }}
+                            style={[styles.fill, { backgroundColor: COLORS.primary }]}
+                          />
                         </View>
                       </View>
                     );
                   })}
                 </View>
-              </MotiView>
-            )}
-
-            {atRisk.length === 0 && stats && (
-              <View style={styles.allGood}>
-                <Text style={{ fontSize: 40 }}>✅</Text>
-                <Text style={styles.allGoodText}>All students are active!</Text>
               </View>
             )}
+
+            <View style={styles.section}>
+              <Text style={styles.sectionTitle}>At-Risk Students</Text>
+              <View style={styles.panel}>
+                {atRisk.length === 0 ? (
+                  <View style={styles.emptyWrap}>
+                    <Text style={styles.emptyCode}>OK</Text>
+                    <Text style={styles.emptyText}>No inactive students detected in the watchlist.</Text>
+                  </View>
+                ) : (
+                  atRisk.map((student, index) => {
+                    const days = daysSince(student.lastLogin);
+                    const highRisk = days != null && days > 14;
+                    return (
+                      <View key={student.id} style={[styles.riskRow, index < atRisk.length - 1 && styles.riskBorder]}>
+                        <View style={[styles.riskCodeBox, { backgroundColor: (highRisk ? COLORS.error : COLORS.warning) + '18' }]}>
+                          <Text style={[styles.riskCode, { color: highRisk ? COLORS.error : COLORS.warning }]}>{highRisk ? 'HR' : 'AR'}</Text>
+                        </View>
+                        <View style={styles.riskBody}>
+                          <Text style={styles.riskName}>{student.name}</Text>
+                          <Text style={styles.riskMeta}>
+                            {days != null ? `${days} days inactive` : 'Never logged in'}
+                          </Text>
+                        </View>
+                        <View style={[styles.riskBadge, { backgroundColor: (highRisk ? COLORS.error : COLORS.warning) + '18' }]}>
+                          <Text style={[styles.riskBadgeText, { color: highRisk ? COLORS.error : COLORS.warning }]}>
+                            {highRisk ? 'HIGH RISK' : 'WATCH'}
+                          </Text>
+                        </View>
+                      </View>
+                    );
+                  })
+                )}
+              </View>
+            </View>
           </>
         )}
       </ScrollView>
@@ -276,80 +345,70 @@ export default function AnalyticsScreen({ navigation }: any) {
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: COLORS.bg },
   scroll: { paddingBottom: 40 },
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: SPACING.base,
-    paddingTop: SPACING.md,
-    paddingBottom: SPACING.base,
-    gap: SPACING.md,
-  },
-  backBtn: { padding: SPACING.xs },
-  backIcon: { fontSize: 22, color: COLORS.textPrimary },
-  title: { fontFamily: FONT_FAMILY.display, fontSize: FONT_SIZE['2xl'], color: COLORS.textPrimary },
-  subtitle: { fontFamily: FONT_FAMILY.body, fontSize: FONT_SIZE.sm, color: COLORS.textMuted, marginTop: 2 },
-  center: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingTop: 80 },
-  noAccess: { fontFamily: FONT_FAMILY.body, fontSize: FONT_SIZE.base, color: COLORS.textMuted },
+  loadingWrap: { alignItems: 'center', justifyContent: 'center', paddingTop: 80, gap: 12 },
+  loadingText: { fontFamily: FONT_FAMILY.body, fontSize: FONT_SIZE.sm, color: COLORS.textMuted },
+  accessWrap: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 12, backgroundColor: COLORS.bg },
+  accessCode: { fontFamily: FONT_FAMILY.display, fontSize: FONT_SIZE['2xl'], color: COLORS.textMuted },
+  accessText: { fontFamily: FONT_FAMILY.body, fontSize: FONT_SIZE.sm, color: COLORS.textMuted },
   kpiGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    paddingHorizontal: SPACING.base,
     gap: SPACING.sm,
+    paddingHorizontal: SPACING.xl,
     marginBottom: SPACING.lg,
   },
   kpiCard: {
-    width: '30.5%',
-    backgroundColor: COLORS.bgCard,
+    width: '31%',
     borderWidth: 1,
     borderColor: COLORS.border,
+    backgroundColor: COLORS.bgCard,
     borderRadius: RADIUS.lg,
     padding: SPACING.md,
     alignItems: 'center',
     gap: 4,
   },
-  kpiEmoji: { fontSize: 22 },
-  kpiValue: { fontFamily: FONT_FAMILY.display, fontSize: FONT_SIZE.xl },
-  kpiLabel: { fontFamily: FONT_FAMILY.body, fontSize: FONT_SIZE.xs - 1, color: COLORS.textMuted, textAlign: 'center' },
-  section: { marginHorizontal: SPACING.base, marginBottom: SPACING.lg },
+  kpiCode: { fontFamily: FONT_FAMILY.bodyBold, fontSize: FONT_SIZE.sm, letterSpacing: LETTER_SPACING.wider },
+  kpiValue: { fontFamily: FONT_FAMILY.display, fontSize: FONT_SIZE.xl, color: COLORS.textPrimary },
+  kpiLabel: { fontFamily: FONT_FAMILY.body, fontSize: 10, color: COLORS.textMuted, textAlign: 'center' },
+  section: { marginHorizontal: SPACING.xl, marginBottom: SPACING.lg },
   sectionTitle: {
-    fontFamily: FONT_FAMILY.bodySemi,
+    marginBottom: SPACING.sm,
+    fontFamily: FONT_FAMILY.bodyBold,
     fontSize: FONT_SIZE.xs,
     color: COLORS.textMuted,
     textTransform: 'uppercase',
-    letterSpacing: 1.5,
-    marginBottom: SPACING.sm,
+    letterSpacing: LETTER_SPACING.widest,
   },
-  card: {
-    backgroundColor: COLORS.bgCard,
+  panel: {
     borderWidth: 1,
     borderColor: COLORS.border,
+    backgroundColor: COLORS.bgCard,
     borderRadius: RADIUS.lg,
-    padding: SPACING.base,
+    padding: SPACING.md,
   },
-  progRow: {},
-  progLabelRow: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 6 },
-  progLabel: { fontFamily: FONT_FAMILY.bodyMed, fontSize: FONT_SIZE.sm, color: COLORS.textPrimary },
-  progValue: { fontFamily: FONT_FAMILY.bodySemi, fontSize: FONT_SIZE.sm },
-  barBg: { height: 8, borderRadius: RADIUS.full, backgroundColor: COLORS.border, overflow: 'hidden' },
-  barFill: { height: '100%', borderRadius: RADIUS.full },
+  metricRow: {},
+  metricRowGap: { marginTop: SPACING.md },
+  metricHeader: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 6, gap: 8 },
+  metricLabel: { flex: 1, fontFamily: FONT_FAMILY.bodySemi, fontSize: FONT_SIZE.sm, color: COLORS.textPrimary },
+  metricValue: { fontFamily: FONT_FAMILY.bodyBold, fontSize: FONT_SIZE.sm },
+  track: { height: 8, borderRadius: RADIUS.full, backgroundColor: COLORS.border, overflow: 'hidden' },
+  fill: { height: '100%', borderRadius: RADIUS.full },
   riskRow: { flexDirection: 'row', alignItems: 'center', gap: SPACING.md, paddingVertical: SPACING.sm },
-  riskRowBorder: { borderBottomWidth: 1, borderBottomColor: COLORS.border },
-  riskAvatar: {
-    width: 40,
-    height: 40,
-    borderRadius: RADIUS.full,
+  riskBorder: { borderBottomWidth: 1, borderBottomColor: COLORS.border },
+  riskCodeBox: {
+    width: 42,
+    height: 42,
+    borderRadius: RADIUS.md,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  riskName: { fontFamily: FONT_FAMILY.bodyMed, fontSize: FONT_SIZE.base, color: COLORS.textPrimary },
-  riskSub: { fontFamily: FONT_FAMILY.body, fontSize: FONT_SIZE.xs, color: COLORS.textMuted },
-  riskBadge: {
-    paddingHorizontal: SPACING.sm,
-    paddingVertical: 3,
-    borderRadius: RADIUS.sm,
-    borderWidth: 1,
-  },
-  riskBadgeText: { fontFamily: FONT_FAMILY.bodySemi, fontSize: FONT_SIZE.xs },
-  allGood: { alignItems: 'center', gap: SPACING.sm, paddingVertical: SPACING.xl },
-  allGoodText: { fontFamily: FONT_FAMILY.bodyMed, fontSize: FONT_SIZE.base, color: COLORS.success },
+  riskCode: { fontFamily: FONT_FAMILY.bodyBold, fontSize: FONT_SIZE.sm, letterSpacing: LETTER_SPACING.wider },
+  riskBody: { flex: 1 },
+  riskName: { fontFamily: FONT_FAMILY.bodySemi, fontSize: FONT_SIZE.base, color: COLORS.textPrimary },
+  riskMeta: { marginTop: 2, fontFamily: FONT_FAMILY.body, fontSize: FONT_SIZE.xs, color: COLORS.textMuted },
+  riskBadge: { paddingHorizontal: 8, paddingVertical: 4, borderRadius: RADIUS.full },
+  riskBadgeText: { fontFamily: FONT_FAMILY.bodyBold, fontSize: 9, letterSpacing: LETTER_SPACING.wide },
+  emptyWrap: { alignItems: 'center', paddingVertical: 40, gap: 10 },
+  emptyCode: { fontFamily: FONT_FAMILY.display, fontSize: FONT_SIZE.xl, color: COLORS.success },
+  emptyText: { fontFamily: FONT_FAMILY.body, fontSize: FONT_SIZE.sm, color: COLORS.textMuted, textAlign: 'center' },
 });

@@ -21,7 +21,7 @@ import type { RootStackParamList } from '../../navigation/types';
 type Props = { navigation: NativeStackNavigationProp<RootStackParamList, 'Login'> };
 
 export default function LoginScreen({ navigation }: Props) {
-  const { signIn } = useAuth();
+  const { signIn, loading: authLoading } = useAuth();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
@@ -119,8 +119,8 @@ export default function LoginScreen({ navigation }: Props) {
               <PremiumButton
                 label={t('auth.signIn')}
                 onPress={handleLogin}
-                loading={loading}
-                disabled={loading}
+                loading={loading || authLoading}
+                disabled={loading || authLoading}
               />
 
               <View style={styles.orRow}>
@@ -213,8 +213,8 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(91,33,182,0.1)',
     opacity: 0.8,
   },
-  scroll: { flexGrow: 1, padding: SPACING.xl, paddingTop: Platform.OS === 'ios' ? 80 : 60 },
-  brand: { alignItems: 'center', marginBottom: SPACING['2xl'] },
+  scroll: { flexGrow: 1, padding: SPACING.xl, paddingTop: Platform.OS === 'ios' ? 56 : 40 },
+  brand: { alignItems: 'center', marginBottom: SPACING.xl },
   logoWrap: {
     width: 80,
     height: 80,
@@ -247,7 +247,7 @@ const styles = StyleSheet.create({
     borderColor: COLORS.border,
     ...SHADOW.lg,
   },
-  cardInner: { padding: SPACING.xl },
+  cardInner: { padding: SPACING.lg },
   cardTitle: {
     fontFamily: FONT_FAMILY.display,
     fontSize: FONT_SIZE['2xl'],
@@ -299,7 +299,7 @@ const styles = StyleSheet.create({
     flexWrap: 'wrap',
     justifyContent: 'center',
     gap: 8,
-    marginTop: SPACING.xl,
+    marginTop: SPACING.lg,
   },
   trustBadge: {
     backgroundColor: COLORS.bgCard,
@@ -319,11 +319,11 @@ const styles = StyleSheet.create({
     fontSize: 10,
     color: COLORS.textMuted,
     textAlign: 'center',
-    marginTop: SPACING.xl,
+    marginTop: SPACING.lg,
     opacity: 0.5,
   },
   publicLinksWrap: {
-    marginTop: SPACING.lg,
+    marginTop: SPACING.base,
     backgroundColor: COLORS.bgCard,
     borderWidth: 1,
     borderColor: COLORS.border,

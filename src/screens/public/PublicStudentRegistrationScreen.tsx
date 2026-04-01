@@ -207,6 +207,7 @@ export default function PublicStudentRegistrationScreen({ navigation }: any) {
     setSubmitting(true);
     try {
       const { error } = await supabase.from('students').insert({
+        name: fullName.trim(),
         full_name: fullName.trim(),
         student_email: parentEmail.trim() || null,
         parent_name: parentName.trim(),
@@ -215,6 +216,10 @@ export default function PublicStudentRegistrationScreen({ navigation }: any) {
         school_name: schoolName.trim() || null,
         course_interest: selectedProgrammes.join(', ') || null,
         enrollment_type: enrollmentType,
+        date_of_birth: dateOfBirth.trim() || null,
+        gender: gender || null,
+        state: state || null,
+        notes: message.trim() || null,
         status: 'pending',
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),

@@ -1,16 +1,25 @@
-import React, { useEffect, useState, useCallback } from 'react';
+﻿import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  View, Text, StyleSheet, ScrollView, TouchableOpacity,
-  RefreshControl, ActivityIndicator, Alert,
+  View,
+  Text,
+  StyleSheet,
+  ScrollView,
+  TouchableOpacity,
+  RefreshControl,
+  ActivityIndicator,
+  Alert,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { MotiView } from 'moti';
+import * as Print from 'expo-print';
+import * as Sharing from 'expo-sharing';
 import { supabase } from '../../lib/supabase';
-import { ScreenHeader } from '../../components/ui/ScreenHeader';
+import { useAuth } from '../../contexts/AuthContext';
 import { COLORS } from '../../constants/colors';
-import { FONT_FAMILY, FONT_SIZE } from '../../constants/typography';
+import { FONT_FAMILY, FONT_SIZE, LETTER_SPACING } from '../../constants/typography';
 import { SPACING, RADIUS } from '../../constants/spacing';
+import { AdminCollectionHeader } from '../../components/ui/AdminCollectionHeader';
 
 type Tab = 'students' | 'schools' | 'prospective';
 
@@ -20,6 +29,7 @@ interface PendingStudent {
   student_email: string | null;
   parent_name: string | null;
   parent_phone: string | null;
+  school_id: string | null;
   school_name: string | null;
   current_class: string | null;
   grade_level: string | null;
@@ -30,7 +40,7 @@ interface PendingStudent {
 
 interface PendingSchool {
   id: string;
-  school_name: string;
+  name: string;
   email: string | null;
   phone: string | null;
   city: string | null;
@@ -53,12 +63,19 @@ interface ProspectiveStudent {
   created_at: string;
 }
 
-interface Credentials { email: string; password: string; name: string }
+interface Credentials {
+  email: string;
+  password: string;
+  name: string;
+  roleLabel?: string;
+  targetLabel?: string;
+  onOpenTarget?: () => void;
+}
 
 function timeAgo(date: string) {
   const diff = Date.now() - new Date(date).getTime();
   const mins = Math.floor(diff / 60000);
-  if (mins < 60) return `${mins}m ago`;
+  if (mins < 60) return `${Math.max(mins, 1)}m ago`;
   const hrs = Math.floor(mins / 60);
   if (hrs < 24) return `${hrs}h ago`;
   return `${Math.floor(hrs / 24)}d ago`;
@@ -69,34 +86,75 @@ function genPassword() {
   return Array.from({ length: 10 }, () => chars[Math.floor(Math.random() * chars.length)]).join('');
 }
 
-// ─── Credentials Modal ────────────────────────────────────────────────────────
-function CredentialsModal({ creds, onDone }: { creds: Credentials; onDone: () => void }) {
+function Chip({ label, color = COLORS.textMuted }: { label: string; color?: string }) {
   return (
-    <View style={modal.overlay}>
-      <MotiView from={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} style={modal.box}>
-        <LinearGradient colors={[COLORS.success + '15', 'transparent']} style={StyleSheet.absoluteFill} />
-        <Text style={modal.icon}>✅</Text>
-        <Text style={modal.title}>Approved!</Text>
-        <Text style={modal.name}>{creds.name}</Text>
-        <View style={modal.credRow}>
-          <Text style={modal.credLabel}>Email</Text>
-          <Text style={modal.credValue} selectable>{creds.email}</Text>
+    <View style={[styles.chip, { backgroundColor: color + '14' }]}>
+      <Text style={[styles.chipText, { color }]}>{label}</Text>
+    </View>
+  );
+}
+
+function EmptyState({ code, message }: { code: string; message: string }) {
+  return (
+    <View style={styles.emptyWrap}>
+      <Text style={styles.emptyCode}>{code}</Text>
+      <Text style={styles.emptyText}>{message}</Text>
+    </View>
+  );
+}
+
+function CredentialsModal({
+  creds,
+  onDone,
+  onShare,
+  exporting,
+}: {
+  creds: Credentials;
+  onDone: () => void;
+  onShare: () => void;
+  exporting: boolean;
+}) {
+  return (
+    <View style={styles.modalOverlay}>
+      <MotiView from={{ opacity: 0, scale: 0.94 }} animate={{ opacity: 1, scale: 1 }} style={styles.modalBox}>
+        <LinearGradient colors={[COLORS.success + '16', 'transparent']} style={StyleSheet.absoluteFill} />
+        <Text style={styles.modalCode}>OK</Text>
+        <Text style={styles.modalTitle}>Approval complete</Text>
+        <Text style={styles.modalName}>{creds.name}</Text>
+        {creds.roleLabel ? <Text style={styles.modalRole}>{creds.roleLabel}</Text> : null}
+
+        <View style={styles.credCard}>
+          <Text style={styles.credLabel}>Email</Text>
+          <Text style={styles.credValue} selectable>{creds.email}</Text>
         </View>
-        <View style={[modal.credRow, modal.pwRow]}>
-          <Text style={modal.credLabel}>Temp Password</Text>
-          <Text style={[modal.credValue, { color: COLORS.success }]} selectable>{creds.password}</Text>
+
+        <View style={[styles.credCard, styles.credCardHighlight]}>
+          <Text style={styles.credLabel}>Temporary password</Text>
+          <Text style={[styles.credValue, { color: COLORS.success }]} selectable>{creds.password}</Text>
         </View>
-        <Text style={modal.note}>⚠ Note these credentials — they won't be shown again.</Text>
-        <TouchableOpacity onPress={onDone} style={modal.doneBtn}>
-          <Text style={modal.doneBtnText}>Done — I've noted the credentials</Text>
-        </TouchableOpacity>
+
+        <Text style={styles.modalNote}>Save these credentials now. This view is only shown once.</Text>
+
+        <View style={styles.modalActions}>
+          {creds.onOpenTarget ? (
+            <TouchableOpacity onPress={creds.onOpenTarget} style={styles.modalSecondaryButton}>
+              <Text style={styles.modalSecondaryButtonText}>{creds.targetLabel ?? 'Open Record'}</Text>
+            </TouchableOpacity>
+          ) : null}
+          <TouchableOpacity onPress={onShare} style={styles.modalSecondaryButton} disabled={exporting}>
+            <Text style={styles.modalSecondaryButtonText}>{exporting ? 'Exporting...' : 'Share PDF'}</Text>
+          </TouchableOpacity>
+          <TouchableOpacity onPress={onDone} style={styles.modalButton}>
+            <Text style={styles.modalButtonText}>Done</Text>
+          </TouchableOpacity>
+        </View>
       </MotiView>
     </View>
   );
 }
 
-// ─── Main Screen ──────────────────────────────────────────────────────────────
 export default function ApprovalsScreen({ navigation }: any) {
+  const { profile } = useAuth();
   const [tab, setTab] = useState<Tab>('students');
   const [students, setStudents] = useState<PendingStudent[]>([]);
   const [schools, setSchools] = useState<PendingSchool[]>([]);
@@ -105,19 +163,78 @@ export default function ApprovalsScreen({ navigation }: any) {
   const [refreshing, setRefreshing] = useState(false);
   const [processing, setProcessing] = useState<string | null>(null);
   const [credentials, setCredentials] = useState<Credentials | null>(null);
+  const [exportingCredentials, setExportingCredentials] = useState(false);
+  const isAdmin = profile?.role === 'admin';
+
+  const shareCredentials = useCallback(async () => {
+    if (!credentials) return;
+
+    setExportingCredentials(true);
+    try {
+      const html = `
+        <html>
+          <head>
+            <meta charset="utf-8" />
+            <style>
+              body { font-family: Arial, sans-serif; padding: 24px; color: #111827; }
+              .card { border: 1px solid #e5e7eb; padding: 24px; }
+              .eyebrow { color: #c2410c; font-size: 12px; font-weight: 700; letter-spacing: 1px; text-transform: uppercase; }
+              h1 { margin: 8px 0 4px; font-size: 28px; }
+              .sub { color: #4b5563; margin-bottom: 20px; }
+              .row { border: 1px solid #e5e7eb; padding: 12px; margin-bottom: 12px; }
+              .label { color: #6b7280; font-size: 12px; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 4px; }
+              .value { font-size: 18px; font-weight: 700; }
+              .accent { color: #15803d; }
+              .foot { color: #6b7280; margin-top: 18px; font-size: 12px; }
+            </style>
+          </head>
+          <body>
+            <div class="card">
+              <div class="eyebrow">Rillcod Approval Credentials</div>
+              <h1>${credentials.name}</h1>
+              <div class="sub">${credentials.roleLabel ?? 'Portal account'}</div>
+              <div class="row">
+                <div class="label">Email</div>
+                <div class="value">${credentials.email}</div>
+              </div>
+              <div class="row">
+                <div class="label">Temporary Password</div>
+                <div class="value accent">${credentials.password}</div>
+              </div>
+              <div class="foot">Generated ${new Date().toLocaleString()}. Share securely and prompt the recipient to update their password on first login.</div>
+            </div>
+          </body>
+        </html>
+      `;
+
+      const file = await Print.printToFileAsync({ html });
+      if (await Sharing.isAvailableAsync()) {
+        await Sharing.shareAsync(file.uri, {
+          mimeType: 'application/pdf',
+          dialogTitle: `${credentials.name} credentials`,
+        });
+      } else {
+        Alert.alert('Export ready', file.uri);
+      }
+    } catch (error: any) {
+      Alert.alert('Export failed', error?.message ?? 'Could not create credential PDF');
+    } finally {
+      setExportingCredentials(false);
+    }
+  }, [credentials]);
 
   const load = useCallback(async () => {
     const [stuRes, schRes, proRes] = await Promise.all([
       supabase
         .from('students')
-        .select('id, full_name, student_email, parent_name, parent_phone, school_name, current_class, grade_level, enrollment_type, created_at, status')
+        .select('id, full_name, student_email, parent_name, parent_phone, school_id, school_name, current_class, grade_level, enrollment_type, created_at, status')
         .eq('status', 'pending')
         .is('is_deleted', false)
         .order('created_at', { ascending: false })
         .limit(50),
       supabase
         .from('schools')
-        .select('id, school_name, email, phone, city, state, contact_person, student_count, school_type, status, created_at')
+        .select('id, name, email, phone, city, state, contact_person, student_count, school_type, status, created_at')
         .eq('status', 'pending')
         .order('created_at', { ascending: false })
         .limit(50),
@@ -129,161 +246,222 @@ export default function ApprovalsScreen({ navigation }: any) {
         .limit(50),
     ]);
 
-    if (stuRes.data) setStudents(stuRes.data as PendingStudent[]);
-    if (schRes.data) setSchools(schRes.data as PendingSchool[]);
-    if (proRes.data) setProspective(proRes.data as ProspectiveStudent[]);
+    setStudents((stuRes.data ?? []) as PendingStudent[]);
+    setSchools((schRes.data ?? []) as PendingSchool[]);
+    setProspective((proRes.data ?? []) as ProspectiveStudent[]);
     setLoading(false);
   }, []);
 
-  useEffect(() => { load(); }, [load]);
-  const onRefresh = async () => { setRefreshing(true); await load(); setRefreshing(false); };
+  useEffect(() => {
+    load();
+  }, [load]);
 
-  // ── Student approval ──────────────────────────────────────────────────────
-  const approveStudent = (s: PendingStudent) => {
-    Alert.alert('Approve Student', `Approve ${s.full_name} and create portal account?`, [
+  const onRefresh = async () => {
+    setRefreshing(true);
+    await load();
+    setRefreshing(false);
+  };
+
+  const approveStudent = (student: PendingStudent) => {
+    Alert.alert('Approve Student', `Approve ${student.full_name} and create a portal account?`, [
       { text: 'Cancel', style: 'cancel' },
       {
         text: 'Approve',
         onPress: async () => {
-          setProcessing(s.id);
-          const email = s.student_email ?? `student_${s.id.slice(0, 6)}@rillcod.school`;
+          setProcessing(student.id);
+          const email = student.student_email ?? `student_${student.id.slice(0, 6)}@rillcod.school`;
           const password = genPassword();
 
-          await supabase.from('students').update({ status: 'approved' }).eq('id', s.id);
-          // Create portal account
-          await supabase.from('portal_users').upsert({
-            email,
-            full_name: s.full_name,
-            role: 'student',
-            is_active: true,
-            school_name: s.school_name,
-            section_class: s.current_class,
-          }, { onConflict: 'email' });
+          await supabase.from('students').update({
+            status: 'approved',
+            approved_at: new Date().toISOString(),
+            approved_by: profile?.id ?? null,
+            updated_at: new Date().toISOString(),
+          }).eq('id', student.id);
+          const { data: portalUser } = await supabase.from('portal_users').upsert(
+            {
+              email,
+              full_name: student.full_name,
+              role: 'student',
+              is_active: true,
+              is_deleted: false,
+              student_id: student.id,
+              school_id: student.school_id,
+              school_name: student.school_name,
+              section_class: student.current_class,
+              enrollment_type: student.enrollment_type,
+            },
+            { onConflict: 'email' }
+          ).select('id').single();
 
-          setStudents(p => p.filter(u => u.id !== s.id));
-          setCredentials({ email, password, name: s.full_name });
+          setStudents((prev) => prev.filter((item) => item.id !== student.id));
+          setCredentials({
+            email,
+            password,
+            name: student.full_name,
+            roleLabel: 'Student account',
+            targetLabel: 'Open Student',
+            onOpenTarget: portalUser?.id ? () => navigation.navigate('StudentDetail', { studentId: portalUser.id }) : () => navigation.navigate('Students'),
+          });
           setProcessing(null);
         },
       },
     ]);
   };
 
-  const rejectStudent = (s: PendingStudent) => {
-    Alert.alert('Reject Student', `Reject ${s.full_name}?`, [
+  const rejectStudent = (student: PendingStudent) => {
+    Alert.alert('Reject Student', `Reject ${student.full_name}?`, [
       { text: 'Cancel', style: 'cancel' },
       {
         text: 'Reject',
         style: 'destructive',
         onPress: async () => {
-          setProcessing(s.id);
-          await supabase.from('students').update({ status: 'rejected' }).eq('id', s.id);
-          setStudents(p => p.filter(u => u.id !== s.id));
+          setProcessing(student.id);
+          await supabase.from('students').update({
+            status: 'rejected',
+            updated_at: new Date().toISOString(),
+          }).eq('id', student.id);
+          setStudents((prev) => prev.filter((item) => item.id !== student.id));
           setProcessing(null);
         },
       },
     ]);
   };
 
-  // ── School approval ───────────────────────────────────────────────────────
-  const approveSchool = (s: PendingSchool) => {
-    Alert.alert('Approve School', `Approve ${s.school_name} and create account?`, [
+  const approveSchool = (school: PendingSchool) => {
+    Alert.alert('Approve School', `Approve ${school.name} and create a school account?`, [
       { text: 'Cancel', style: 'cancel' },
       {
         text: 'Approve',
         onPress: async () => {
-          setProcessing(s.id);
-          const email = s.email ?? `school_${s.id.slice(0, 6)}@rillcod.school`;
+          setProcessing(school.id);
+          const email = school.email ?? `school_${school.id.slice(0, 6)}@rillcod.school`;
           const password = genPassword();
 
-          await supabase.from('schools').update({ status: 'approved' }).eq('id', s.id);
-          await supabase.from('portal_users').upsert({
-            email,
-            full_name: s.contact_person ?? s.school_name,
-            role: 'school',
+          await supabase.from('schools').update({
+            status: 'approved',
             is_active: true,
-            school_name: s.school_name,
-          }, { onConflict: 'email' });
+            updated_at: new Date().toISOString(),
+          }).eq('id', school.id);
+          await supabase.from('portal_users').upsert(
+            {
+              email,
+              full_name: school.contact_person ?? school.name,
+              role: 'school',
+              is_active: true,
+              is_deleted: false,
+              school_id: school.id,
+              school_name: school.name,
+            },
+            { onConflict: 'email' }
+          );
 
-          setSchools(p => p.filter(u => u.id !== s.id));
-          setCredentials({ email, password, name: s.school_name });
+          setSchools((prev) => prev.filter((item) => item.id !== school.id));
+          setCredentials({
+            email,
+            password,
+            name: school.name,
+            roleLabel: 'School account',
+            targetLabel: 'Open School',
+            onOpenTarget: () => navigation.navigate('SchoolDetail', { schoolId: school.id }),
+          });
           setProcessing(null);
         },
       },
     ]);
   };
 
-  const rejectSchool = (s: PendingSchool) => {
-    Alert.alert('Reject School', `Reject ${s.school_name}?`, [
+  const rejectSchool = (school: PendingSchool) => {
+    Alert.alert('Reject School', `Reject ${school.name}?`, [
       { text: 'Cancel', style: 'cancel' },
       {
         text: 'Reject',
         style: 'destructive',
         onPress: async () => {
-          setProcessing(s.id);
-          await supabase.from('schools').update({ status: 'rejected' }).eq('id', s.id);
-          setSchools(p => p.filter(u => u.id !== s.id));
+          setProcessing(school.id);
+          await supabase.from('schools').update({
+            status: 'rejected',
+            is_deleted: true,
+            updated_at: new Date().toISOString(),
+          }).eq('id', school.id);
+          setSchools((prev) => prev.filter((item) => item.id !== school.id));
           setProcessing(null);
         },
       },
     ]);
   };
 
-  // ── Prospective approval ──────────────────────────────────────────────────
-  const approveProspective = (p: ProspectiveStudent) => {
-    Alert.alert('Accept Prospective', `Accept ${p.full_name}?`, [
+  const approveProspective = (student: ProspectiveStudent) => {
+    Alert.alert('Accept Prospect', `Accept ${student.full_name} into the intake pipeline?`, [
       { text: 'Cancel', style: 'cancel' },
       {
         text: 'Accept',
         onPress: async () => {
-          setProcessing(p.id);
-          await supabase.from('prospective_students').update({ is_active: true }).eq('id', p.id);
-          setProspective(prev => prev.filter(u => u.id !== p.id));
+          setProcessing(student.id);
+          await supabase.from('prospective_students').update({ is_active: true }).eq('id', student.id);
+          setProspective((prev) => prev.filter((item) => item.id !== student.id));
           setProcessing(null);
         },
       },
     ]);
   };
 
-  const TABS: { key: Tab; label: string; count: number }[] = [
-    { key: 'students', label: 'Students', count: students.length },
-    { key: 'schools', label: 'Schools', count: schools.length },
-    { key: 'prospective', label: 'Prospective', count: prospective.length },
-  ];
+  const tabs = useMemo(
+    () => [
+      { key: 'students' as Tab, label: 'Students', count: students.length, code: 'ST' },
+      ...(isAdmin ? [{ key: 'schools' as Tab, label: 'Schools', count: schools.length, code: 'SC' }] : []),
+      { key: 'prospective' as Tab, label: 'Prospects', count: prospective.length, code: 'PR' },
+    ],
+    [isAdmin, students.length, schools.length, prospective.length]
+  );
+
+  const totalPending = students.length + schools.length + prospective.length;
 
   if (loading) {
     return (
       <View style={styles.loadWrap}>
         <ActivityIndicator color={COLORS.success} size="large" />
-        <Text style={styles.loadText}>Loading approvals…</Text>
+        <Text style={styles.loadText}>Loading approvals...</Text>
       </View>
     );
   }
 
-  const totalPending = students.length + schools.length + prospective.length;
-
   return (
     <SafeAreaView style={styles.safe}>
-      <ScreenHeader
+      <AdminCollectionHeader
         title="Approvals"
-        subtitle={`${totalPending} pending`}
+        subtitle={`${totalPending} pending items across onboarding`}
         onBack={() => navigation.goBack()}
-        accentColor={COLORS.success}
+        colors={COLORS}
       />
 
-      {/* Tabs */}
+      <View style={styles.summaryStrip}>
+        <View style={styles.summaryCard}>
+          <Text style={styles.summaryValue}>{totalPending}</Text>
+          <Text style={styles.summaryLabel}>Queue</Text>
+        </View>
+        <View style={styles.summaryCard}>
+          <Text style={styles.summaryValue}>{students.length + schools.length}</Text>
+          <Text style={styles.summaryLabel}>Accounts</Text>
+        </View>
+        <View style={styles.summaryCard}>
+          <Text style={styles.summaryValue}>{prospective.length}</Text>
+          <Text style={styles.summaryLabel}>Prospects</Text>
+        </View>
+      </View>
+
       <View style={styles.tabBar}>
-        {TABS.map(t => (
+        {tabs.map((item) => (
           <TouchableOpacity
-            key={t.key}
-            onPress={() => setTab(t.key)}
-            style={[styles.tabBtn, tab === t.key && styles.tabBtnActive]}
+            key={item.key}
+            onPress={() => setTab(item.key)}
+            style={[styles.tabButton, tab === item.key && styles.tabButtonActive]}
           >
-            <Text style={[styles.tabText, tab === t.key && styles.tabTextActive]}>{t.label}</Text>
-            {t.count > 0 && (
-              <View style={[styles.tabBadge, tab === t.key && styles.tabBadgeActive]}>
-                <Text style={styles.tabBadgeText}>{t.count}</Text>
-              </View>
-            )}
+            <Text style={[styles.tabCode, tab === item.key && styles.tabCodeActive]}>{item.code}</Text>
+            <Text style={[styles.tabText, tab === item.key && styles.tabTextActive]}>{item.label}</Text>
+            <View style={[styles.tabBadge, tab === item.key && styles.tabBadgeActive]}>
+              <Text style={[styles.tabBadgeText, tab === item.key && styles.tabBadgeTextActive]}>{item.count}</Text>
+            </View>
           </TouchableOpacity>
         ))}
       </View>
@@ -293,227 +471,382 @@ export default function ApprovalsScreen({ navigation }: any) {
         showsVerticalScrollIndicator={false}
         contentContainerStyle={styles.list}
       >
-        {/* ── Students tab ── */}
-        {tab === 'students' && (
-          students.length === 0 ? (
-            <EmptyState emoji="✅" message="No pending student applications." />
+        {tab === 'students' &&
+          (students.length === 0 ? (
+            <EmptyState code="ST" message="No pending student applications." />
           ) : (
-            students.map((s, i) => (
-              <MotiView key={s.id} from={{ opacity: 0, translateY: 10 }} animate={{ opacity: 1, translateY: 0 }} transition={{ delay: i * 50 }}>
+            students.map((student, index) => (
+              <MotiView
+                key={student.id}
+                from={{ opacity: 0, translateY: 12 }}
+                animate={{ opacity: 1, translateY: 0 }}
+                transition={{ delay: index * 40 }}
+              >
                 <View style={styles.card}>
-                  <LinearGradient colors={[COLORS.success + '08', 'transparent']} style={StyleSheet.absoluteFill} />
-                  <View style={styles.cardRow}>
-                    <View style={styles.iconWrap}>
-                      <Text style={{ fontSize: 24 }}>👨‍🎓</Text>
+                  <LinearGradient colors={[COLORS.success + '10', 'transparent']} style={StyleSheet.absoluteFill} />
+                  <View style={styles.cardTop}>
+                    <View style={[styles.codeBox, { backgroundColor: COLORS.success + '16', borderColor: COLORS.success + '30' }]}>
+                      <Text style={[styles.codeText, { color: COLORS.success }]}>ST</Text>
                     </View>
-                    <View style={{ flex: 1 }}>
-                      <Text style={styles.name}>{s.full_name}</Text>
-                      {s.student_email ? <Text style={styles.email}>{s.student_email}</Text> : null}
+                    <View style={styles.cardBody}>
+                      <Text style={styles.cardTitle}>{student.full_name}</Text>
+                      <Text style={styles.cardSub}>{student.student_email ?? 'Portal email will be generated'}</Text>
                     </View>
-                    <Text style={styles.time}>{timeAgo(s.created_at)}</Text>
+                    <Text style={styles.cardTime}>{timeAgo(student.created_at)}</Text>
                   </View>
-                  <View style={styles.chipRow}>
-                    {s.school_name ? <Chip label={`🏫 ${s.school_name}`} /> : null}
-                    {s.current_class ? <Chip label={`📚 ${s.current_class}`} /> : null}
-                    {s.grade_level ? <Chip label={s.grade_level} /> : null}
-                    {s.enrollment_type ? <Chip label={s.enrollment_type} color={COLORS.info} /> : null}
+
+                  <View style={styles.metaWrap}>
+                    {student.school_name ? <Chip label={student.school_name} color={COLORS.info} /> : null}
+                    {student.current_class ? <Chip label={student.current_class} color={COLORS.primary} /> : null}
+                    {student.grade_level ? <Chip label={student.grade_level} color={COLORS.warning} /> : null}
+                    {student.enrollment_type ? <Chip label={student.enrollment_type} color={COLORS.success} /> : null}
                   </View>
-                  {(s.parent_name || s.parent_phone) ? (
-                    <Text style={styles.parentInfo}>
-                      👨‍👩‍👧 {s.parent_name}{s.parent_phone ? ` · ${s.parent_phone}` : ''}
+
+                  {student.parent_name || student.parent_phone ? (
+                    <Text style={styles.supportingText}>
+                      Parent: {student.parent_name ?? 'Unknown'}{student.parent_phone ? ` · ${student.parent_phone}` : ''}
                     </Text>
                   ) : null}
-                  <ApproveRejectRow
-                    processing={processing === s.id}
-                    onApprove={() => approveStudent(s)}
-                    onReject={() => rejectStudent(s)}
-                  />
+
+                  <View style={styles.actionRow}>
+                    <TouchableOpacity
+                      onPress={() => rejectStudent(student)}
+                      disabled={processing === student.id}
+                      style={[styles.rejectButton, processing === student.id && styles.buttonDisabled]}
+                    >
+                      <Text style={styles.rejectText}>Reject</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      onPress={() => approveStudent(student)}
+                      disabled={processing === student.id}
+                      style={[styles.approveButton, processing === student.id && styles.buttonDisabled]}
+                    >
+                      {processing === student.id ? (
+                        <ActivityIndicator color={COLORS.white100} size="small" />
+                      ) : (
+                        <Text style={styles.approveText}>Approve and Create</Text>
+                      )}
+                    </TouchableOpacity>
+                  </View>
                 </View>
               </MotiView>
             ))
-          )
-        )}
+          ))}
 
-        {/* ── Schools tab ── */}
-        {tab === 'schools' && (
-          schools.length === 0 ? (
-            <EmptyState emoji="✅" message="No pending school applications." />
+        {tab === 'schools' && isAdmin &&
+          (schools.length === 0 ? (
+            <EmptyState code="SC" message="No pending school applications." />
           ) : (
-            schools.map((s, i) => (
-              <MotiView key={s.id} from={{ opacity: 0, translateY: 10 }} animate={{ opacity: 1, translateY: 0 }} transition={{ delay: i * 50 }}>
+            schools.map((school, index) => (
+              <MotiView
+                key={school.id}
+                from={{ opacity: 0, translateY: 12 }}
+                animate={{ opacity: 1, translateY: 0 }}
+                transition={{ delay: index * 40 }}
+              >
                 <View style={styles.card}>
-                  <LinearGradient colors={[COLORS.info + '08', 'transparent']} style={StyleSheet.absoluteFill} />
-                  <View style={styles.cardRow}>
-                    <View style={[styles.iconWrap, { backgroundColor: COLORS.info + '15' }]}>
-                      <Text style={{ fontSize: 24 }}>🏫</Text>
+                  <LinearGradient colors={[COLORS.info + '10', 'transparent']} style={StyleSheet.absoluteFill} />
+                  <View style={styles.cardTop}>
+                    <View style={[styles.codeBox, { backgroundColor: COLORS.info + '16', borderColor: COLORS.info + '30' }]}>
+                      <Text style={[styles.codeText, { color: COLORS.info }]}>SC</Text>
                     </View>
-                    <View style={{ flex: 1 }}>
-                      <Text style={styles.name}>{s.school_name}</Text>
-                      {s.email ? <Text style={styles.email}>{s.email}</Text> : null}
+                    <View style={styles.cardBody}>
+                      <Text style={styles.cardTitle}>{school.name}</Text>
+                      <Text style={styles.cardSub}>{school.email ?? 'Account email will be generated'}</Text>
                     </View>
-                    <Text style={styles.time}>{timeAgo(s.created_at)}</Text>
+                    <Text style={styles.cardTime}>{timeAgo(school.created_at)}</Text>
                   </View>
-                  <View style={styles.chipRow}>
-                    {s.city ? <Chip label={`📍 ${s.city}${s.state ? `, ${s.state}` : ''}`} /> : null}
-                    {s.school_type ? <Chip label={s.school_type} color={COLORS.info} /> : null}
-                    {s.student_count ? <Chip label={`👥 ${s.student_count} students`} /> : null}
+
+                  <View style={styles.metaWrap}>
+                    {school.city || school.state ? <Chip label={`${school.city ?? ''}${school.city && school.state ? ', ' : ''}${school.state ?? ''}`} color={COLORS.info} /> : null}
+                    {school.school_type ? <Chip label={school.school_type} color={COLORS.primary} /> : null}
+                    {school.student_count ? <Chip label={`${school.student_count} students`} color={COLORS.warning} /> : null}
                   </View>
-                  {s.contact_person ? <Text style={styles.parentInfo}>👤 Contact: {s.contact_person}</Text> : null}
-                  {s.phone ? <Text style={styles.parentInfo}>📞 {s.phone}</Text> : null}
-                  <ApproveRejectRow
-                    processing={processing === s.id}
-                    onApprove={() => approveSchool(s)}
-                    onReject={() => rejectSchool(s)}
-                    approveLabel="Approve & Create Account"
-                  />
+
+                  {school.contact_person ? <Text style={styles.supportingText}>Contact: {school.contact_person}</Text> : null}
+                  {school.phone ? <Text style={styles.supportingText}>Phone: {school.phone}</Text> : null}
+
+                  <View style={styles.actionRow}>
+                    <TouchableOpacity
+                      onPress={() => rejectSchool(school)}
+                      disabled={processing === school.id}
+                      style={[styles.rejectButton, processing === school.id && styles.buttonDisabled]}
+                    >
+                      <Text style={styles.rejectText}>Reject</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      onPress={() => approveSchool(school)}
+                      disabled={processing === school.id}
+                      style={[styles.approveButton, processing === school.id && styles.buttonDisabled]}
+                    >
+                      {processing === school.id ? (
+                        <ActivityIndicator color={COLORS.white100} size="small" />
+                      ) : (
+                        <Text style={styles.approveText}>Approve and Create</Text>
+                      )}
+                    </TouchableOpacity>
+                  </View>
                 </View>
               </MotiView>
             ))
-          )
-        )}
+          ))}
 
-        {/* ── Prospective tab ── */}
-        {tab === 'prospective' && (
-          prospective.length === 0 ? (
-            <EmptyState emoji="✅" message="No prospective applications." />
+        {tab === 'prospective' &&
+          (prospective.length === 0 ? (
+            <EmptyState code="PR" message="No prospective applications right now." />
           ) : (
-            prospective.map((p, i) => (
-              <MotiView key={p.id} from={{ opacity: 0, translateY: 10 }} animate={{ opacity: 1, translateY: 0 }} transition={{ delay: i * 50 }}>
+            prospective.map((student, index) => (
+              <MotiView
+                key={student.id}
+                from={{ opacity: 0, translateY: 12 }}
+                animate={{ opacity: 1, translateY: 0 }}
+                transition={{ delay: index * 40 }}
+              >
                 <View style={styles.card}>
-                  <LinearGradient colors={[COLORS.gold + '08', 'transparent']} style={StyleSheet.absoluteFill} />
-                  <View style={styles.cardRow}>
-                    <View style={[styles.iconWrap, { backgroundColor: COLORS.gold + '15' }]}>
-                      <Text style={{ fontSize: 24 }}>🌟</Text>
+                  <LinearGradient colors={[COLORS.warning + '10', 'transparent']} style={StyleSheet.absoluteFill} />
+                  <View style={styles.cardTop}>
+                    <View style={[styles.codeBox, { backgroundColor: COLORS.warning + '16', borderColor: COLORS.warning + '30' }]}>
+                      <Text style={[styles.codeText, { color: COLORS.warning }]}>PR</Text>
                     </View>
-                    <View style={{ flex: 1 }}>
-                      <Text style={styles.name}>{p.full_name}</Text>
-                      {p.parent_email ? <Text style={styles.email}>{p.parent_email}</Text> : null}
+                    <View style={styles.cardBody}>
+                      <Text style={styles.cardTitle}>{student.full_name}</Text>
+                      <Text style={styles.cardSub}>{student.parent_email ?? 'Parent email not provided'}</Text>
                     </View>
-                    <Text style={styles.time}>{timeAgo(p.created_at)}</Text>
+                    <Text style={styles.cardTime}>{timeAgo(student.created_at)}</Text>
                   </View>
-                  <View style={styles.chipRow}>
-                    {p.school_name ? <Chip label={`🏫 ${p.school_name}`} /> : null}
-                    {p.grade ? <Chip label={`Grade: ${p.grade}`} /> : null}
-                    {p.course_interest ? <Chip label={`📖 ${p.course_interest}`} color={COLORS.gold} /> : null}
+
+                  <View style={styles.metaWrap}>
+                    {student.school_name ? <Chip label={student.school_name} color={COLORS.info} /> : null}
+                    {student.grade ? <Chip label={`Grade ${student.grade}`} color={COLORS.primary} /> : null}
+                    {student.course_interest ? <Chip label={student.course_interest} color={COLORS.warning} /> : null}
                   </View>
-                  {p.parent_phone ? <Text style={styles.parentInfo}>📞 {p.parent_phone}</Text> : null}
+
+                  {student.parent_phone ? <Text style={styles.supportingText}>Phone: {student.parent_phone}</Text> : null}
+
                   <TouchableOpacity
-                    onPress={() => approveProspective(p)}
-                    disabled={processing === p.id}
-                    style={[styles.acceptBtn, processing === p.id && styles.btnDisabled]}
+                    onPress={() => approveProspective(student)}
+                    disabled={processing === student.id}
+                    style={[styles.acceptButton, processing === student.id && styles.buttonDisabled]}
                   >
-                    {processing === p.id
-                      ? <ActivityIndicator color={COLORS.white100} size="small" />
-                      : <Text style={styles.acceptText}>✓ Accept Application</Text>}
+                    {processing === student.id ? (
+                      <ActivityIndicator color={COLORS.white100} size="small" />
+                    ) : (
+                      <Text style={styles.acceptText}>Accept Prospect</Text>
+                    )}
                   </TouchableOpacity>
                 </View>
               </MotiView>
             ))
-          )
-        )}
+          ))}
 
         <View style={{ height: 32 }} />
       </ScrollView>
 
-      {/* Credentials overlay */}
-      {credentials && (
-        <CredentialsModal creds={credentials} onDone={() => setCredentials(null)} />
-      )}
+      {credentials ? (
+        <CredentialsModal
+          creds={credentials}
+          onDone={() => setCredentials(null)}
+          onShare={shareCredentials}
+          exporting={exportingCredentials}
+        />
+      ) : null}
     </SafeAreaView>
   );
 }
-
-// ─── Sub-components ───────────────────────────────────────────────────────────
-function Chip({ label, color }: { label: string; color?: string }) {
-  return (
-    <View style={[chip.wrap, color ? { backgroundColor: color + '18' } : {}]}>
-      <Text style={[chip.text, color ? { color } : {}]}>{label}</Text>
-    </View>
-  );
-}
-
-function ApproveRejectRow({ processing, onApprove, onReject, approveLabel = 'Approve' }: {
-  processing: boolean; onApprove: () => void; onReject: () => void; approveLabel?: string;
-}) {
-  return (
-    <View style={arr.row}>
-      <TouchableOpacity onPress={onReject} disabled={processing} style={[arr.rejectBtn, processing && styles.btnDisabled]}>
-        <Text style={arr.rejectText}>✕ Reject</Text>
-      </TouchableOpacity>
-      <TouchableOpacity onPress={onApprove} disabled={processing} style={[arr.approveBtn, processing && styles.btnDisabled]}>
-        {processing
-          ? <ActivityIndicator color={COLORS.white100} size="small" />
-          : <Text style={arr.approveText}>✓ {approveLabel}</Text>}
-      </TouchableOpacity>
-    </View>
-  );
-}
-
-function EmptyState({ emoji, message }: { emoji: string; message: string }) {
-  return (
-    <View style={styles.emptyWrap}>
-      <Text style={styles.emptyEmoji}>{emoji}</Text>
-      <Text style={styles.emptyText}>{message}</Text>
-    </View>
-  );
-}
-
-const chip = StyleSheet.create({
-  wrap: { backgroundColor: COLORS.border, borderRadius: RADIUS.full, paddingHorizontal: 8, paddingVertical: 3 },
-  text: { fontFamily: FONT_FAMILY.body, fontSize: 10, color: COLORS.textSecondary },
-});
-
-const arr = StyleSheet.create({
-  row: { flexDirection: 'row', gap: SPACING.sm, marginTop: SPACING.xs },
-  rejectBtn: { flex: 1, paddingVertical: 9, borderRadius: RADIUS.md, borderWidth: 1, borderColor: COLORS.error + '50', alignItems: 'center' },
-  rejectText: { fontFamily: FONT_FAMILY.bodySemi, fontSize: FONT_SIZE.sm, color: COLORS.error },
-  approveBtn: { flex: 2, paddingVertical: 9, borderRadius: RADIUS.md, backgroundColor: COLORS.success, alignItems: 'center', justifyContent: 'center' },
-  approveText: { fontFamily: FONT_FAMILY.bodySemi, fontSize: FONT_SIZE.sm, color: COLORS.white100 },
-});
-
-const modal = StyleSheet.create({
-  overlay: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.75)', justifyContent: 'center', alignItems: 'center', padding: SPACING.xl, zIndex: 99 },
-  box: { width: '100%', maxWidth: 380, borderWidth: 1, borderColor: COLORS.success + '40', borderRadius: RADIUS.xl, padding: SPACING.xl, gap: SPACING.sm, overflow: 'hidden', alignItems: 'center', backgroundColor: COLORS.bg },
-  icon: { fontSize: 40, marginBottom: 4 },
-  title: { fontFamily: FONT_FAMILY.display, fontSize: FONT_SIZE.xl, color: COLORS.textPrimary },
-  name: { fontFamily: FONT_FAMILY.bodySemi, fontSize: FONT_SIZE.base, color: COLORS.textSecondary },
-  credRow: { width: '100%', borderWidth: 1, borderColor: COLORS.border, borderRadius: RADIUS.md, padding: SPACING.md, gap: 4, backgroundColor: COLORS.bgCard },
-  pwRow: { borderColor: COLORS.success + '40' },
-  credLabel: { fontFamily: FONT_FAMILY.body, fontSize: FONT_SIZE.xs, color: COLORS.textMuted, textTransform: 'uppercase', letterSpacing: 1 },
-  credValue: { fontFamily: FONT_FAMILY.bodySemi, fontSize: FONT_SIZE.base, color: COLORS.textPrimary },
-  note: { fontFamily: FONT_FAMILY.body, fontSize: FONT_SIZE.xs, color: COLORS.warning, textAlign: 'center' },
-  doneBtn: { width: '100%', paddingVertical: 12, borderRadius: RADIUS.md, backgroundColor: COLORS.success, alignItems: 'center' },
-  doneBtnText: { fontFamily: FONT_FAMILY.bodySemi, fontSize: FONT_SIZE.sm, color: COLORS.white100 },
-});
 
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: COLORS.bg },
   loadWrap: { flex: 1, backgroundColor: COLORS.bg, alignItems: 'center', justifyContent: 'center', gap: 12 },
   loadText: { fontFamily: FONT_FAMILY.body, fontSize: FONT_SIZE.sm, color: COLORS.textMuted },
-
-  tabBar: { flexDirection: 'row', marginHorizontal: SPACING.xl, marginBottom: SPACING.md, borderWidth: 1, borderColor: COLORS.border, borderRadius: RADIUS.lg, overflow: 'hidden' },
-  tabBtn: { flex: 1, paddingVertical: 10, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 5, backgroundColor: COLORS.bgCard },
-  tabBtnActive: { backgroundColor: COLORS.success + '20' },
-  tabText: { fontFamily: FONT_FAMILY.bodySemi, fontSize: FONT_SIZE.xs, color: COLORS.textMuted },
-  tabTextActive: { color: COLORS.success },
-  tabBadge: { backgroundColor: COLORS.border, borderRadius: 8, paddingHorizontal: 6, paddingVertical: 1 },
-  tabBadgeActive: { backgroundColor: COLORS.success },
-  tabBadgeText: { fontFamily: FONT_FAMILY.bodySemi, fontSize: 9, color: COLORS.white100 },
-
+  summaryStrip: {
+    flexDirection: 'row',
+    gap: SPACING.sm,
+    paddingHorizontal: SPACING.xl,
+    marginBottom: SPACING.md,
+  },
+  summaryCard: {
+    flex: 1,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    backgroundColor: COLORS.bgCard,
+    borderRadius: RADIUS.lg,
+    padding: SPACING.md,
+  },
+  summaryValue: { fontFamily: FONT_FAMILY.display, fontSize: FONT_SIZE.xl, color: COLORS.textPrimary },
+  summaryLabel: {
+    marginTop: 4,
+    fontFamily: FONT_FAMILY.bodyBold,
+    fontSize: FONT_SIZE.xs,
+    color: COLORS.textMuted,
+    textTransform: 'uppercase',
+    letterSpacing: LETTER_SPACING.wider,
+  },
+  tabBar: {
+    flexDirection: 'row',
+    marginHorizontal: SPACING.xl,
+    marginBottom: SPACING.md,
+    gap: SPACING.sm,
+  },
+  tabButton: {
+    flex: 1,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    backgroundColor: COLORS.bgCard,
+    borderRadius: RADIUS.lg,
+    paddingVertical: 10,
+    paddingHorizontal: 8,
+    alignItems: 'center',
+    gap: 3,
+  },
+  tabButtonActive: {
+    backgroundColor: COLORS.success + '12',
+    borderColor: COLORS.success + '50',
+  },
+  tabCode: {
+    fontFamily: FONT_FAMILY.bodyBold,
+    fontSize: 9,
+    color: COLORS.textMuted,
+    letterSpacing: LETTER_SPACING.wider,
+  },
+  tabCodeActive: { color: COLORS.success },
+  tabText: { fontFamily: FONT_FAMILY.bodySemi, fontSize: FONT_SIZE.xs, color: COLORS.textSecondary },
+  tabTextActive: { color: COLORS.textPrimary },
+  tabBadge: {
+    minWidth: 24,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: RADIUS.full,
+    backgroundColor: COLORS.border,
+    alignItems: 'center',
+  },
+  tabBadgeActive: { backgroundColor: COLORS.success + '20' },
+  tabBadgeText: { fontFamily: FONT_FAMILY.bodyBold, fontSize: 9, color: COLORS.textSecondary },
+  tabBadgeTextActive: { color: COLORS.success },
   list: { paddingHorizontal: SPACING.xl },
-  card: { borderWidth: 1, borderColor: COLORS.border, borderRadius: RADIUS.xl, padding: SPACING.md, marginBottom: SPACING.md, overflow: 'hidden', gap: SPACING.sm },
-  cardRow: { flexDirection: 'row', alignItems: 'flex-start', gap: SPACING.sm },
-  iconWrap: { width: 46, height: 46, borderRadius: RADIUS.md, backgroundColor: COLORS.success + '15', alignItems: 'center', justifyContent: 'center', flexShrink: 0 },
-  name: { fontFamily: FONT_FAMILY.bodySemi, fontSize: FONT_SIZE.base, color: COLORS.textPrimary },
-  email: { fontFamily: FONT_FAMILY.body, fontSize: FONT_SIZE.xs, color: COLORS.textMuted, marginTop: 2 },
-  time: { fontFamily: FONT_FAMILY.body, fontSize: 10, color: COLORS.textMuted, flexShrink: 0 },
-  chipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 5 },
-  parentInfo: { fontFamily: FONT_FAMILY.body, fontSize: FONT_SIZE.xs, color: COLORS.textSecondary },
-  acceptBtn: { paddingVertical: 10, borderRadius: RADIUS.md, backgroundColor: COLORS.gold, alignItems: 'center', justifyContent: 'center' },
+  card: {
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    borderRadius: RADIUS.lg,
+    backgroundColor: COLORS.bgCard,
+    padding: SPACING.md,
+    marginBottom: SPACING.sm,
+    overflow: 'hidden',
+    gap: SPACING.sm,
+  },
+  cardTop: { flexDirection: 'row', alignItems: 'flex-start', gap: SPACING.md },
+  codeBox: {
+    width: 46,
+    height: 46,
+    borderWidth: 1,
+    borderRadius: RADIUS.md,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  codeText: {
+    fontFamily: FONT_FAMILY.bodyBold,
+    fontSize: FONT_SIZE.sm,
+    letterSpacing: LETTER_SPACING.wider,
+  },
+  cardBody: { flex: 1 },
+  cardTitle: { fontFamily: FONT_FAMILY.bodySemi, fontSize: FONT_SIZE.base, color: COLORS.textPrimary },
+  cardSub: { marginTop: 2, fontFamily: FONT_FAMILY.body, fontSize: FONT_SIZE.xs, color: COLORS.textMuted },
+  cardTime: { fontFamily: FONT_FAMILY.body, fontSize: 10, color: COLORS.textMuted },
+  metaWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
+  chip: { paddingHorizontal: 8, paddingVertical: 4, borderRadius: RADIUS.full },
+  chipText: { fontFamily: FONT_FAMILY.bodySemi, fontSize: 10 },
+  supportingText: { fontFamily: FONT_FAMILY.body, fontSize: FONT_SIZE.xs, color: COLORS.textSecondary },
+  actionRow: { flexDirection: 'row', gap: SPACING.sm },
+  rejectButton: {
+    flex: 1,
+    borderWidth: 1,
+    borderColor: COLORS.error + '40',
+    borderRadius: RADIUS.md,
+    paddingVertical: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  rejectText: { fontFamily: FONT_FAMILY.bodySemi, fontSize: FONT_SIZE.sm, color: COLORS.error },
+  approveButton: {
+    flex: 1.6,
+    borderRadius: RADIUS.md,
+    backgroundColor: COLORS.success,
+    paddingVertical: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  approveText: { fontFamily: FONT_FAMILY.bodySemi, fontSize: FONT_SIZE.sm, color: COLORS.white100 },
+  acceptButton: {
+    borderRadius: RADIUS.md,
+    backgroundColor: COLORS.warning,
+    paddingVertical: 11,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   acceptText: { fontFamily: FONT_FAMILY.bodySemi, fontSize: FONT_SIZE.sm, color: COLORS.white100 },
-  btnDisabled: { opacity: 0.5 },
-
-  emptyWrap: { alignItems: 'center', paddingVertical: 80, gap: 10 },
-  emptyEmoji: { fontSize: 48 },
-  emptyText: { fontFamily: FONT_FAMILY.body, fontSize: FONT_SIZE.sm, color: COLORS.textMuted },
+  buttonDisabled: { opacity: 0.6 },
+  emptyWrap: { alignItems: 'center', paddingVertical: 64, gap: 12 },
+  emptyCode: { fontFamily: FONT_FAMILY.display, fontSize: FONT_SIZE['2xl'], color: COLORS.textMuted },
+  emptyText: { fontFamily: FONT_FAMILY.body, fontSize: FONT_SIZE.sm, color: COLORS.textMuted, textAlign: 'center' },
+  modalOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(10,10,12,0.72)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: SPACING.xl,
+  },
+  modalBox: {
+    width: '100%',
+    maxWidth: 380,
+    borderWidth: 1,
+    borderColor: COLORS.success + '40',
+    borderRadius: RADIUS.xl,
+    backgroundColor: COLORS.bg,
+    padding: SPACING.xl,
+    overflow: 'hidden',
+    alignItems: 'center',
+    gap: SPACING.sm,
+  },
+  modalCode: { fontFamily: FONT_FAMILY.display, fontSize: FONT_SIZE.xl, color: COLORS.success },
+  modalTitle: { fontFamily: FONT_FAMILY.display, fontSize: FONT_SIZE.lg, color: COLORS.textPrimary },
+  modalName: { fontFamily: FONT_FAMILY.bodySemi, fontSize: FONT_SIZE.base, color: COLORS.textSecondary },
+  modalRole: { fontFamily: FONT_FAMILY.bodyBold, fontSize: FONT_SIZE.xs, color: COLORS.success, textTransform: 'uppercase', letterSpacing: LETTER_SPACING.wider },
+  credCard: {
+    width: '100%',
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    backgroundColor: COLORS.bgCard,
+    borderRadius: RADIUS.md,
+    padding: SPACING.md,
+    gap: 4,
+  },
+  credCardHighlight: { borderColor: COLORS.success + '30' },
+  credLabel: {
+    fontFamily: FONT_FAMILY.bodyBold,
+    fontSize: FONT_SIZE.xs,
+    color: COLORS.textMuted,
+    textTransform: 'uppercase',
+    letterSpacing: LETTER_SPACING.wide,
+  },
+  credValue: { fontFamily: FONT_FAMILY.bodySemi, fontSize: FONT_SIZE.base, color: COLORS.textPrimary },
+  modalNote: { fontFamily: FONT_FAMILY.body, fontSize: FONT_SIZE.xs, color: COLORS.warning, textAlign: 'center' },
+  modalActions: { width: '100%', flexDirection: 'row', gap: SPACING.sm },
+  modalSecondaryButton: {
+    flex: 1,
+    paddingVertical: 12,
+    borderRadius: RADIUS.md,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    backgroundColor: COLORS.bgCard,
+    alignItems: 'center',
+  },
+  modalSecondaryButtonText: { fontFamily: FONT_FAMILY.bodySemi, fontSize: FONT_SIZE.sm, color: COLORS.textPrimary },
+  modalButton: {
+    flex: 1,
+    paddingVertical: 12,
+    borderRadius: RADIUS.md,
+    backgroundColor: COLORS.success,
+    alignItems: 'center',
+  },
+  modalButtonText: { fontFamily: FONT_FAMILY.bodySemi, fontSize: FONT_SIZE.sm, color: COLORS.white100 },
 });
+

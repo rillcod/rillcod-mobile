@@ -15,6 +15,7 @@ import { FONT_FAMILY, FONT_SIZE, LETTER_SPACING } from '../../constants/typograp
 import { SPACING, RADIUS, SHADOW } from '../../constants/spacing';
 import { t } from '../../i18n';
 import { useHaptics } from '../../hooks/useHaptics';
+import { useNavigation } from '@react-navigation/native';
 
 const { width } = Dimensions.get('window');
 
@@ -41,6 +42,7 @@ const LEVEL_COLORS: Record<string, string> = {
 };
 
 export default function LearnScreen() {
+  const navigation: any = useNavigation();
   const { profile } = useAuth();
   const { light } = useHaptics();
 
@@ -175,7 +177,7 @@ export default function LearnScreen() {
                     course={course}
                     enrollment={getEnrollment(course.id)}
                     index={i}
-                    onPress={() => light()}
+                    onPress={() => { light(); navigation.navigate('CourseDetail', { programId: course.id, title: course.name }); }}
                   />
                 ))}
               </MotiView>
@@ -197,7 +199,7 @@ export default function LearnScreen() {
                     course={course}
                     enrollment={undefined}
                     index={i}
-                    onPress={() => light()}
+                    onPress={() => { light(); navigation.navigate('CourseDetail', { programId: course.id, title: course.name }); }}
                   />
                 ))}
               </MotiView>
@@ -310,9 +312,9 @@ function CourseCard({ course, enrollment, index, onPress }: CourseCardProps) {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: COLORS.bg },
   header: {
-    paddingTop: Platform.OS === 'ios' ? 60 : 48,
+    paddingTop: Platform.OS === 'ios' ? 48 : 36,
     paddingHorizontal: SPACING.xl,
-    paddingBottom: SPACING.lg,
+    paddingBottom: SPACING.base,
   },
   headerTitle: {
     fontFamily: FONT_FAMILY.display,
@@ -360,7 +362,7 @@ const styles = StyleSheet.create({
     color: COLORS.textSecondary,
   },
   filterTextActive: { color: '#fff' },
-  scroll: { paddingHorizontal: SPACING.xl, paddingTop: SPACING.sm, paddingBottom: 40 },
+  scroll: { paddingHorizontal: SPACING.xl, paddingTop: SPACING.xs, paddingBottom: 24 },
   sectionLabel: {
     fontFamily: FONT_FAMILY.bodySemi,
     fontSize: FONT_SIZE.xs,
@@ -368,7 +370,7 @@ const styles = StyleSheet.create({
     textTransform: 'uppercase',
     letterSpacing: LETTER_SPACING.wider,
     marginBottom: SPACING.md,
-    marginTop: SPACING.base,
+    marginTop: SPACING.sm,
   },
   card: {
     borderRadius: RADIUS['2xl'],
@@ -484,8 +486,8 @@ const styles = StyleSheet.create({
   },
   emptyWrap: {
     alignItems: 'center',
-    paddingTop: 60,
-    paddingBottom: 40,
+    paddingTop: 40,
+    paddingBottom: 24,
   },
   emptyEmoji: { fontSize: 56, marginBottom: SPACING.lg },
   emptyTitle: {

@@ -96,6 +96,7 @@ export default function RegisterScreen({ navigation }: Props) {
           updated_at: new Date().toISOString(),
         }),
         supabase.from('students').insert({
+          name: fullName.trim(),
           full_name: fullName.trim(),
           student_email: email.trim().toLowerCase(),
           parent_name: parentName.trim() || null,
@@ -246,8 +247,8 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.primaryGlow,
     opacity: 0.5,
   },
-  scroll: { flexGrow: 1, padding: SPACING.xl, paddingTop: Platform.OS === 'ios' ? 70 : 50 },
-  header: { marginBottom: SPACING.xl },
+  scroll: { flexGrow: 1, padding: SPACING.xl, paddingTop: Platform.OS === 'ios' ? 52 : 36 },
+  header: { marginBottom: SPACING.lg },
   backBtn: { marginBottom: SPACING.base },
   backText: {
     fontFamily: FONT_FAMILY.bodySemi,
@@ -291,7 +292,7 @@ const styles = StyleSheet.create({
     borderColor: COLORS.border,
     ...SHADOW.md,
   },
-  cardInner: { padding: SPACING.xl },
+  cardInner: { padding: SPACING.lg },
   sectionLabel: {
     fontFamily: FONT_FAMILY.bodySemi,
     fontSize: FONT_SIZE.xs,
@@ -325,7 +326,7 @@ const styles = StyleSheet.create({
     fontSize: 10,
     color: COLORS.textMuted,
     textAlign: 'center',
-    marginTop: SPACING.xl,
+    marginTop: SPACING.lg,
     opacity: 0.5,
   },
 });

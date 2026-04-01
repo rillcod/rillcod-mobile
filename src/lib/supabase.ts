@@ -1,11 +1,16 @@
 import 'react-native-url-polyfill/auto';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { createClient } from '@supabase/supabase-js';
+import type { Database } from '../types/supabase';
 
-const SUPABASE_URL = 'https://akaorqukdoawacvxsdij.supabase.co';
-const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImFrYW9ycXVrZG9hd2FjdnhzZGlqIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzIwMDg2MzgsImV4cCI6MjA4NzU4NDYzOH0.60US0KpUqtur_5YqPSX3qxPex1wkzAG7WX-WBmoMi-s';
+const SUPABASE_URL = process.env.EXPO_PUBLIC_SUPABASE_URL || '';
+const SUPABASE_ANON_KEY = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY || '';
 
-export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
+  console.warn('Supabase URL or Anon Key is missing from environment variables!');
+}
+
+export const supabase = createClient<Database>(SUPABASE_URL, SUPABASE_ANON_KEY, {
   auth: {
     storage: AsyncStorage,
     autoRefreshToken: true,

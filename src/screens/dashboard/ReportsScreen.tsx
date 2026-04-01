@@ -75,6 +75,7 @@ export default function ReportsScreen({ navigation }: any) {
   const [students, setStudents] = useState<StudentRow[]>([]);
   const [filtered, setFiltered] = useState<StudentRow[]>([]);
   const [ownReport, setOwnReport] = useState<any>(null);
+  const [childReports, setChildReports] = useState<StudentRow[]>([]);
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | 'published' | 'draft' | 'none'>('all');
   const [loading, setLoading] = useState(true);
@@ -82,8 +83,9 @@ export default function ReportsScreen({ navigation }: any) {
   const [gradeCounts, setGradeCounts] = useState<Record<string, number>>({});
 
   const isStudent = profile?.role === 'student';
+  const isParent = profile?.role === 'parent';
   const isStaff = profile?.role === 'admin' || profile?.role === 'teacher' || profile?.role === 'school';
-  const isEditor = profile?.role === 'admin' || profile?.role === 'teacher';
+  const isEditor = isStaff;
 
   const load = useCallback(async () => {
     if (isStudent) {
@@ -95,6 +97,46 @@ export default function ReportsScreen({ navigation }: any) {
         .order('report_date', { ascending: false })
         .limit(5);
       setOwnReport(data?.[0] ?? null);
+      setLoading(false);
+      return;
+    }
+
+    if (isParent) {
+      const { data: childIds } = await supabase.rpc('get_parent_student_ids');
+      const ids = (childIds ?? []).filter(Boolean);
+      if (!ids.length) {
+        setChildReports([]);
+        setFiltered([]);
+        setLoading(false);
+        return;
+      }
+
+      const [{ data: children }, { data: reports }] = await Promise.all([
+        supabase
+          .from('portal_users')
+          .select('id, full_name, email, school_name, section_class')
+          .in('id', ids)
+          .eq('role', 'student')
+          .order('full_name'),
+        supabase
+          .from('student_progress_reports')
+          .select('id, student_id, overall_grade, overall_score, is_published, course_name, report_term, report_date')
+          .in('student_id', ids)
+          .eq('is_published', true)
+          .order('report_date', { ascending: false }),
+      ]);
+
+      const repMap: Record<string, ReportSummary> = {};
+      (reports ?? []).forEach((r: any) => {
+        if (!repMap[r.student_id]) repMap[r.student_id] = r as ReportSummary;
+      });
+
+      const rows: StudentRow[] = (children ?? []).map((student: any) => ({
+        ...student,
+        report: repMap[student.id],
+      }));
+      setChildReports(rows);
+      setFiltered(rows);
       setLoading(false);
       return;
     }
@@ -147,13 +189,13 @@ export default function ReportsScreen({ navigation }: any) {
     });
     setGradeCounts(counts);
     setLoading(false);
-  }, [profile]);
+  }, [profile, isStudent, isParent]);
 
   useEffect(() => { load(); }, [load]);
 
   useEffect(() => {
     if (isStudent) return;
-    let list = students;
+    let list = isParent ? childReports : students;
     if (statusFilter === 'published') list = list.filter(s => s.report?.is_published === true);
     else if (statusFilter === 'draft') list = list.filter(s => s.report && !s.report.is_published);
     else if (statusFilter === 'none') list = list.filter(s => !s.report);
@@ -167,7 +209,7 @@ export default function ReportsScreen({ navigation }: any) {
       );
     }
     setFiltered(list);
-  }, [search, statusFilter, students]);
+  }, [search, statusFilter, students, childReports, isStudent, isParent]);
 
   const onRefresh = async () => { setRefreshing(true); await load(); setRefreshing(false); };
 
@@ -201,6 +243,86 @@ export default function ReportsScreen({ navigation }: any) {
             <MotiView from={{ opacity: 0, scale: 0.96 }} animate={{ opacity: 1, scale: 1 }}>
               <ReportDetailCard report={ownReport} studentName={profile?.full_name ?? ''} />
             </MotiView>
+          )}
+        </ScrollView>
+      </SafeAreaView>
+    );
+  }
+
+  if (isParent) {
+    return (
+      <SafeAreaView style={styles.safe}>
+        <View style={styles.header}>
+          <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}>
+            <Text style={styles.backArrow}>←</Text>
+          </TouchableOpacity>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.title}>Children's Reports</Text>
+            <Text style={styles.subtitle}>{filtered.length} linked learners</Text>
+          </View>
+        </View>
+
+        <View style={styles.searchWrap}>
+          <Text style={styles.searchIcon}>🔍</Text>
+          <TextInput
+            style={styles.searchInput}
+            placeholder="Search child, class, course…"
+            placeholderTextColor={COLORS.textMuted}
+            value={search}
+            onChangeText={setSearch}
+          />
+          {!!search && <TouchableOpacity onPress={() => setSearch('')}><Text style={styles.clearBtn}>✕</Text></TouchableOpacity>}
+        </View>
+
+        <ScrollView
+          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={COLORS.accent} />}
+          showsVerticalScrollIndicator={false}
+          contentContainerStyle={styles.list}
+        >
+          {filtered.length === 0 ? (
+            <View style={styles.emptyWrap}>
+              <Text style={styles.emptyEmoji}>📋</Text>
+              <Text style={styles.emptyText}>No linked reports yet.</Text>
+              <Text style={styles.emptyHint}>Published reports for your children will appear here.</Text>
+            </View>
+          ) : (
+            filtered.map((student, index) => {
+              const gc = gradeColor(student.report?.overall_grade);
+              return (
+                <MotiView key={student.id} from={{ opacity: 0, translateX: -10 }} animate={{ opacity: 1, translateX: 0 }} transition={{ delay: index * 25 }}>
+                  <TouchableOpacity
+                    style={styles.card}
+                    activeOpacity={0.85}
+                    onPress={() => navigation.navigate('StudentReport', { studentId: student.id, studentName: student.full_name })}
+                  >
+                    <LinearGradient colors={[gc + '08', 'transparent']} style={StyleSheet.absoluteFill} />
+                    <View style={[styles.avatar, { backgroundColor: gc + '22' }]}>
+                      <Text style={[styles.avatarText, { color: gc }]}>{student.full_name[0].toUpperCase()}</Text>
+                    </View>
+                    <View style={{ flex: 1, gap: 3 }}>
+                      <Text style={styles.studentName}>{student.full_name}</Text>
+                      <View style={styles.metaRow}>
+                        {student.school_name ? <Text style={styles.metaText} numberOfLines={1}>🏫 {student.school_name}</Text> : null}
+                        {student.section_class ? <Text style={styles.metaText}>📚 {student.section_class}</Text> : null}
+                      </View>
+                      {student.report ? (
+                        <Text style={styles.courseMeta}>{student.report.course_name} · {student.report.report_term}</Text>
+                      ) : (
+                        <Text style={styles.courseMeta}>No published report yet</Text>
+                      )}
+                    </View>
+                    {student.report ? (
+                      <View style={styles.gradeBlock}>
+                        <Text style={[styles.gradeMain, { color: gc }]}>{student.report.overall_grade ?? '—'}</Text>
+                        <Text style={styles.gradeSub}>{student.report.overall_score ?? 0}%</Text>
+                      </View>
+                    ) : (
+                      <Text style={styles.chevron}>›</Text>
+                    )}
+                  </TouchableOpacity>
+                </MotiView>
+              );
+            })
           )}
         </ScrollView>
       </SafeAreaView>

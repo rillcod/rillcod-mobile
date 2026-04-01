@@ -7,6 +7,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { MotiView } from 'moti';
 import { LinearGradient } from 'expo-linear-gradient';
 import { supabase } from '../../lib/supabase';
+import { useAuth } from '../../contexts/AuthContext';
 import { COLORS } from '../../constants/colors';
 import { FONT_FAMILY, FONT_SIZE } from '../../constants/typography';
 import { SPACING, RADIUS } from '../../constants/spacing';
@@ -23,6 +24,7 @@ interface Student {
 type Action = 'deactivate' | 'delete';
 
 export default function WipeStudentsScreen({ navigation }: any) {
+  const { profile } = useAuth();
   const [students, setStudents] = useState<Student[]>([]);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [search, setSearch] = useState('');
@@ -31,15 +33,19 @@ export default function WipeStudentsScreen({ navigation }: any) {
   const [processing, setProcessing] = useState(false);
 
   const load = useCallback(async () => {
-    const { data } = await supabase
+    let query = supabase
       .from('portal_users')
       .select('id, full_name, email, school_name, is_active, created_at')
       .eq('role', 'student')
       .order('full_name')
       .limit(500);
+    if ((profile?.role === 'teacher' || profile?.role === 'school') && profile?.school_id) {
+      query = query.eq('school_id', profile.school_id);
+    }
+    const { data } = await query;
     if (data) setStudents(data as Student[]);
     setLoading(false);
-  }, []);
+  }, [profile?.role, profile?.school_id]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -96,6 +102,25 @@ export default function WipeStudentsScreen({ navigation }: any) {
   };
 
   if (loading) return <View style={styles.loadWrap}><ActivityIndicator color={COLORS.error} size="large" /></View>;
+
+  if (!(profile?.role === 'admin' || profile?.role === 'school' || profile?.role === 'teacher')) {
+    return (
+      <SafeAreaView style={styles.safe}>
+        <View style={styles.header}>
+          <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}>
+            <Text style={styles.backArrow}>←</Text>
+          </TouchableOpacity>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.title}>Wipe Students</Text>
+            <Text style={styles.subtitle}>Restricted access</Text>
+          </View>
+        </View>
+        <View style={styles.warningBanner}>
+          <Text style={styles.warningText}>Only admin, school, and teacher accounts can access student bulk actions.</Text>
+        </View>
+      </SafeAreaView>
+    );
+  }
 
   return (
     <SafeAreaView style={styles.safe}>

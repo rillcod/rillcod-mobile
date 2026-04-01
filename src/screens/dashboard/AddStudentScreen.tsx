@@ -20,7 +20,7 @@ const GRADE_LEVELS = [
   'SS 1', 'SS 2', 'SS 3',
 ];
 
-interface School { id: string; school_name: string }
+interface School { id: string; name: string }
 interface Credentials { email: string; password: string; name: string }
 
 function genPassword() {
@@ -56,6 +56,7 @@ export default function AddStudentScreen({ navigation }: any) {
   const [showGradePicker, setShowGradePicker] = useState(false);
   const [saving, setSaving] = useState(false);
   const [credentials, setCredentials] = useState<Credentials | null>(null);
+  const [selectedSchoolId, setSelectedSchoolId] = useState(profile?.school_id ?? '');
 
   const isAdmin = profile?.role === 'admin';
 
@@ -73,32 +74,43 @@ export default function AddStudentScreen({ navigation }: any) {
 
   useEffect(() => {
     if (isAdmin) {
-      supabase.from('schools').select('id, school_name').eq('status', 'approved').limit(100)
+      supabase.from('schools').select('id, name').eq('status', 'approved').limit(100)
         .then(({ data }) => { if (data) setSchools(data as School[]); });
     }
   }, [isAdmin]);
+
+  useEffect(() => {
+    if (!isAdmin || !form.school_name) return;
+    const match = schools.find((school) => school.name === form.school_name);
+    if (match) setSelectedSchoolId(match.id);
+  }, [form.school_name, isAdmin, schools]);
 
   const set = (key: string) => (val: string) => setForm(f => ({ ...f, [key]: val }));
 
   const submit = async () => {
     if (!form.full_name.trim()) { Alert.alert('Full name is required'); return; }
+    if (isAdmin && !selectedSchoolId && form.school_name.trim()) { Alert.alert('Select a linked school from the list'); return; }
 
     setSaving(true);
     const email = form.student_email.trim().toLowerCase() ||
       `${form.full_name.trim().toLowerCase().replace(/\s+/g, '.')}@rillcod.school`;
     const password = genPassword();
+    const resolvedSchoolId = isAdmin ? selectedSchoolId || null : profile?.school_id || null;
 
     const { error } = await supabase.from('students').insert({
+      name: form.full_name.trim(),
       full_name: form.full_name.trim(),
       student_email: email,
       parent_name: form.parent_name.trim() || null,
       parent_phone: form.parent_phone.trim() || null,
       school_name: form.school_name.trim() || null,
-      school_id: profile?.school_id || null,
+      school_id: resolvedSchoolId,
       grade_level: form.grade_level || null,
-      section_class: form.section_class.trim() || null,
+      current_class: form.section_class.trim() || null,
+      section: form.section_class.trim() || null,
       city: form.city.trim() || null,
       state: form.state.trim() || null,
+      enrollment_type: 'school',
       status: 'pending',
       created_by: profile?.id,
     });
@@ -174,11 +186,14 @@ export default function AddStudentScreen({ navigation }: any) {
                   {schools.map(s => (
                     <TouchableOpacity
                       key={s.id}
-                      onPress={() => setForm(f => ({ ...f, school_name: s.school_name }))}
-                      style={[styles.pill, form.school_name === s.school_name && styles.pillActive]}
+                      onPress={() => {
+                        setSelectedSchoolId(s.id);
+                        setForm(f => ({ ...f, school_name: s.name }));
+                      }}
+                      style={[styles.pill, form.school_name === s.name && styles.pillActive]}
                     >
-                      <Text style={[styles.pillText, form.school_name === s.school_name && styles.pillTextActive]} numberOfLines={1}>
-                        {s.school_name}
+                      <Text style={[styles.pillText, form.school_name === s.name && styles.pillTextActive]} numberOfLines={1}>
+                        {s.name}
                       </Text>
                     </TouchableOpacity>
                   ))}

@@ -107,7 +107,7 @@ export default function ProjectsScreen({ navigation }: any) {
     >
       <TouchableOpacity
         style={styles.card}
-        onPress={() => Alert.alert('Open Project', 'This project is only viewable in the web app.\n\nVisit: app.rillcod.com')}
+        onPress={() => navigation.navigate('ProjectDetail', { projectId: item.id, projectTitle: item.title })}
         activeOpacity={0.7}
       >
         <View style={styles.cardLeft}>

@@ -49,6 +49,7 @@ import ParentCertificatesScreen from '../screens/dashboard/ParentCertificatesScr
 import StudentsScreen from '../screens/dashboard/StudentsScreen';
 import TeachersScreen from '../screens/dashboard/TeachersScreen';
 import SchoolsScreen from '../screens/dashboard/SchoolsScreen';
+import ParentsScreen from '../screens/dashboard/ParentsScreen';
 import ApprovalsScreen from '../screens/dashboard/ApprovalsScreen';
 import AttendanceScreen from '../screens/dashboard/AttendanceScreen';
 import PaymentsScreen from '../screens/dashboard/PaymentsScreen';
@@ -59,6 +60,7 @@ import ReportsScreen from '../screens/dashboard/ReportsScreen';
 import StudentDetailScreen from '../screens/dashboard/StudentDetailScreen';
 import AssignmentDetailScreen from '../screens/dashboard/AssignmentDetailScreen';
 import TeacherDetailScreen from '../screens/dashboard/TeacherDetailScreen';
+import ProjectDetailScreen from '../screens/dashboard/ProjectDetailScreen';
 import AddStudentScreen from '../screens/dashboard/AddStudentScreen';
 import AddSchoolScreen from '../screens/dashboard/AddSchoolScreen';
 import AddTeacherScreen from '../screens/dashboard/AddTeacherScreen';
@@ -87,7 +89,11 @@ import EnrolStudentsScreen from '../screens/dashboard/EnrolStudentsScreen';
 import WipeStudentsScreen from '../screens/dashboard/WipeStudentsScreen';
 import ProgramsScreen from '../screens/dashboard/ProgramsScreen';
 import LessonsScreen from '../screens/dashboard/LessonsScreen';
+import LessonDetailScreen from '../screens/dashboard/LessonDetailScreen';
+import CBTExaminationScreen from '../screens/dashboard/CBTExaminationScreen';
 import SchoolOverviewScreen from '../screens/dashboard/SchoolOverviewScreen';
+import CourseDetailScreen from '../screens/dashboard/CourseDetailScreen';
+import MarkAttendanceScreen from '../screens/dashboard/MarkAttendanceScreen';
 
 import { COLORS } from '../constants/colors';
 import { FONT_FAMILY, FONT_SIZE } from '../constants/typography';
@@ -101,7 +107,7 @@ const Tab   = createBottomTabNavigator<TabParamList>();
 const ONBOARDING_KEY = 'rillcod_onboarding_done';
 
 // ── Animated tab icon ─────────────────────────────────────────────────────────
-function TabIcon({ emoji, focused, badge }: { emoji: string; focused: boolean; badge?: number }) {
+function TabIcon({ glyph, focused, badge }: { glyph: string; focused: boolean; badge?: number }) {
   return (
     <MotiView
       animate={{
@@ -118,7 +124,7 @@ function TabIcon({ emoji, focused, badge }: { emoji: string; focused: boolean; b
           style={styles.tabGlow}
         />
       )}
-      <Text style={{ fontSize: 20 }}>{emoji}</Text>
+      <Text style={styles.tabGlyph}>{glyph}</Text>
       {!!badge && badge > 0 && (
         <View style={styles.badge}>
           <Text style={styles.badgeText}>{badge > 9 ? '9+' : badge}</Text>
@@ -164,7 +170,7 @@ function MainTabs() {
         component={DashboardScreen}
         options={{
           tabBarLabel: 'Home',
-          tabBarIcon: ({ focused }) => <TabIcon emoji="🏠" focused={focused} />,
+          tabBarIcon: ({ focused }) => <TabIcon glyph="H" focused={focused} />,
         }}
       />
       <Tab.Screen
@@ -172,7 +178,7 @@ function MainTabs() {
         component={LearnScreen}
         options={{
           tabBarLabel: 'Learn',
-          tabBarIcon: ({ focused }) => <TabIcon emoji="📚" focused={focused} />,
+          tabBarIcon: ({ focused }) => <TabIcon glyph="L" focused={focused} />,
         }}
       />
       <Tab.Screen
@@ -180,7 +186,7 @@ function MainTabs() {
         component={NotificationsScreen}
         options={{
           tabBarLabel: 'Alerts',
-          tabBarIcon: ({ focused }) => <TabIcon emoji="🔔" focused={focused} badge={unread} />,
+          tabBarIcon: ({ focused }) => <TabIcon glyph="A" focused={focused} badge={unread} />,
         }}
       />
       <Tab.Screen
@@ -188,15 +194,15 @@ function MainTabs() {
         component={ProfileScreen}
         options={{
           tabBarLabel: 'Profile',
-          tabBarIcon: ({ focused }) => <TabIcon emoji="👤" focused={focused} />,
+          tabBarIcon: ({ focused }) => <TabIcon glyph="P" focused={focused} />,
         }}
       />
       <Tab.Screen
-        name="More"
+        name="Portal"
         component={MoreScreen}
         options={{
-          tabBarLabel: 'More',
-          tabBarIcon: ({ focused }) => <TabIcon emoji="☰" focused={focused} />,
+          tabBarLabel: 'Portal',
+          tabBarIcon: ({ focused }) => <TabIcon glyph="+" focused={focused} />,
         }}
       />
     </Tab.Navigator>
@@ -224,16 +230,19 @@ function MainStack() {
       <Stack.Screen name="Students" component={StudentsScreen} />
       <Stack.Screen name="Teachers" component={TeachersScreen} />
       <Stack.Screen name="Schools" component={SchoolsScreen} />
+      <Stack.Screen name="Parents" component={ParentsScreen} />
       <Stack.Screen name="Approvals" component={ApprovalsScreen} />
       <Stack.Screen name="Attendance" component={AttendanceScreen} />
       <Stack.Screen name="Payments" component={PaymentsScreen} />
       <Stack.Screen name="Timetable" component={TimetableScreen} />
       <Stack.Screen name="Classes" component={ClassesScreen} />
       <Stack.Screen name="CBT" component={CBTScreen} />
+      <Stack.Screen name="CBTExamination" component={CBTExaminationScreen} />
       <Stack.Screen name="Reports" component={ReportsScreen} />
       <Stack.Screen name="StudentDetail" component={StudentDetailScreen} />
       <Stack.Screen name="AssignmentDetail" component={AssignmentDetailScreen} />
       <Stack.Screen name="TeacherDetail" component={TeacherDetailScreen} />
+      <Stack.Screen name="ProjectDetail" component={ProjectDetailScreen} />
       <Stack.Screen name="AddStudent" component={AddStudentScreen} />
       <Stack.Screen name="AddSchool" component={AddSchoolScreen} />
       <Stack.Screen name="AddTeacher" component={AddTeacherScreen} />
@@ -262,7 +271,10 @@ function MainStack() {
       <Stack.Screen name="WipeStudents" component={WipeStudentsScreen} />
       <Stack.Screen name="Programs" component={ProgramsScreen} />
       <Stack.Screen name="Lessons" component={LessonsScreen} />
+      <Stack.Screen name="LessonDetail" component={LessonDetailScreen} />
       <Stack.Screen name="SchoolOverview" component={SchoolOverviewScreen} />
+      <Stack.Screen name="CourseDetail" component={CourseDetailScreen} />
+      <Stack.Screen name="MarkAttendance" component={MarkAttendanceScreen} />
     </Stack.Navigator>
   );
 }
@@ -352,16 +364,16 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   tabBar: {
-    backgroundColor: 'rgba(5,5,10,0.97)',
+    backgroundColor: 'rgba(16,26,42,0.98)',
     borderTopColor: COLORS.border,
     borderTopWidth: 1,
-    paddingBottom: Platform.OS === 'ios' ? 20 : 8,
+    paddingBottom: Platform.OS === 'ios' ? 14 : 6,
     paddingTop: 6,
-    height: Platform.OS === 'ios' ? 84 : 64,
+    height: Platform.OS === 'ios' ? 78 : 62,
     elevation: 20,
-    shadowColor: '#000',
+    shadowColor: '#09101A',
     shadowOffset: { width: 0, height: -8 },
-    shadowOpacity: 0.35,
+    shadowOpacity: 0.2,
     shadowRadius: 20,
   },
   tabLabel: {
@@ -373,16 +385,22 @@ const styles = StyleSheet.create({
   tabIconWrap: {
     width: 44,
     height: 34,
-    borderRadius: RADIUS.md,
+    borderRadius: RADIUS.lg,
     alignItems: 'center',
     justifyContent: 'center',
     position: 'relative',
     overflow: 'visible',
   },
+  tabGlyph: {
+    fontFamily: FONT_FAMILY.display,
+    fontSize: 15,
+    color: COLORS.white100,
+    letterSpacing: 0.4,
+  },
   tabGlow: {
     ...StyleSheet.absoluteFillObject,
     backgroundColor: COLORS.primaryGlow,
-    borderRadius: RADIUS.md,
+    borderRadius: RADIUS.lg,
   },
   badge: {
     position: 'absolute',
@@ -404,3 +422,4 @@ const styles = StyleSheet.create({
     color: '#fff',
   },
 });
+

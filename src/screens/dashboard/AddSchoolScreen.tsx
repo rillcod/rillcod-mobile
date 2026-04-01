@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity,
   TextInput, ActivityIndicator, Alert, Platform,
@@ -68,7 +68,7 @@ function SelectRow({ label, options, value, onChange }: { label: string; options
   );
 }
 
-export default function AddSchoolScreen({ navigation }: any) {
+export default function AddSchoolScreen({ navigation, route }: any) {
   const { profile } = useAuth();
   const [saving, setSaving] = useState(false);
   const [credentials, setCredentials] = useState<{ email: string; password: string; name: string } | null>(null);
@@ -90,6 +90,33 @@ export default function AddSchoolScreen({ navigation }: any) {
     status: 'pending',
   });
 
+  useEffect(() => {
+    const schoolId = route.params?.schoolId;
+    if (schoolId) {
+      supabase.from('schools').select('*').eq('id', schoolId).single()
+        .then(({ data }) => {
+          if (data) {
+            setForm({
+              name: data.name || '',
+              school_type: data.school_type || '',
+              contact_person: data.contact_person || '',
+              address: data.address || '',
+              lga: data.lga || '',
+              city: data.city || '',
+              state: data.state || '',
+              phone: data.phone || '',
+              email: data.email || '',
+              password: '', // Don't show existing password
+              program_interest: Array.isArray(data.program_interest) ? data.program_interest.join(', ') : '',
+              rillcod_quota_percent: String(data.rillcod_quota_percent || 10),
+              status: data.status || 'pending',
+            });
+            if (data.enrollment_types) setSelectedEnrollTypes(data.enrollment_types);
+          }
+        });
+    }
+  }, [route.params?.schoolId]);
+
   const set = (key: string) => (val: string) => setForm(f => ({ ...f, [key]: val }));
 
   const toggleEnrollType = (t: string) => {
@@ -104,8 +131,8 @@ export default function AddSchoolScreen({ navigation }: any) {
 
     setSaving(true);
 
-    const { error } = await supabase.from('schools').insert({
-      school_name: form.name.trim(),
+    const payload = {
+      name: form.name.trim(),
       school_type: form.school_type || null,
       contact_person: form.contact_person.trim(),
       address: form.address.trim() || null,
@@ -114,11 +141,23 @@ export default function AddSchoolScreen({ navigation }: any) {
       state: form.state || null,
       phone: form.phone.trim() || null,
       email: form.email.trim().toLowerCase() || null,
-      program_interest: form.program_interest.trim() || null,
+      program_interest: form.program_interest.trim()
+        ? form.program_interest.split(',').map((item) => item.trim()).filter(Boolean)
+        : null,
       rillcod_quota_percent: parseFloat(form.rillcod_quota_percent) || 10,
       enrollment_types: selectedEnrollTypes,
       status: form.status,
-    });
+    };
+
+    if (route.params?.schoolId) {
+      const { error } = await supabase.from('schools').update(payload).eq('id', route.params.schoolId);
+      if (error) { Alert.alert('Error', error.message); setSaving(false); return; }
+      Alert.alert('School Updated', 'Changes saved successfully.', [{ text: 'OK', onPress: () => navigation.goBack() }]);
+      setSaving(false);
+      return;
+    }
+
+    const { data: insertedSchool, error } = await supabase.from('schools').insert(payload).select('id, name').single();
 
     if (error) {
       Alert.alert('Error', error.message);
@@ -128,6 +167,22 @@ export default function AddSchoolScreen({ navigation }: any) {
 
     const email = form.email.trim().toLowerCase() ||
       `${form.name.trim().toLowerCase().replace(/\s+/g, '.')}@rillcod.school`;
+
+    if (form.status === 'approved' && insertedSchool) {
+      const { error: accountError } = await supabase.from('portal_users').upsert({
+        email,
+        full_name: form.contact_person.trim() || insertedSchool.name,
+        role: 'school',
+        is_active: true,
+        is_deleted: false,
+        school_id: insertedSchool.id,
+        school_name: insertedSchool.name,
+      }, { onConflict: 'email' });
+
+      if (accountError) {
+        Alert.alert('Account setup warning', `School was created, but portal account setup failed: ${accountError.message}`);
+      }
+    }
 
     setSaving(false);
     setCredentials({ email, password: form.password, name: form.name.trim() });
@@ -170,7 +225,7 @@ export default function AddSchoolScreen({ navigation }: any) {
 
   return (
     <SafeAreaView style={styles.safe}>
-      <ScreenHeader title="Add School" onBack={() => navigation.goBack()} accentColor={COLORS.info} />
+      <ScreenHeader title={route.params?.schoolId ? 'Edit School' : 'Add School'} onBack={() => navigation.goBack()} accentColor={COLORS.info} />
 
       <ScrollView
         showsVerticalScrollIndicator={false}
@@ -257,7 +312,7 @@ export default function AddSchoolScreen({ navigation }: any) {
             <LinearGradient colors={[COLORS.info, '#0369a1']} style={styles.submitGrad}>
               {saving
                 ? <ActivityIndicator color={COLORS.white100} />
-                : <Text style={styles.submitText}>Register School</Text>}
+                : <Text style={styles.submitText}>{route.params?.schoolId ? 'Save Changes' : 'Register School'}</Text>}
             </LinearGradient>
           </TouchableOpacity>
 

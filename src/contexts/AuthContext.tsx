@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useEffect, useState } from 'react';
+﻿import React, { createContext, useContext, useEffect, useState, useCallback } from 'react';
 import { Session, User } from '@supabase/supabase-js';
 import { supabase } from '../lib/supabase';
 
@@ -33,60 +33,120 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState(true);
 
-  const fetchProfile = async (userId: string) => {
+  const clearAuthState = useCallback(() => {
+    setSession(null);
+    setUser(null);
+    setProfile(null);
+  }, []);
+
+  const fetchProfile = useCallback(async (userId: string): Promise<UserProfile | null> => {
     try {
-      const { data } = await supabase
+      const { data, error } = await supabase
         .from('portal_users')
         .select('id, email, full_name, role, school_id, school_name, profile_image_url, phone, bio, is_active')
         .eq('id', userId)
         .single();
-      if (data) setProfile(data as UserProfile);
+
+      if (error || !data) {
+        setProfile(null);
+        return null;
+      }
+
+      const nextProfile = data as UserProfile;
+      setProfile(nextProfile);
+      return nextProfile;
     } catch {
-      // Network error — profile stays null, safety timeout handles loading state
+      setProfile(null);
+      return null;
     }
-  };
+  }, []);
 
   const refreshProfile = async () => {
     if (user) await fetchProfile(user.id);
   };
 
   useEffect(() => {
-    // Safety timeout — if Supabase never fires or network is unavailable,
-    // release the loading gate after 6 seconds so the app is usable.
-    const safetyTimer = setTimeout(() => setLoading(false), 6000);
+    let mounted = true;
+    const safetyTimer = setTimeout(() => {
+      if (mounted) setLoading(false);
+    }, 6000);
 
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, s) => {
-      clearTimeout(safetyTimer);
-      setSession(s);
-      setUser(s?.user ?? null);
-      if (s?.user) {
-        // fetchProfile with its own 5s timeout so a slow DB never hangs the app
-        const profileTimer = setTimeout(() => setLoading(false), 5000);
-        fetchProfile(s.user.id).finally(() => {
-          clearTimeout(profileTimer);
-          setLoading(false);
-        });
+    const bootstrap = async () => {
+      try {
+        const { data } = await supabase.auth.getSession();
+        if (!mounted) return;
+        const currentSession = data.session ?? null;
+        setSession(currentSession);
+        setUser(currentSession?.user ?? null);
+        if (currentSession?.user) {
+          await fetchProfile(currentSession.user.id);
+        } else {
+          setProfile(null);
+        }
+      } finally {
+        if (mounted) setLoading(false);
+      }
+    };
+
+    bootstrap().finally(() => clearTimeout(safetyTimer));
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (_event, nextSession) => {
+      if (!mounted) return;
+      setSession(nextSession);
+      setUser(nextSession?.user ?? null);
+      if (nextSession?.user) {
+        await fetchProfile(nextSession.user.id);
       } else {
         setProfile(null);
-        setLoading(false);
       }
+      if (mounted) setLoading(false);
     });
 
     return () => {
+      mounted = false;
       clearTimeout(safetyTimer);
       subscription.unsubscribe();
     };
-  }, []);
+  }, [fetchProfile]);
 
   const signIn = async (email: string, password: string): Promise<{ error: string | null }> => {
-    const { error } = await supabase.auth.signInWithPassword({ email, password });
-    if (error) return { error: error.message };
-    return { error: null };
+    setLoading(true);
+    try {
+      const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+      if (error) return { error: error.message };
+
+      const signedUser = data.user;
+      if (!signedUser) {
+        return { error: 'Unable to establish a session. Please try again.' };
+      }
+
+      const nextProfile = await fetchProfile(signedUser.id);
+      if (!nextProfile) {
+        await supabase.auth.signOut();
+        clearAuthState();
+        return { error: 'Your account profile is missing. Please contact support.' };
+      }
+
+      if (!nextProfile.is_active) {
+        await supabase.auth.signOut();
+        clearAuthState();
+        return { error: 'Your account is pending approval. Please wait for activation.' };
+      }
+
+      return { error: null };
+    } finally {
+      setLoading(false);
+    }
   };
 
   const signOut = async () => {
-    await supabase.auth.signOut();
-    setProfile(null);
+    setLoading(true);
+    try {
+      await supabase.auth.signOut();
+    } finally {
+      clearAuthState();
+      setLoading(false);
+    }
   };
 
   return (

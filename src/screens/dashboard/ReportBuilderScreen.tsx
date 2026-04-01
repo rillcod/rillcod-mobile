@@ -6,6 +6,8 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { MotiView } from 'moti';
+import * as Print from 'expo-print';
+import * as Sharing from 'expo-sharing';
 import { useAuth } from '../../contexts/AuthContext';
 import { supabase } from '../../lib/supabase';
 import { ScreenHeader } from '../../components/ui/ScreenHeader';
@@ -48,7 +50,7 @@ interface StudentForm {
   is_published: boolean;
 }
 
-interface StudentRow { id: string; full_name: string; email: string; school_name: string | null; section_class: string | null }
+interface StudentRow { id: string; full_name: string; email: string; school_name: string | null; section_class: string | null; school_id?: string | null }
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 const TERM_OPTIONS = ['First Term', 'Second Term', 'Third Term', 'Mid-Term', 'Annual', 'Termly'];
@@ -217,6 +219,8 @@ function ScoreInput({ label, value, onChange, color }: { label: string; value: s
 export default function ReportBuilderScreen({ navigation, route }: any) {
   const { studentId: prefStudentId, studentName: prefStudentName } = (route.params ?? {}) as { studentId?: string; studentName?: string };
   const { profile } = useAuth();
+  const isBuilder = profile?.role === 'admin' || profile?.role === 'teacher' || profile?.role === 'school';
+  const isSchoolScoped = profile?.role === 'teacher' || profile?.role === 'school';
 
   const [step, setStep] = useState<Step>(prefStudentId ? 'edit' : 'session');
   const [sessionConfig, setSessionConfig] = useState<SessionConfig>({
@@ -244,6 +248,7 @@ export default function ReportBuilderScreen({ navigation, route }: any) {
   const [loadingStudents, setLoadingStudents] = useState(false);
   const [loadingReport, setLoadingReport] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [exporting, setExporting] = useState(false);
   const [milestoneInput, setMilestoneInput] = useState('');
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [sessionCollapsed, setSessionCollapsed] = useState(false);
@@ -273,11 +278,11 @@ export default function ReportBuilderScreen({ navigation, route }: any) {
     setLoadingStudents(true);
     let q = supabase
       .from('portal_users')
-      .select('id, full_name, email, school_name, section_class')
+      .select('id, full_name, email, school_name, section_class, school_id')
       .eq('role', 'student')
       .order('full_name')
       .limit(200);
-    if (profile?.role === 'teacher' && profile?.school_id) {
+    if (isSchoolScoped && profile?.school_id) {
       q = q.eq('school_id', profile.school_id);
     }
     q.then(({ data }) => {
@@ -289,9 +294,18 @@ export default function ReportBuilderScreen({ navigation, route }: any) {
   // Prefill if navigated with studentId
   useEffect(() => {
     if (!prefStudentId) return;
-    const row: StudentRow = { id: prefStudentId, full_name: prefStudentName ?? '', email: '', school_name: null, section_class: null };
-    selectStudent(row);
-  }, [prefStudentId]);
+    supabase
+      .from('portal_users')
+      .select('id, full_name, email, school_name, section_class, school_id')
+      .eq('id', prefStudentId)
+      .single()
+      .then(({ data }) => {
+        const row: StudentRow = data
+          ? (data as StudentRow)
+          : { id: prefStudentId, full_name: prefStudentName ?? '', email: '', school_name: null, section_class: null, school_id: null };
+        selectStudent(row);
+      });
+  }, [prefStudentId, prefStudentName]);
 
   const selectStudent = useCallback(async (student: StudentRow) => {
     setSelectedStudent(student);
@@ -364,17 +378,121 @@ export default function ReportBuilderScreen({ navigation, route }: any) {
   const overallGrade = calcGrade(overallScore);
   const gradeCol = GRADE_COLOR[overallGrade] ?? COLORS.textMuted;
 
+  const exportReportPDF = async () => {
+    if (!selectedStudent) return;
+    try {
+      setExporting(true);
+      const html = `
+        <html>
+          <head>
+            <meta charset="utf-8" />
+            <style>
+              body { font-family: Arial, sans-serif; padding: 28px; color: #0A0A0C; }
+              .hero { border: 1px solid #e2e8f0; border-radius: 18px; padding: 24px; margin-bottom: 18px; background: linear-gradient(180deg, rgba(244,164,98,0.14), #ffffff); }
+              .eyebrow { font-size: 11px; text-transform: uppercase; letter-spacing: 2px; color: #64748B; margin-bottom: 10px; }
+              h1 { margin: 0 0 8px 0; font-size: 28px; }
+              h2 { margin: 22px 0 10px 0; font-size: 16px; }
+              p { margin: 4px 0; line-height: 1.5; }
+              .grade { display: inline-block; padding: 10px 14px; border-radius: 999px; background: rgba(244,164,98,0.14); color: ${gradeCol}; font-weight: 700; margin-top: 10px; }
+              .card { border: 1px solid #e2e8f0; border-radius: 16px; padding: 18px; margin-top: 14px; }
+              .row { display: flex; justify-content: space-between; gap: 12px; padding: 8px 0; border-bottom: 1px solid #f1f5f9; }
+              .row:last-child { border-bottom: none; }
+              .muted { color: #64748B; font-size: 12px; }
+              ul { margin: 8px 0 0 18px; padding: 0; }
+              li { margin: 6px 0; }
+            </style>
+          </head>
+          <body>
+            <div class="hero">
+              <div class="eyebrow">Rillcod Academy Progress Report</div>
+              <h1>${selectedStudent.full_name}</h1>
+              <p>${sessionConfig.course_name || 'Course not set'} · ${sessionConfig.report_term}</p>
+              <p>${sessionConfig.report_period || 'Report period not set'}</p>
+              <p>${sessionConfig.school_name || 'Rillcod Academy'}${sessionConfig.section_class ? ` · ${sessionConfig.section_class}` : ''}</p>
+              <p>Instructor: ${sessionConfig.instructor_name || 'Not set'}</p>
+              <div class="grade">${overallGrade} · ${overallScore ?? '-'}%</div>
+            </div>
+
+            <div class="card">
+              <h2>Score Breakdown</h2>
+              <div class="row"><span>Theory</span><strong>${form.theory_score || '0'}%</strong></div>
+              <div class="row"><span>Practical</span><strong>${form.practical_score || '0'}%</strong></div>
+              <div class="row"><span>Attendance</span><strong>${form.attendance_score || '0'}%</strong></div>
+              <div class="row"><span>Participation</span><strong>${form.participation_score || '0'}%</strong></div>
+            </div>
+
+            <div class="card">
+              <h2>Ratings</h2>
+              <div class="row"><span>Participation</span><strong>${form.participation_grade}</strong></div>
+              <div class="row"><span>Projects</span><strong>${form.projects_grade}</strong></div>
+              <div class="row"><span>Homework</span><strong>${form.homework_grade}</strong></div>
+              <div class="row"><span>Proficiency</span><strong>${form.proficiency_level}</strong></div>
+            </div>
+
+            ${sessionConfig.learning_milestones.length ? `
+              <div class="card">
+                <h2>Learning Milestones</h2>
+                <ul>${sessionConfig.learning_milestones.map((item) => `<li>${item}</li>`).join('')}</ul>
+              </div>
+            ` : ''}
+
+            ${form.key_strengths ? `
+              <div class="card">
+                <h2>Key Strengths</h2>
+                <p>${form.key_strengths.replace(/\n/g, '<br/>')}</p>
+              </div>
+            ` : ''}
+
+            ${form.areas_for_growth ? `
+              <div class="card">
+                <h2>Areas for Growth</h2>
+                <p>${form.areas_for_growth.replace(/\n/g, '<br/>')}</p>
+              </div>
+            ` : ''}
+
+            ${(sessionConfig.current_module || sessionConfig.next_module || sessionConfig.fee_label) ? `
+              <div class="card">
+                <h2>Session Notes</h2>
+                ${sessionConfig.current_module ? `<p><strong>Current Module:</strong> ${sessionConfig.current_module}</p>` : ''}
+                ${sessionConfig.next_module ? `<p><strong>Next Module:</strong> ${sessionConfig.next_module}</p>` : ''}
+                ${sessionConfig.show_payment_notice && sessionConfig.fee_label ? `<p><strong>${sessionConfig.fee_label}:</strong> ${sessionConfig.fee_amount || '-'}</p>` : ''}
+              </div>
+            ` : ''}
+
+            <p class="muted">Generated on ${new Date().toLocaleDateString('en-GB')}</p>
+          </body>
+        </html>
+      `;
+      const { uri } = await Print.printToFileAsync({ html });
+      if (await Sharing.isAvailableAsync()) {
+        await Sharing.shareAsync(uri, { UTI: '.pdf', mimeType: 'application/pdf' });
+      } else {
+        Alert.alert('Export Ready', uri);
+      }
+    } catch (err: any) {
+      Alert.alert('Export Failed', err.message ?? 'Unable to export report PDF.');
+    } finally {
+      setExporting(false);
+    }
+  };
+
   const save = async (publish: boolean) => {
     if (!selectedStudent) return;
+    if (!isBuilder) {
+      Alert.alert('Access denied', 'You do not have permission to build reports.');
+      return;
+    }
     setSaving(true);
     const payload: Record<string, any> = {
       student_id: selectedStudent.id,
+      student_name: selectedStudent.full_name,
       teacher_id: profile?.id,
       instructor_name: sessionConfig.instructor_name,
       report_date: sessionConfig.report_date,
       report_term: sessionConfig.report_term,
       report_period: sessionConfig.report_period,
       course_name: sessionConfig.course_name,
+      school_id: selectedStudent.school_id ?? profile?.school_id ?? null,
       school_name: sessionConfig.school_name,
       section_class: sessionConfig.section_class || selectedStudent.section_class,
       current_module: sessionConfig.current_module,
@@ -429,6 +547,19 @@ export default function ReportBuilderScreen({ navigation, route }: any) {
         (s.section_class ?? '').toLowerCase().includes(search.toLowerCase())
       )
     : students;
+
+  if (!isBuilder) {
+    return (
+      <SafeAreaView style={styles.safe}>
+        <ScreenHeader title="Report Builder" subtitle="Restricted" onBack={() => navigation.goBack()} accentColor={COLORS.accent} />
+        <View style={styles.emptyWrap}>
+          <Text style={styles.emptyEmoji}>🔒</Text>
+          <Text style={styles.emptyText}>This tool is for staff only.</Text>
+          <Text style={styles.hintText}>Admins, teachers, and school accounts can create and publish reports.</Text>
+        </View>
+      </SafeAreaView>
+    );
+  }
 
   // ── STEP: Session config ───────────────────────────────────────────────────
   if (step === 'session') {
@@ -734,12 +865,20 @@ export default function ReportBuilderScreen({ navigation, route }: any) {
                 {saving
                   ? <ActivityIndicator color={COLORS.white100} size="small" />
                   : <Text style={styles.publishBtnText}>✓ Publish Report</Text>}
-              </LinearGradient>
-            </TouchableOpacity>
-          </View>
+                </LinearGradient>
+              </TouchableOpacity>
+            </View>
 
-          {/* Report Card Preview */}
-          <View style={styles.previewCard}>
+            <TouchableOpacity
+              onPress={exportReportPDF}
+              disabled={exporting}
+              style={[styles.exportBtn, exporting && styles.btnDisabled]}
+            >
+              <Text style={styles.exportBtnText}>{exporting ? 'Preparing PDF...' : 'Export Report PDF'}</Text>
+            </TouchableOpacity>
+
+            {/* Report Card Preview */}
+            <View style={styles.previewCard}>
             <LinearGradient colors={[COLORS.accent + '18', COLORS.bgCard]} style={StyleSheet.absoluteFill} />
             <View style={styles.previewCardHeader}>
               <Text style={styles.previewCardTitle}>📄 Report Preview</Text>
@@ -956,6 +1095,8 @@ const styles = StyleSheet.create({
   publishGrad: { paddingVertical: 14, alignItems: 'center', justifyContent: 'center' },
   publishBtnText: { fontFamily: FONT_FAMILY.bodySemi, fontSize: FONT_SIZE.base, color: COLORS.white100, letterSpacing: 0.5 },
   btnDisabled: { opacity: 0.5 },
+  exportBtn: { marginTop: SPACING.md, borderWidth: 1, borderColor: COLORS.accent + '45', borderRadius: RADIUS.lg, paddingVertical: 13, alignItems: 'center', backgroundColor: COLORS.accent + '10' },
+  exportBtnText: { fontFamily: FONT_FAMILY.bodySemi, fontSize: FONT_SIZE.sm, color: COLORS.accent },
 
   emptyWrap: { alignItems: 'center', paddingVertical: 60, gap: 12 },
   emptyEmoji: { fontSize: 40 },

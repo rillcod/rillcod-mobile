@@ -1,8 +1,9 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity,
-  TextInput, RefreshControl, ActivityIndicator, Platform, Alert,
+  TextInput, RefreshControl, ActivityIndicator, Platform, Alert, Dimensions,
 } from 'react-native';
+const { width } = Dimensions.get('window');
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { MotiView } from 'moti';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -43,14 +44,34 @@ export default function UsersScreen({ navigation }: any) {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
+  // Edit/Create state
+  const [editing, setEditing] = useState<User | null>(null);
+  const [editForm, setEditForm] = useState({
+    full_name: '',
+    role: '',
+    phone: '',
+    is_active: true,
+    school_id: '',
+    school_name: '',
+  });
+  const [saving, setSaving] = useState(false);
+  const [showCreate, setShowCreate] = useState(false);
+  const [createForm, setCreateForm] = useState({ email: '', password: '', full_name: '', role: 'student' });
+
   const load = useCallback(async () => {
     const { data } = await supabase
       .from('portal_users')
-      .select('id, full_name, email, role, school_name, is_active, created_at, section_class')
+      .select('id, full_name, email, role, school_name, school_id, is_active, created_at, section_class, phone')
       .order('created_at', { ascending: false })
       .limit(200);
     if (data) { setUsers(data as User[]); setFiltered(data as User[]); }
     setLoading(false);
+  }, []);
+
+  const [schools, setSchools] = useState<{ id: string; name: string }[]>([]);
+  useEffect(() => {
+    supabase.from('schools').select('id, name').eq('status', 'approved').limit(100)
+      .then(({ data }) => { if (data) setSchools(data as any[]); });
   }, []);
 
   useEffect(() => { load(); }, [load]);
@@ -71,20 +92,91 @@ export default function UsersScreen({ navigation }: any) {
 
   const toggleActive = async (user: User) => {
     Alert.alert(
-      user.is_active ? 'Deactivate User' : 'Activate User',
-      `${user.is_active ? 'Deactivate' : 'Activate'} ${user.full_name}?`,
+      user.is_active ? 'Deactivate' : 'Activate',
+      `Are you sure? ${user.is_active ? 'Deactivating' : 'Activating'} ${user.full_name}`,
       [
         { text: 'Cancel', style: 'cancel' },
         {
           text: user.is_active ? 'Deactivate' : 'Activate',
-          style: user.is_active ? 'destructive' : 'default',
           onPress: async () => {
-            await supabase.from('portal_users').update({ is_active: !user.is_active }).eq('id', user.id);
-            setUsers(prev => prev.map(u => u.id === user.id ? { ...u, is_active: !u.is_active } : u));
+            const { error } = await supabase.from('portal_users').update({ is_active: !user.is_active }).eq('id', user.id);
+            if (!error) load();
           },
         },
       ]
     );
+  };
+
+  const handleDelete = async (u: User) => {
+    Alert.alert(
+      'Permanent Delete',
+      `Are you sure you want to delete ${u.full_name}? This will remove their portal profile.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete Permanently',
+          style: 'destructive',
+          onPress: async () => {
+            const { error } = await supabase.from('portal_users').delete().eq('id', u.id);
+            if (error) Alert.alert('Error', error.message);
+            else load();
+          },
+        },
+      ]
+    );
+  };
+
+  const openEdit = (u: any) => {
+    setEditing(u);
+    setEditForm({
+      full_name: u.full_name,
+      role: u.role,
+      phone: u.phone || '',
+      is_active: u.is_active,
+      school_id: u.school_id || '',
+      school_name: u.school_name || '',
+    });
+  };
+
+  const saveEdit = async () => {
+    if (!editing) return;
+    setSaving(true);
+    try {
+      const { error } = await supabase
+        .from('portal_users')
+        .update({
+          full_name: editForm.full_name,
+          role: editForm.role,
+          is_active: editForm.is_active,
+          school_id: editForm.school_id || null,
+          school_name: editForm.school_name || null,
+        })
+        .eq('id', editing.id);
+      if (error) throw error;
+      setEditing(null);
+      load();
+    } catch (e: any) {
+      Alert.alert('Update failed', e.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleCreate = async () => {
+    if (!createForm.email || !createForm.password || !createForm.full_name) {
+      Alert.alert('Missing Fields', 'All fields are required');
+      return;
+    }
+    setSaving(true);
+    try {
+      // Direct insert for portal_users (assumes backend handles auth or Admin can create rows)
+      // On web we use /api/auth/signup. On mobile direct signup creates a user but might auto-login?
+      // Supabase direct signup usually logs you in. Admin creation should use a service role on backend.
+      // I'll remind the user that specialized user-creation might need an API call.
+      Alert.alert('Notice', 'Admin user creation is best handled via the web portal or a dedicated API to manage Auth accounts securely.');
+    } finally {
+      setSaving(false);
+    }
   };
 
   const roleCounts = ALL_ROLES.slice(1).reduce((acc, r) => {
@@ -174,16 +266,85 @@ export default function UsersScreen({ navigation }: any) {
                     )}
                   </View>
                 </View>
-                <TouchableOpacity onPress={() => toggleActive(u)} style={[styles.activeToggle, { backgroundColor: u.is_active ? COLORS.success + '22' : COLORS.error + '22' }]}>
-                  <View style={[styles.activeDot, { backgroundColor: u.is_active ? COLORS.success : COLORS.error }]} />
-                  <Text style={[styles.activeText, { color: u.is_active ? COLORS.success : COLORS.error }]}>
-                    {u.is_active ? 'Active' : 'Off'}
-                  </Text>
-                </TouchableOpacity>
+
+                {/* Actions */}
+                <View style={styles.cardActions}>
+                  <TouchableOpacity onPress={() => openEdit(u)} style={styles.actionIcon}>
+                    <Text>✏️</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity onPress={() => handleDelete(u)} style={styles.actionIcon}>
+                    <Text>🗑️</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity onPress={() => toggleActive(u)} style={[styles.activeToggle, { backgroundColor: u.is_active ? COLORS.success + '22' : COLORS.error + '22' }]}>
+                    <View style={[styles.activeDot, { backgroundColor: u.is_active ? COLORS.success : COLORS.error }]} />
+                    <Text style={[styles.activeText, { color: u.is_active ? COLORS.success : COLORS.error }]}>
+                      {u.is_active ? 'Active' : 'Off'}
+                    </Text>
+                  </TouchableOpacity>
+                </View>
               </TouchableOpacity>
             </MotiView>
           );
         })}
+
+        {/* Modal: Edit User (Simplified) */}
+        {editing && (
+          <View style={styles.modalOverlay}>
+            <MotiView from={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} style={styles.modalContent}>
+              <Text style={styles.modalTitle}>Edit User</Text>
+              <Text style={styles.modalSub}>{editing.email}</Text>
+
+              <View style={styles.inputWrap}>
+                <Text style={styles.label}>FULL NAME</Text>
+                <TextInput style={styles.input} value={editForm.full_name} onChangeText={t => setEditForm(p => ({ ...p, full_name: t }))} />
+              </View>
+
+              <View style={styles.inputWrap}>
+                <Text style={styles.label}>ROLE</Text>
+                <View style={styles.rolePicker}>
+                  {ALL_ROLES.slice(1).map(r => (
+                    <TouchableOpacity key={r} onPress={() => setEditForm(p => ({ ...p, role: r }))}
+                      style={[styles.roleOption, editForm.role === r && { backgroundColor: COLORS.primary, borderColor: COLORS.primary }]}>
+                      <Text style={[styles.roleOptionText, editForm.role === r && { color: '#fff' }]}>{r}</Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              </View>
+
+              <View style={styles.inputWrap}>
+                <Text style={styles.label}>ASSIGNED SCHOOL</Text>
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginTop: 4 }}>
+                  <View style={{ flexDirection: 'row', gap: 6 }}>
+                    <TouchableOpacity
+                      onPress={() => setEditForm(p => ({ ...p, school_id: '', school_name: '' }))}
+                      style={[styles.roleOption, !editForm.school_id && { backgroundColor: COLORS.primary, borderColor: COLORS.primary }]}
+                    >
+                      <Text style={[styles.roleOptionText, !editForm.school_id && { color: '#fff' }]}>None</Text>
+                    </TouchableOpacity>
+                    {schools.map(s => (
+                      <TouchableOpacity
+                        key={s.id}
+                        onPress={() => setEditForm(p => ({ ...p, school_id: s.id, school_name: s.name }))}
+                        style={[styles.roleOption, editForm.school_id === s.id && { backgroundColor: COLORS.primary, borderColor: COLORS.primary }]}
+                      >
+                        <Text style={[styles.roleOptionText, editForm.school_id === s.id && { color: '#fff' }]}>{s.name}</Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+                </ScrollView>
+              </View>
+
+              <View style={styles.modalButtons}>
+                <TouchableOpacity onPress={() => setEditing(null)} style={styles.cancelBtn}>
+                  <Text style={styles.cancelText}>Cancel</Text>
+                </TouchableOpacity>
+                <TouchableOpacity onPress={saveEdit} disabled={saving} style={styles.saveBtn}>
+                  {saving ? <ActivityIndicator size="small" color="#fff" /> : <Text style={styles.saveText}>Save Changes</Text>}
+                </TouchableOpacity>
+              </View>
+            </MotiView>
+          </View>
+        )}
         <View style={{ height: 32 }} />
       </ScrollView>
     </SafeAreaView>
@@ -219,6 +380,23 @@ const styles = StyleSheet.create({
   activeToggle: { borderRadius: RADIUS.md, padding: 6, alignItems: 'center', gap: 3, flexShrink: 0 },
   activeDot: { width: 8, height: 8, borderRadius: 4 },
   activeText: { fontFamily: FONT_FAMILY.body, fontSize: 9 },
+  cardActions: { gap: 6, alignItems: 'flex-end' },
+  actionIcon: { padding: 4, borderRadius: RADIUS.sm, backgroundColor: COLORS.border + '33' },
+  modalOverlay: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'center', alignItems: 'center', zIndex: 100 },
+  modalContent: { width: width - 40, backgroundColor: COLORS.bgCard, borderRadius: RADIUS.xl, padding: SPACING.xl, gap: SPACING.md, borderWidth: 1, borderColor: COLORS.border },
+  modalTitle: { fontFamily: FONT_FAMILY.display, fontSize: FONT_SIZE.xl, color: COLORS.textPrimary },
+  modalSub: { fontFamily: FONT_FAMILY.body, fontSize: FONT_SIZE.xs, color: COLORS.textMuted, marginTop: -8 },
+  inputWrap: { gap: 6 },
+  label: { fontFamily: FONT_FAMILY.bodySemi, fontSize: 10, color: COLORS.textMuted, letterSpacing: 1 },
+  input: { backgroundColor: COLORS.bg, borderWidth: 1, borderColor: COLORS.border, borderRadius: RADIUS.md, padding: SPACING.md, fontFamily: FONT_FAMILY.body, color: COLORS.textPrimary },
+  rolePicker: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
+  roleOption: { paddingHorizontal: 10, paddingVertical: 5, borderRadius: RADIUS.full, borderWidth: 1, borderColor: COLORS.border },
+  roleOptionText: { fontFamily: FONT_FAMILY.bodySemi, fontSize: 10, color: COLORS.textSecondary, textTransform: 'uppercase' },
+  modalButtons: { flexDirection: 'row', gap: SPACING.md, marginTop: SPACING.md },
+  cancelBtn: { flex: 1, paddingVertical: 12, alignItems: 'center', borderRadius: RADIUS.md, borderWidth: 1, borderColor: COLORS.border },
+  cancelText: { fontFamily: FONT_FAMILY.bodySemi, fontSize: FONT_SIZE.sm, color: COLORS.textMuted },
+  saveBtn: { flex: 2, paddingVertical: 12, alignItems: 'center', borderRadius: RADIUS.md, backgroundColor: COLORS.primary },
+  saveText: { fontFamily: FONT_FAMILY.bodySemi, fontSize: FONT_SIZE.sm, color: '#fff' },
   emptyWrap: { alignItems: 'center', paddingVertical: 60, gap: 12 },
   emptyEmoji: { fontSize: 40 },
   emptyText: { fontFamily: FONT_FAMILY.body, fontSize: FONT_SIZE.sm, color: COLORS.textMuted },

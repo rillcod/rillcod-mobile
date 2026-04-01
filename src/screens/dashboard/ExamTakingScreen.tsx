@@ -6,6 +6,8 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { MotiView } from 'moti';
+import * as Print from 'expo-print';
+import * as Sharing from 'expo-sharing';
 import { useAuth } from '../../contexts/AuthContext';
 import { supabase } from '../../lib/supabase';
 import { COLORS } from '../../constants/colors';
@@ -20,7 +22,6 @@ interface Exam {
   description: string | null;
   duration_minutes: number | null;
   passing_score: number | null;
-  pass_mark: number | null;
   is_active: boolean;
   program_id: string | null;
   metadata: any;
@@ -144,9 +145,17 @@ export default function ExamTakingScreen({ navigation, route }: any) {
   const [timeLeft, setTimeLeft] = useState(0);
   const [submitting, setSubmitting] = useState(false);
   const [submitted, setSubmitted] = useState(false);
-  const [result, setResult] = useState<{ score: number; passed: boolean; status: string } | null>(null);
+  const [result, setResult] = useState<{
+    score: number;
+    rawScore: number;
+    totalPoints: number;
+    passed: boolean;
+    status: string;
+    manualGradingRequired: boolean;
+  } | null>(null);
   const [loading, setLoading] = useState(true);
   const [alreadyAttempted, setAlreadyAttempted] = useState<{ score: number; status: string } | null>(null);
+  const [exporting, setExporting] = useState(false);
 
   const startTimeRef = useRef(new Date());
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -173,7 +182,7 @@ export default function ExamTakingScreen({ navigation, route }: any) {
         .maybeSingle();
 
       if (existing) {
-        setAlreadyAttempted({ score: existing.score ?? 0, status: existing.status });
+        setAlreadyAttempted({ score: existing.score ?? 0, status: existing.status ?? 'completed' });
         setLoading(false);
         return;
       }
@@ -187,11 +196,35 @@ export default function ExamTakingScreen({ navigation, route }: any) {
 
       if (error || !data) throw error ?? new Error('Exam not found');
 
-      const sortedQuestions: Question[] = ((data.cbt_questions ?? []) as Question[]).sort(
-        (a, b) => (a.order_index ?? 0) - (b.order_index ?? 0)
-      );
+      const mappedExam: Exam = {
+        id: data.id,
+        title: data.title,
+        description: data.description ?? null,
+        duration_minutes: data.duration_minutes ?? null,
+        passing_score: data.passing_score ?? null,
+        is_active: data.is_active ?? true,
+        program_id: data.program_id ?? null,
+        metadata: data.metadata ?? null,
+      };
 
-      setExam(data as Exam);
+      const sortedQuestions: Question[] = ((data.cbt_questions ?? []) as any[])
+        .map((question) => ({
+          id: question.id,
+          question_text: question.question_text,
+          question_type: (question.question_type ?? 'multiple_choice') as Question['question_type'],
+          options: Array.isArray(question.options)
+            ? question.options
+            : Array.isArray(question.options?.options)
+            ? question.options.options
+            : null,
+          correct_answer: question.correct_answer ?? null,
+          points: question.points ?? 1,
+          metadata: question.metadata ?? null,
+          order_index: question.order_index ?? null,
+        }))
+        .sort((a, b) => (a.order_index ?? 0) - (b.order_index ?? 0));
+
+      setExam(mappedExam);
       setQuestions(sortedQuestions);
 
       const totalSecs = (data.duration_minutes ?? 60) * 60;
@@ -269,7 +302,7 @@ export default function ExamTakingScreen({ navigation, route }: any) {
       });
 
       const score = totalPoints > 0 ? Math.round((autoPoints / totalPoints) * 100) : 0;
-      const passingPct = exam?.passing_score ?? exam?.pass_mark ?? 70;
+      const passingPct = exam?.passing_score ?? 70;
       const passed = score >= passingPct;
       const finalStatus = manualGradingRequired
         ? 'pending_grading'
@@ -281,18 +314,25 @@ export default function ExamTakingScreen({ navigation, route }: any) {
         exam_id: exam!.id,
         user_id: profile!.id,
         score,
-        total_marks: totalPoints,
         status: finalStatus,
         answers,
         needs_grading: manualGradingRequired,
         start_time: startTimeRef.current.toISOString(),
         end_time: new Date().toISOString(),
-        completed_at: new Date().toISOString(),
+        grading_notes: manualGradingRequired ? 'Awaiting manual review' : null,
+        manual_scores: manualGradingRequired ? { raw_score: autoPoints, total_points: totalPoints } : null,
       });
 
       if (error) throw error;
 
-      setResult({ score, passed, status: finalStatus });
+      setResult({
+        score,
+        rawScore: autoPoints,
+        totalPoints,
+        passed,
+        status: finalStatus,
+        manualGradingRequired,
+      });
       setSubmitted(true);
     } catch (err: any) {
       submittedRef.current = false;
@@ -308,6 +348,37 @@ export default function ExamTakingScreen({ navigation, route }: any) {
   const setAnswer = (questionId: string, value: string) => {
     setAnswers(prev => ({ ...prev, [questionId]: value }));
   };
+
+  const exportResultPdf = useCallback(async () => {
+    if (!exam || !result) return;
+    setExporting(true);
+    try {
+      const html = `
+        <html>
+          <body style="font-family: Helvetica, Arial, sans-serif; padding: 32px; color: #0f172a;">
+            <h1 style="margin-bottom: 8px;">CBT Result Slip</h1>
+            <p><strong>Exam:</strong> ${exam.title}</p>
+            <p><strong>Candidate:</strong> ${profile?.full_name ?? 'Student'}</p>
+            <p><strong>Date:</strong> ${new Date().toLocaleDateString('en-GB')}</p>
+            <hr style="margin: 20px 0;" />
+            <p><strong>Status:</strong> ${result.manualGradingRequired ? 'Pending manual review' : result.passed ? 'Passed' : 'Completed'}</p>
+            <p><strong>Score:</strong> ${result.score}%</p>
+            <p><strong>Raw Score:</strong> ${result.rawScore} / ${result.totalPoints}</p>
+          </body>
+        </html>
+      `;
+      const { uri } = await Print.printToFileAsync({ html });
+      if (await Sharing.isAvailableAsync()) {
+        await Sharing.shareAsync(uri, { UTI: '.pdf', mimeType: 'application/pdf' });
+      } else {
+        Alert.alert('Export Ready', uri);
+      }
+    } catch (err: any) {
+      Alert.alert('Export Failed', err?.message ?? 'Could not export result.');
+    } finally {
+      setExporting(false);
+    }
+  }, [exam, profile?.full_name, result]);
 
   const q = questions[current];
   const answeredCount = Object.keys(answers).length;
@@ -372,7 +443,7 @@ export default function ExamTakingScreen({ navigation, route }: any) {
   if (submitted && result) {
     const isPending = result.status === 'pending_grading';
     const scoreColor = isPending ? COLORS.warning : result.passed ? COLORS.success : COLORS.error;
-    const passingPct = exam?.passing_score ?? exam?.pass_mark ?? 70;
+    const passingPct = exam?.passing_score ?? 70;
 
     return (
       <SafeAreaView style={styles.safe}>
@@ -409,6 +480,7 @@ export default function ExamTakingScreen({ navigation, route }: any) {
             </MotiView>
 
             <Text style={styles.resultRequired}>Required: {passingPct}%</Text>
+            <Text style={styles.resultRequired}>Raw Score: {result.rawScore} / {result.totalPoints}</Text>
 
             {isPending && (
               <View style={styles.pendingNote}>
@@ -422,6 +494,15 @@ export default function ExamTakingScreen({ navigation, route }: any) {
             <View style={styles.resultBtns}>
               <TouchableOpacity style={styles.resultBtnSecondary} onPress={() => navigation.goBack()} activeOpacity={0.8}>
                 <Text style={styles.resultBtnSecondaryText}>← Back to CBT</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.resultBtnPrimary, { backgroundColor: COLORS.accent }]}
+                onPress={exportResultPdf}
+                activeOpacity={0.8}
+                disabled={exporting}
+              >
+                <LinearGradient colors={[COLORS.accent, COLORS.accentLight]} style={StyleSheet.absoluteFill} />
+                <Text style={styles.resultBtnPrimaryText}>{exporting ? 'Exporting…' : 'Print Result PDF'}</Text>
               </TouchableOpacity>
               {result.passed && (
                 <TouchableOpacity

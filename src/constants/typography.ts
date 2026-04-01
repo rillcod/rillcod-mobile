@@ -32,7 +32,7 @@ export const FONT_FAMILY = {
   bodyMed:      'Inter_500Medium',
   bodySemi:     'Inter_600SemiBold',
   bodyBold:     'Inter_700Bold',
-  mono:         'SpaceGrotesk_400Regular',
+  mono:         'Inter_400Regular',
 };
 
 export const FONT_SIZE = {

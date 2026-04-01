@@ -21,12 +21,14 @@ export type RootStackParamList = {
   Students: undefined;
   Teachers: undefined;
   Schools: undefined;
+  Parents: undefined;
   Approvals: undefined;
   Attendance: undefined;
   Payments: undefined;
   Timetable: undefined;
   Classes: undefined;
   CBT: undefined;
+  CBTExamination: { examId: string };
   Reports: undefined;
   StudentDetail: { studentId: string };
   TeacherDetail: { teacherId: string };
@@ -67,6 +69,7 @@ export type RootStackParamList = {
   WipeStudents: undefined;
   Programs: undefined;
   Lessons: undefined;
+  LessonDetail: { lessonId: string };
   SchoolOverview: undefined;
 };
 
@@ -75,5 +78,5 @@ export type TabParamList = {
   Learn: undefined;
   Notifications: undefined;
   Profile: undefined;
-  More: undefined;
+  Portal: undefined;
 };

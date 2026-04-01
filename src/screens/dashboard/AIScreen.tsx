@@ -19,6 +19,7 @@ import { callAI, pollinationsImageUrl, type ChatMessage } from '../../lib/openro
 import { COLORS } from '../../constants/colors';
 import { FONT_FAMILY, FONT_SIZE } from '../../constants/typography';
 import { SPACING, RADIUS } from '../../constants/spacing';
+import type { Database, Json } from '../../types/supabase';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -33,6 +34,7 @@ const CREATE_TYPES = [
   { key: 'assignment', emoji: '📋', label: 'Assignment',      desc: 'Task with objectives and deliverables' },
   { key: 'cbt',        emoji: '🎯', label: 'CBT Questions',   desc: '10 multiple-choice exam questions' },
   { key: 'report-feedback', emoji: '📊', label: 'Report Feedback', desc: 'Teacher comments for a student' },
+  { key: 'daily-missions', emoji: '🚀', label: 'Daily Missions', desc: 'Progressive missions and micro tasks' },
 ];
 
 const CODE_LANGS = [
@@ -53,6 +55,14 @@ RULES:
 const SYSTEM_CREATOR = `You are an expert curriculum designer for Rillcod Academy (Nigeria).
 Always output ONLY valid minified JSON unless told otherwise.
 British English. Fun, engaging, kid-friendly tone for KG–SS3 students.`;
+
+type AIProfile = {
+  id?: string;
+  full_name?: string | null;
+  role?: string;
+  school_id?: string | null;
+  school_name?: string | null;
+};
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -95,9 +105,60 @@ function buildCreatePrompt(type: string, topic: string, grade: string, subject: 
       return `Generate 10 multiple-choice questions for ${ctx}. Return JSON: { title, questions: [{question, options: string[4], answer: number, explanation: string}] }`;
     case 'report-feedback':
       return `Write teacher report feedback for a student studying ${ctx}. Include: strengths, areas for improvement, encouragement. Return JSON: { strengths: string[], improvements: string[], comment: string }`;
+    case 'daily-missions':
+      return `Create a daily mission pack for ${ctx}. Return JSON: { title, summary, missions: [{ title, objective, steps: string[], xp: number, difficulty: "easy" | "medium" | "hard" }] }`;
     default:
       return `Generate educational content for ${ctx}. Topic: ${topic}.`;
   }
+}
+
+function parseGenerated(result: string): any | null {
+  try {
+    const clean = result.replace(/^```json\s*/i, '').replace(/```\s*$/, '').trim();
+    return JSON.parse(clean);
+  } catch {
+    return null;
+  }
+}
+
+function asArray<T>(value: T[] | undefined | null): T[] {
+  return Array.isArray(value) ? value : [];
+}
+
+function stringifyBlockContent(value: unknown): string {
+  if (typeof value === 'string') return value;
+  if (Array.isArray(value)) return value.map(item => typeof item === 'string' ? item : JSON.stringify(item)).join('\n');
+  if (value && typeof value === 'object') return JSON.stringify(value, null, 2);
+  return '';
+}
+
+function buildLessonLayout(parsed: any): Json {
+  const blocks = asArray(parsed?.blocks).map((block: any, index: number) => ({
+    id: `ai-block-${index + 1}`,
+    type: typeof block?.type === 'string' ? block.type : 'content',
+    title: typeof block?.title === 'string' ? block.title : `Block ${index + 1}`,
+    content: stringifyBlockContent(block?.content),
+  }));
+
+  const activities = asArray(parsed?.activities).map((activity: any, index: number) => ({
+    id: `ai-activity-${index + 1}`,
+    type: 'activity',
+    title: typeof activity?.title === 'string' ? activity.title : `Activity ${index + 1}`,
+    content: stringifyBlockContent(activity?.steps),
+  }));
+
+  const quiz = asArray(parsed?.quiz).map((item: any, index: number) => ({
+    id: `ai-quiz-${index + 1}`,
+    type: 'quiz',
+    title: `Checkpoint ${index + 1}`,
+    content: JSON.stringify({
+      question: item?.question ?? '',
+      options: asArray(item?.options),
+      answer: typeof item?.answer === 'number' ? item.answer : 0,
+    }),
+  }));
+
+  return [...blocks, ...activities, ...quiz] as unknown as Json;
 }
 
 // ── Sub-components ─────────────────────────────────────────────────────────────
@@ -247,21 +308,27 @@ function TutorTab({ apiKey, profile }: { apiKey: string; profile: any }) {
 
 // ── Tab: Create ───────────────────────────────────────────────────────────────
 
-function CreateTab({ apiKey }: { apiKey: string }) {
+function CreateTab({ apiKey, profile, navigation }: { apiKey: string; profile: AIProfile | null; navigation: any }) {
   const [type, setType] = useState('lesson');
   const [topic, setTopic] = useState('');
   const [grade, setGrade] = useState('JSS 1');
   const [subject, setSubject] = useState('');
   const [loading, setLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
   const [result, setResult] = useState<string | null>(null);
   const [imageUrl, setImageUrl] = useState<string | null>(null);
+  const [lastSavedId, setLastSavedId] = useState<string | null>(null);
+
+  const parsedResult = result ? parseGenerated(result) : null;
 
   const generate = async () => {
     if (!topic.trim()) { Alert.alert('Enter a topic', 'Please type a topic before generating.'); return; }
+    if (!apiKey) { Alert.alert('AI not configured', 'OpenRouter API key is missing in app settings.'); return; }
     Keyboard.dismiss();
     setLoading(true);
     setResult(null);
     setImageUrl(null);
+    setLastSavedId(null);
 
     try {
       const prompt = buildCreatePrompt(type, topic.trim(), grade, subject.trim());
@@ -283,17 +350,117 @@ function CreateTab({ apiKey }: { apiKey: string }) {
     }
   };
 
+  const saveGenerated = async () => {
+    if (!parsedResult) {
+      Alert.alert('Nothing to save', 'Generate valid structured content first.');
+      return;
+    }
+    if (!profile?.id) {
+      Alert.alert('Profile missing', 'Sign in again to continue.');
+      return;
+    }
+
+    setSaving(true);
+    try {
+      if (type === 'lesson' || type === 'lesson-notes') {
+        const lessonInsert: Database['public']['Tables']['lessons']['Insert'] = {
+          title: parsedResult.title || topic.trim(),
+          description: parsedResult.hook || parsedResult.description || `AI-generated lesson for ${topic.trim()}`,
+          content: type === 'lesson' ? JSON.stringify(parsedResult) : parsedResult.lesson_notes || result,
+          content_layout: type === 'lesson' ? buildLessonLayout(parsedResult) : null,
+          lesson_notes: type === 'lesson-notes' ? parsedResult.lesson_notes || result : null,
+          lesson_type: type === 'lesson-notes' ? 'notes' : 'interactive',
+          status: 'draft',
+          duration_minutes: 60,
+          created_by: profile.id,
+          school_id: profile.school_id ?? null,
+          school_name: profile.school_name ?? null,
+        };
+
+        const { data, error } = await supabase.from('lessons').insert(lessonInsert).select('id').single();
+        if (error || !data) throw error || new Error('Failed to save lesson');
+        setLastSavedId(data.id);
+        Alert.alert('Saved', 'Lesson draft created successfully.', [
+          { text: 'Stay here' },
+          { text: 'Open lesson', onPress: () => navigation.navigate('LessonDetail', { lessonId: data.id }) },
+        ]);
+      } else if (type === 'assignment') {
+        const assignmentInsert: Database['public']['Tables']['assignments']['Insert'] = {
+          title: parsedResult.title || topic.trim(),
+          description: parsedResult.description || `AI-generated assignment for ${topic.trim()}`,
+          instructions: [
+            asArray(parsedResult.objectives).length ? `Objectives:\n- ${asArray(parsedResult.objectives).join('\n- ')}` : '',
+            asArray(parsedResult.tasks).length ? `Tasks:\n- ${asArray(parsedResult.tasks).join('\n- ')}` : '',
+            asArray(parsedResult.deliverables).length ? `Deliverables:\n- ${asArray(parsedResult.deliverables).join('\n- ')}` : '',
+          ].filter(Boolean).join('\n\n'),
+          assignment_type: 'project',
+          is_active: false,
+          max_points: 100,
+          metadata: parsedResult as Json,
+          created_by: profile.id,
+          school_id: profile.school_id ?? null,
+          school_name: profile.school_name ?? null,
+        };
+
+        const { data, error } = await supabase.from('assignments').insert(assignmentInsert).select('id,title').single();
+        if (error || !data) throw error || new Error('Failed to save assignment');
+        setLastSavedId(data.id);
+        Alert.alert('Saved', 'Assignment draft created successfully.', [
+          { text: 'Close' },
+          { text: 'Open assignment', onPress: () => navigation.navigate('AssignmentDetail', { assignmentId: data.id, title: data.title }) },
+        ]);
+      } else if (type === 'cbt') {
+        const questions = asArray(parsedResult.questions);
+        const examInsert: Database['public']['Tables']['cbt_exams']['Insert'] = {
+          title: parsedResult.title || topic.trim(),
+          description: `AI-generated CBT for ${topic.trim()}`,
+          duration_minutes: 30,
+          passing_score: 50,
+          total_questions: questions.length || 10,
+          is_active: false,
+          created_by: profile.id,
+          school_id: profile.school_id ?? null,
+          metadata: parsedResult as Json,
+        };
+
+        const { data: exam, error: examError } = await supabase.from('cbt_exams').insert(examInsert).select('id').single();
+        if (examError || !exam) throw examError || new Error('Failed to save CBT');
+
+        if (questions.length) {
+          const questionRows: Database['public']['Tables']['cbt_questions']['Insert'][] = questions.map((question: any, index: number) => ({
+            exam_id: exam.id,
+            question_text: question?.question || `Question ${index + 1}`,
+            options: asArray(question?.options) as unknown as Json,
+            correct_answer: question?.answer !== undefined ? String(question.answer) : null,
+            question_type: 'multiple_choice',
+            points: 1,
+            order_index: index + 1,
+            metadata: { explanation: question?.explanation ?? '' } as unknown as Json,
+          }));
+          const { error: questionError } = await supabase.from('cbt_questions').insert(questionRows);
+          if (questionError) throw questionError;
+        }
+
+        setLastSavedId(exam.id);
+        Alert.alert('Saved', 'CBT draft created successfully.', [
+          { text: 'Close' },
+          { text: 'Open CBT', onPress: () => navigation.navigate('CBTExamination', { examId: exam.id }) },
+        ]);
+      } else {
+        Alert.alert('Generated', 'This content type is ready to copy into your workflow, but it does not map directly to a saved table yet.');
+      }
+    } catch (err: any) {
+      Alert.alert('Save failed', err?.message || 'Could not save AI content.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const selectedType = CREATE_TYPES.find(t => t.key === type)!;
 
   const renderResult = () => {
     if (!result) return null;
-    // Try to parse JSON — show formatted; otherwise raw text
-    let parsed: any = null;
-    try {
-      // Strip ```json fences if present
-      const clean = result.replace(/^```json\s*/i, '').replace(/```\s*$/, '').trim();
-      parsed = JSON.parse(clean);
-    } catch { /* plain text */ }
+    const parsed = parsedResult;
 
     return (
       <MotiView from={{ opacity: 0, translateY: 10 }} animate={{ opacity: 1, translateY: 0 }} style={styles.resultCard}>
@@ -345,6 +512,14 @@ function CreateTab({ apiKey }: { apiKey: string }) {
                 {parsed.questions.length > 3 && <Text style={styles.resultMuted}>+{parsed.questions.length - 3} more questions</Text>}
               </View>
             )}
+            {parsed.missions && (
+              <View>
+                <Text style={styles.resultSection}>🚀 Missions</Text>
+                {asArray(parsed.missions).slice(0, 4).map((mission: any, index: number) => (
+                  <Text key={index} style={styles.resultItem}>• {mission?.title || `Mission ${index + 1}`} {mission?.xp ? `(${mission.xp} XP)` : ''}</Text>
+                ))}
+              </View>
+            )}
             {parsed.strengths && (
               <View>
                 <Text style={styles.resultSection}>💪 Strengths</Text>
@@ -359,6 +534,15 @@ function CreateTab({ apiKey }: { apiKey: string }) {
         ) : (
           <Text style={styles.resultBody}>{result}</Text>
         )}
+
+        <View style={styles.resultActions}>
+          {(type === 'lesson' || type === 'lesson-notes' || type === 'assignment' || type === 'cbt') && !!parsed && (
+            <TouchableOpacity onPress={saveGenerated} disabled={saving} style={[styles.secondaryAction, saving && { opacity: 0.6 }]}>
+              <Text style={styles.secondaryActionText}>{saving ? 'Saving...' : 'Save Draft'}</Text>
+            </TouchableOpacity>
+          )}
+          {lastSavedId && <Text style={styles.savedHint}>Saved to database</Text>}
+        </View>
       </MotiView>
     );
   };
@@ -397,6 +581,14 @@ function CreateTab({ apiKey }: { apiKey: string }) {
         onChangeText={setSubject}
         placeholder="e.g. Python, Mathematics, Robotics"
         placeholderTextColor={COLORS.textMuted}
+      />
+
+      <Text style={styles.quickPromptLabel}>Quick prompts</Text>
+      <SelectPill
+        options={['Intro to Python', 'Robotics Sensors', 'Algebra Basics', 'HTML Forms', 'Renewable Energy']}
+        value={topic}
+        onSelect={setTopic}
+        size="xs"
       />
 
       <Text style={styles.sectionLabel}>Topic *</Text>
@@ -576,10 +768,15 @@ export default function AIScreen({ navigation }: any) {
   const isStaff = profile?.role === 'admin' || profile?.role === 'teacher';
 
   useEffect(() => {
+    handleRefreshKey();
+  }, []);
+
+  const handleRefreshKey = () => {
+    setKeyLoading(true);
     fetchApiKey()
       .then(k => setApiKey(k))
       .finally(() => setKeyLoading(false));
-  }, []);
+  };
 
   const visibleTabs = isStaff ? TABS : TABS.filter(t => t !== '✨ Create');
 
@@ -593,17 +790,31 @@ export default function AIScreen({ navigation }: any) {
         <View style={{ flex: 1 }}>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
             <Image source={require('../../../assets/rillcod-icon.png')} style={styles.headerLogo} resizeMode="cover" />
-            <Text style={styles.headerTitle}>AI Hub</Text>
+            <Text style={styles.headerTitle}>AI Studio</Text>
           </View>
-          <Text style={styles.headerSub}>Powered by Rillcod Intelligence</Text>
+          <Text style={styles.headerSub}>Web-grade AI workflows, tuned for mobile</Text>
         </View>
-        {keyLoading && <ActivityIndicator color={COLORS.primaryLight} size="small" />}
+        {keyLoading ? (
+          <ActivityIndicator color={COLORS.primaryLight} size="small" />
+        ) : (
+          <TouchableOpacity onPress={handleRefreshKey} style={styles.refreshBtn}>
+            <Text style={styles.refreshBtnText}>Refresh</Text>
+          </TouchableOpacity>
+        )}
       </View>
 
       {/* No key warning */}
       {!keyLoading && !apiKey && (
         <View style={styles.noKeyBanner}>
           <Text style={styles.noKeyText}>⚠️ AI API key not configured — contact your admin.</Text>
+        </View>
+      )}
+
+      {!keyLoading && !!apiKey && (
+        <View style={styles.engineBanner}>
+          <Text style={styles.engineBannerText}>
+            Multi-model OpenRouter engine active for tutoring, drafting, CBT, and coding.
+          </Text>
         </View>
       )}
 
@@ -619,7 +830,7 @@ export default function AIScreen({ navigation }: any) {
       {/* Content */}
       <View style={{ flex: 1 }}>
         {tab === '🧠 Tutor' && <TutorTab apiKey={apiKey} profile={profile} />}
-        {tab === '✨ Create' && isStaff && <CreateTab apiKey={apiKey} />}
+        {tab === '✨ Create' && isStaff && <CreateTab apiKey={apiKey} profile={profile} navigation={navigation} />}
         {tab === '💻 Code' && <CodeTab apiKey={apiKey} />}
       </View>
     </SafeAreaView>
@@ -637,9 +848,13 @@ const styles = StyleSheet.create({
   headerLogo: { width: 28, height: 28, borderRadius: 8 },
   headerTitle: { fontFamily: FONT_FAMILY.display, fontSize: FONT_SIZE['2xl'], color: COLORS.textPrimary },
   headerSub: { fontFamily: FONT_FAMILY.body, fontSize: FONT_SIZE.xs, color: COLORS.textMuted, marginTop: 2 },
+  refreshBtn: { paddingHorizontal: SPACING.sm, paddingVertical: 8, borderRadius: RADIUS.md, borderWidth: 1, borderColor: COLORS.border, backgroundColor: COLORS.bgCard },
+  refreshBtnText: { fontFamily: FONT_FAMILY.bodySemi, fontSize: FONT_SIZE.xs, color: COLORS.textSecondary },
 
   noKeyBanner: { marginHorizontal: SPACING.xl, marginBottom: SPACING.sm, backgroundColor: COLORS.warning + '22', borderWidth: 1, borderColor: COLORS.warning + '44', borderRadius: RADIUS.md, padding: SPACING.sm },
   noKeyText: { fontFamily: FONT_FAMILY.body, fontSize: FONT_SIZE.xs, color: COLORS.warning },
+  engineBanner: { marginHorizontal: SPACING.xl, marginBottom: SPACING.sm, backgroundColor: COLORS.primary + '14', borderWidth: 1, borderColor: COLORS.primary + '2d', borderRadius: RADIUS.md, padding: SPACING.sm },
+  engineBannerText: { fontFamily: FONT_FAMILY.body, fontSize: FONT_SIZE.xs, color: COLORS.textSecondary, lineHeight: 18 },
 
   tabRow: { flexDirection: 'row', marginHorizontal: SPACING.xl, marginBottom: SPACING.sm, backgroundColor: COLORS.bgCard, borderWidth: 1, borderColor: COLORS.border, borderRadius: RADIUS.lg, padding: 3, gap: 2 },
   tabBtn: { flex: 1, paddingVertical: 8, alignItems: 'center', borderRadius: RADIUS.md },
@@ -687,6 +902,7 @@ const styles = StyleSheet.create({
   typeRowLabel: { fontFamily: FONT_FAMILY.bodySemi, fontSize: FONT_SIZE.sm, color: COLORS.textPrimary },
   typeRowDesc: { fontFamily: FONT_FAMILY.body, fontSize: FONT_SIZE.xs, color: COLORS.textMuted, marginTop: 2 },
   fieldInput: { backgroundColor: COLORS.bgCard, borderWidth: 1, borderColor: COLORS.border, borderRadius: RADIUS.md, paddingHorizontal: SPACING.md, paddingVertical: Platform.OS === 'ios' ? 10 : 6, fontFamily: FONT_FAMILY.body, fontSize: FONT_SIZE.sm, color: COLORS.textPrimary, marginBottom: SPACING.sm },
+  quickPromptLabel: { fontFamily: FONT_FAMILY.bodySemi, fontSize: FONT_SIZE.xs, color: COLORS.textMuted, marginBottom: 4 },
   genBtn: { borderRadius: RADIUS.lg, overflow: 'hidden', marginTop: SPACING.md },
   genBtnGrad: { flexDirection: 'row', paddingVertical: 14, alignItems: 'center', justifyContent: 'center', gap: 6 },
   genBtnText: { fontFamily: FONT_FAMILY.display, fontSize: FONT_SIZE.base, color: '#fff' },
@@ -702,6 +918,10 @@ const styles = StyleSheet.create({
   questionText: { fontFamily: FONT_FAMILY.bodySemi, fontSize: FONT_SIZE.xs, color: COLORS.textPrimary, marginBottom: 4 },
   questionOpt: { fontFamily: FONT_FAMILY.body, fontSize: FONT_SIZE.xs, color: COLORS.textMuted, lineHeight: 18 },
   questionOptCorrect: { color: COLORS.success },
+  resultActions: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: SPACING.sm, marginTop: SPACING.sm },
+  secondaryAction: { paddingHorizontal: SPACING.md, paddingVertical: 10, borderRadius: RADIUS.md, backgroundColor: COLORS.primary + '18', borderWidth: 1, borderColor: COLORS.primary + '40' },
+  secondaryActionText: { fontFamily: FONT_FAMILY.bodySemi, fontSize: FONT_SIZE.sm, color: COLORS.primaryLight },
+  savedHint: { fontFamily: FONT_FAMILY.body, fontSize: FONT_SIZE.xs, color: COLORS.success },
 
   // Code
   codeScroll: { paddingHorizontal: SPACING.xl, paddingTop: SPACING.sm },

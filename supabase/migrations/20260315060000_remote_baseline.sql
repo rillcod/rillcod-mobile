@@ -1,0 +1,5 @@
+-- Placeholder migration to mirror the hosted Supabase migration history.
+-- The live project records version 20260315060000 in supabase_migrations,
+-- but the corresponding SQL file is not present in the current repo history.
+-- Keeping this file locally allows the mobile repo to track the hosted
+-- database timeline without depending on the web repo.

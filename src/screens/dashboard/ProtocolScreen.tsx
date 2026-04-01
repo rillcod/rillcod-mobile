@@ -1,51 +1,182 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity,
-  ActivityIndicator, Alert,
+  ActivityIndicator, Alert, TextInput,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { MotiView } from 'moti';
 import { LinearGradient } from 'expo-linear-gradient';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { COLORS } from '../../constants/colors';
 import { FONT_FAMILY, FONT_SIZE } from '../../constants/typography';
 import { SPACING, RADIUS } from '../../constants/spacing';
 
-const STORAGE_KEY = 'rillcod_protocol_done';
+const STORAGE_KEY = 'rillcod_protocol_done_v2';
 
-interface Phase {
+interface ProtocolModule {
+  id: string;
+  title: string;
+  description: string;
+  language: 'javascript' | 'python' | 'html' | 'robotics';
+  outcome: string;
+  starterCode: string;
+}
+
+interface ProtocolPhase {
   id: number;
   name: string;
   icon: string;
   color: string;
-  modules: string[];
+  modules: ProtocolModule[];
 }
 
-const PHASES: Phase[] = [
+const PROTOCOL_PHASES: ProtocolPhase[] = [
   {
-    id: 1, name: 'Foundations', icon: '🏗️', color: COLORS.info,
-    modules: ['Variables & Types', 'Control Flow', 'Functions', 'Data Structures'],
+    id: 1,
+    name: 'Code Foundations',
+    icon: 'CD',
+    color: COLORS.primary,
+    modules: [
+      {
+        id: 'p1-js-vars',
+        title: 'Variables and output',
+        description: 'Store values, print them, and understand the shape of simple code.',
+        language: 'javascript',
+        outcome: 'You should be able to declare values and explain what each line is doing.',
+        starterCode: "const studentName = 'Ada';\nconst age = 13;\nconsole.log(`My name is ${studentName} and I am ${age}`);",
+      },
+      {
+        id: 'p1-js-flow',
+        title: 'Conditionals and loops',
+        description: 'Control logic with if statements and repeated actions with loops.',
+        language: 'javascript',
+        outcome: 'You should be able to branch logic and repeat a task safely.',
+        starterCode: "for (let i = 1; i <= 5; i++) {\n  if (i % 2 === 0) {\n    console.log('Even', i);\n  }\n}",
+      },
+      {
+        id: 'p1-python-func',
+        title: 'Python functions',
+        description: 'Write reusable functions with parameters and return values.',
+        language: 'python',
+        outcome: 'You should be able to package logic into a named reusable block.',
+        starterCode: "def calculate_area(width, height):\n    return width * height\n\nprint(calculate_area(5, 3))",
+      },
+    ],
   },
   {
-    id: 2, name: 'Web Basics', icon: '🌐', color: COLORS.success,
-    modules: ['HTML Fundamentals', 'CSS Styling', 'JavaScript Basics', 'DOM Manipulation'],
+    id: 2,
+    name: 'Web Engine',
+    icon: 'WB',
+    color: COLORS.success,
+    modules: [
+      {
+        id: 'p2-html-structure',
+        title: 'HTML structure',
+        description: 'Build semantic layout with headings, sections, lists, and buttons.',
+        language: 'html',
+        outcome: 'You should be able to create a clear page skeleton that a user can navigate.',
+        starterCode: "<main>\n  <h1>STEM Dashboard</h1>\n  <section>\n    <p>Welcome to the lab.</p>\n    <button>Launch</button>\n  </section>\n</main>",
+      },
+      {
+        id: 'p2-html-dom',
+        title: 'DOM interactions',
+        description: 'Connect buttons and page elements to user actions.',
+        language: 'html',
+        outcome: 'You should be able to update page content after a click.',
+        starterCode: "<button onclick=\"launchMission()\">Launch</button>\n<p id=\"status\">Idle</p>\n<script>\nfunction launchMission() {\n  document.getElementById('status').textContent = 'Mission started';\n}\n</script>",
+      },
+      {
+        id: 'p2-js-arrays',
+        title: 'Arrays and mapping',
+        description: 'Transform lists of values into useful UI or summaries.',
+        language: 'javascript',
+        outcome: 'You should be able to filter, map, and summarize a collection.',
+        starterCode: "const scores = [45, 70, 88, 91];\nconst passing = scores.filter((score) => score >= 50);\nconst boosted = passing.map((score) => score + 5);\nconsole.log(boosted);",
+      },
+    ],
   },
   {
-    id: 3, name: 'Python Pro', icon: '🐍', color: COLORS.warning,
-    modules: ['OOP Concepts', 'File Handling', 'APIs & Requests', 'Data Analysis'],
+    id: 3,
+    name: 'Applied Systems',
+    icon: 'AI',
+    color: COLORS.warning,
+    modules: [
+      {
+        id: 'p3-python-data',
+        title: 'Data and APIs',
+        description: 'Work with dictionaries, arrays, and remote data responses.',
+        language: 'python',
+        outcome: 'You should be able to inspect structured data and extract key values.',
+        starterCode: "student = {'name': 'Musa', 'score': 82}\nprint(student['name'])\nprint(student['score'])",
+      },
+      {
+        id: 'p3-js-async',
+        title: 'Async workflows',
+        description: 'Handle loading, success, and error paths when calling remote services.',
+        language: 'javascript',
+        outcome: 'You should be able to explain the difference between waiting and failing gracefully.',
+        starterCode: "async function loadData() {\n  try {\n    const response = await fetch('https://example.com/data');\n    const data = await response.json();\n    console.log(data);\n  } catch (error) {\n    console.log('Request failed');\n  }\n}",
+      },
+      {
+        id: 'p3-robotics-signals',
+        title: 'Sensors and signals',
+        description: 'Read simple robot inputs and react with output behavior.',
+        language: 'robotics',
+        outcome: 'You should be able to describe an input-process-output loop for a robot.',
+        starterCode: "Read ultrasonic distance\nIf distance < 10cm\n  Stop motors\nElse\n  Keep moving",
+      },
+    ],
   },
   {
-    id: 4, name: 'AI & Robotics', icon: '🤖', color: COLORS.accent,
-    modules: ['Intro to AI', 'Machine Learning Basics', 'IoT & Arduino', 'Final Project'],
+    id: 4,
+    name: 'Launch Track',
+    icon: 'LX',
+    color: COLORS.accent,
+    modules: [
+      {
+        id: 'p4-ui-systems',
+        title: 'UI composition',
+        description: 'Combine cards, actions, and status into a coherent interface.',
+        language: 'html',
+        outcome: 'You should be able to assemble a working layout with meaningful states.',
+        starterCode: "<section class=\"card\">\n  <h2>Mission Control</h2>\n  <p>3 tasks pending review</p>\n</section>",
+      },
+      {
+        id: 'p4-project-logic',
+        title: 'Project logic review',
+        description: 'Connect features, data flow, and completion criteria across screens.',
+        language: 'javascript',
+        outcome: 'You should be able to break a feature into logic, UI, and data dependencies.',
+        starterCode: "const feature = {\n  screen: 'Reports',\n  data: ['students', 'grades'],\n  action: 'publish',\n};",
+      },
+      {
+        id: 'p4-capstone',
+        title: 'Capstone readiness',
+        description: 'Prepare for a final build by reviewing the whole sequence.',
+        language: 'robotics',
+        outcome: 'You should know what to build next and which module to revisit if stuck.',
+        starterCode: "Capstone checklist:\n1. Inputs confirmed\n2. Logic reviewed\n3. Output tested\n4. Report prepared",
+      },
+    ],
   },
 ];
 
-const ALL_MODULES = PHASES.flatMap(p => p.modules);
+const LANGUAGE_FILTERS = [
+  { key: 'all', label: 'All' },
+  { key: 'javascript', label: 'JavaScript' },
+  { key: 'python', label: 'Python' },
+  { key: 'html', label: 'Web' },
+  { key: 'robotics', label: 'Robotics' },
+] as const;
 
 export default function ProtocolScreen({ navigation }: any) {
   const [doneModules, setDoneModules] = useState<string[]>([]);
-  const [expanded, setExpanded] = useState<number[]>([1]);
+  const [expandedPhases, setExpandedPhases] = useState<number[]>([1]);
+  const [activeModuleId, setActiveModuleId] = useState<string | null>(null);
+  const [languageFilter, setLanguageFilter] = useState<typeof LANGUAGE_FILTERS[number]['key']>('all');
+  const [search, setSearch] = useState('');
   const [loading, setLoading] = useState(true);
+
+  const allModules = useMemo(() => PROTOCOL_PHASES.flatMap((phase) => phase.modules), []);
 
   const loadDone = useCallback(async () => {
     try {
@@ -57,44 +188,59 @@ export default function ProtocolScreen({ navigation }: any) {
 
   useEffect(() => { loadDone(); }, [loadDone]);
 
-  const toggleExpand = (phaseId: number) => {
-    setExpanded(prev =>
-      prev.includes(phaseId) ? prev.filter(id => id !== phaseId) : [...prev, phaseId]
-    );
+  const visiblePhases = useMemo(() => {
+    return PROTOCOL_PHASES.map((phase) => {
+      const modules = phase.modules.filter((module) => {
+        const passLanguage = languageFilter === 'all' || module.language === languageFilter;
+        const passSearch = !search.trim() || `${module.title} ${module.description} ${module.outcome}`.toLowerCase().includes(search.trim().toLowerCase());
+        return passLanguage && passSearch;
+      });
+      return { ...phase, modules };
+    }).filter((phase) => phase.modules.length > 0);
+  }, [languageFilter, search]);
+
+  const isLocked = (moduleId: string) => {
+    const moduleIndex = allModules.findIndex((item) => item.id === moduleId);
+    if (moduleIndex <= 0) return false;
+    return !doneModules.includes(allModules[moduleIndex - 1].id);
   };
 
-  const isModuleLocked = (modIndex: number): boolean => {
-    if (modIndex === 0) return false;
-    return !doneModules.includes(ALL_MODULES[modIndex - 1]);
+  const saveDoneModules = async (next: string[]) => {
+    setDoneModules(next);
+    await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(next));
   };
 
-  const handleStart = async (module: string, globalIdx: number) => {
-    if (isModuleLocked(globalIdx)) {
-      Alert.alert('Module Locked', 'Complete the previous module first.');
+  const togglePhase = (phaseId: number) => {
+    setExpandedPhases((prev) => prev.includes(phaseId) ? prev.filter((id) => id !== phaseId) : [...prev, phaseId]);
+  };
+
+  const toggleComplete = async (module: ProtocolModule) => {
+    if (isLocked(module.id)) {
+      Alert.alert('Module locked', 'Finish the previous protocol step first so the learning flow stays in order.');
       return;
     }
-    if (doneModules.includes(module)) return;
-
-    Alert.alert(
-      `Start: ${module}`,
-      'Navigate to AI Hub → Code Lab to practise this module.\n\nMark as completed?',
-      [
-        { text: 'Not yet', style: 'cancel' },
-        {
-          text: 'Mark Done ✓',
-          onPress: async () => {
-            const newDone = [...doneModules, module];
-            setDoneModules(newDone);
-            await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(newDone));
-          },
-        },
-      ]
-    );
+    if (doneModules.includes(module.id)) {
+      const next = doneModules.filter((id) => id !== module.id);
+      await saveDoneModules(next);
+      return;
+    }
+    const next = [...doneModules, module.id];
+    await saveDoneModules(next);
   };
 
-  const masteryPct = ALL_MODULES.length > 0
-    ? Math.round((doneModules.length / ALL_MODULES.length) * 100)
-    : 0;
+  const openPractice = (module: ProtocolModule) => {
+    if (module.language === 'robotics') {
+      navigation.navigate('Projects');
+      return;
+    }
+    if (module.language === 'html') {
+      navigation.navigate('Learn');
+      return;
+    }
+    navigation.navigate('AI');
+  };
+
+  const masteryPct = allModules.length > 0 ? Math.round((doneModules.length / allModules.length) * 100) : 0;
 
   if (loading) {
     return (
@@ -110,132 +256,132 @@ export default function ProtocolScreen({ navigation }: any) {
     <SafeAreaView style={styles.safe}>
       <View style={styles.header}>
         <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}>
-          <Text style={styles.backArrow}>←</Text>
+          <Text style={styles.backArrow}>?</Text>
         </TouchableOpacity>
         <Text style={styles.headerTitle}>Protocol</Text>
         <View style={styles.masteryBadge}>
-          <Text style={styles.masteryText}>{masteryPct}% Mastery</Text>
+          <Text style={styles.masteryText}>{masteryPct}%</Text>
         </View>
       </View>
 
-      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: SPACING.base, paddingBottom: 40 }}>
-        {/* Circular progress card */}
-        <LinearGradient colors={['rgba(122,6,6,0.15)', 'rgba(122,6,6,0.03)']}
-          style={styles.masteryCard}>
-          <View style={styles.masteryRow}>
-            {/* Circular ring (SVG-less approximation using border) */}
-            <View style={styles.circleOuter}>
-              <View style={[styles.circleInner]}>
-                <Text style={styles.circleNum}>{masteryPct}%</Text>
-                <Text style={styles.circleLabel}>Mastery</Text>
-              </View>
-              <MotiView
-                from={{ opacity: 0.3 }}
-                animate={{ opacity: 1 }}
-                transition={{ loop: false, type: 'timing', duration: 600 }}
-                style={[styles.circleArc, {
-                  borderColor: COLORS.primary,
-                  borderTopColor: masteryPct > 25 ? COLORS.primary : COLORS.border,
-                  borderRightColor: masteryPct > 50 ? COLORS.primary : COLORS.border,
-                  borderBottomColor: masteryPct > 75 ? COLORS.primary : COLORS.border,
-                }]}
-              />
+      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scroll}>
+        <LinearGradient colors={['rgba(122,6,6,0.16)', 'rgba(122,6,6,0.04)']} style={styles.heroCard}>
+          <Text style={styles.heroEyebrow}>INDUSTRIAL LEARNING PATH</Text>
+          <Text style={styles.heroTitle}>Structured progress, not empty checklists.</Text>
+          <Text style={styles.heroText}>
+            Work through the protocol in sequence, review the starter logic, and jump straight into the right mobile tool for practice.
+          </Text>
+          <View style={styles.heroStats}>
+            <View style={styles.heroStat}>
+              <Text style={styles.heroStatNum}>{doneModules.length}</Text>
+              <Text style={styles.heroStatLabel}>Completed</Text>
             </View>
-            <View style={styles.masteryStats}>
-              <Text style={styles.masteryStatsLabel}>Completed</Text>
-              <Text style={styles.masteryStatsNum}>{doneModules.length}</Text>
-              <Text style={styles.masteryStatsDivider}>of {ALL_MODULES.length} modules</Text>
-              <View style={styles.phaseProgress}>
-                {PHASES.map(p => {
-                  const doneCnt = p.modules.filter(m => doneModules.includes(m)).length;
-                  return (
-                    <View key={p.id} style={styles.phaseProgressRow}>
-                      <Text style={[styles.phaseProgressIcon]}>{p.icon}</Text>
-                      <View style={styles.phaseProgressTrack}>
-                        <View style={[styles.phaseProgressFill, { width: `${(doneCnt / p.modules.length) * 100}%` as any, backgroundColor: p.color }]} />
-                      </View>
-                      <Text style={[styles.phaseProgressCount, { color: p.color }]}>{doneCnt}/{p.modules.length}</Text>
-                    </View>
-                  );
-                })}
-              </View>
+            <View style={styles.heroStat}>
+              <Text style={styles.heroStatNum}>{allModules.length}</Text>
+              <Text style={styles.heroStatLabel}>Modules</Text>
+            </View>
+            <View style={styles.heroStat}>
+              <Text style={styles.heroStatNum}>{visiblePhases.length}</Text>
+              <Text style={styles.heroStatLabel}>Visible phases</Text>
             </View>
           </View>
         </LinearGradient>
 
-        {/* Phases */}
-        {PHASES.map(phase => {
-          const isExpanded = expanded.includes(phase.id);
-          const doneCnt = phase.modules.filter(m => doneModules.includes(m)).length;
-          const phasePct = Math.round((doneCnt / phase.modules.length) * 100);
-          // Global index offset for this phase
-          const phaseOffset = PHASES.slice(0, phase.id - 1).reduce((s, p) => s + p.modules.length, 0);
+        <View style={styles.searchWrap}>
+          <Text style={styles.searchIcon}>?</Text>
+          <TextInput
+            style={styles.searchInput}
+            placeholder="Search protocol modules"
+            placeholderTextColor={COLORS.textMuted}
+            value={search}
+            onChangeText={setSearch}
+          />
+        </View>
+
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filtersRow}>
+          {LANGUAGE_FILTERS.map((filter) => (
+            <TouchableOpacity
+              key={filter.key}
+              style={[styles.filterChip, languageFilter === filter.key && styles.filterChipActive]}
+              onPress={() => setLanguageFilter(filter.key)}
+            >
+              <Text style={[styles.filterChipText, languageFilter === filter.key && styles.filterChipTextActive]}>
+                {filter.label}
+              </Text>
+            </TouchableOpacity>
+          ))}
+        </ScrollView>
+
+        {visiblePhases.map((phase) => {
+          const expanded = expandedPhases.includes(phase.id);
+          const completedCount = phase.modules.filter((module) => doneModules.includes(module.id)).length;
+          const progress = phase.modules.length > 0 ? Math.round((completedCount / phase.modules.length) * 100) : 0;
 
           return (
             <View key={phase.id} style={styles.phaseCard}>
-              <TouchableOpacity
-                style={styles.phaseHeader}
-                onPress={() => toggleExpand(phase.id)}
-                activeOpacity={0.7}
-              >
-                <View style={[styles.phaseIcon, { backgroundColor: `${phase.color}20` }]}>
-                  <Text style={styles.phaseIconText}>{phase.icon}</Text>
+              <TouchableOpacity style={styles.phaseHeader} activeOpacity={0.85} onPress={() => togglePhase(phase.id)}>
+                <View style={[styles.phaseIcon, { backgroundColor: phase.color + '18' }]}>
+                  <Text style={[styles.phaseIconText, { color: phase.color }]}>{phase.icon}</Text>
                 </View>
-                <View style={styles.phaseHeaderBody}>
-                  <Text style={styles.phaseName}>Phase {phase.id} — {phase.name}</Text>
-                  <Text style={[styles.phaseSubtitle, { color: phase.color }]}>
-                    {doneCnt}/{phase.modules.length} modules · {phasePct}%
-                  </Text>
-                  <View style={styles.phaseBar}>
-                    <View style={[styles.phaseBarFill, { width: `${phasePct}%` as any, backgroundColor: phase.color }]} />
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.phaseName}>Phase {phase.id} � {phase.name}</Text>
+                  <Text style={[styles.phaseMeta, { color: phase.color }]}>{completedCount}/{phase.modules.length} completed � {progress}%</Text>
+                  <View style={styles.phaseTrack}>
+                    <View style={[styles.phaseTrackFill, { width: `${progress}%`, backgroundColor: phase.color }]} />
                   </View>
                 </View>
-                <Text style={styles.chevron}>{isExpanded ? '▲' : '▼'}</Text>
+                <Text style={styles.chevron}>{expanded ? '?' : '?'}</Text>
               </TouchableOpacity>
 
-              {isExpanded && (
-                <View style={styles.modulesList}>
-                  {phase.modules.map((mod, i) => {
-                    const globalIdx = phaseOffset + i;
-                    const done = doneModules.includes(mod);
-                    const locked = isModuleLocked(globalIdx);
-
-                    return (
-                      <MotiView
-                        key={mod}
-                        from={{ opacity: 0, translateX: -8 }}
-                        animate={{ opacity: 1, translateX: 0 }}
-                        transition={{ delay: i * 60, type: 'timing', duration: 250 }}
-                      >
-                        <View style={[styles.moduleRow, locked && styles.moduleRowLocked]}>
-                          <Text style={styles.moduleIcon}>
-                            {done ? '✅' : locked ? '🔒' : '▶'}
-                          </Text>
-                          <Text style={[
-                            styles.moduleName,
-                            done && styles.moduleNameDone,
-                            locked && styles.moduleNameLocked,
-                          ]}>
-                            {mod}
-                          </Text>
-                          {!done && !locked && (
-                            <TouchableOpacity style={styles.startBtn} onPress={() => handleStart(mod, globalIdx)}>
-                              <LinearGradient colors={COLORS.gradPrimary} style={styles.startBtnInner}>
-                                <Text style={styles.startBtnText}>Start</Text>
-                              </LinearGradient>
-                            </TouchableOpacity>
-                          )}
-                          {done && (
-                            <View style={styles.doneChip}>
-                              <Text style={styles.doneChipText}>Done</Text>
-                            </View>
-                          )}
+              {expanded && phase.modules.map((module) => {
+                const done = doneModules.includes(module.id);
+                const locked = isLocked(module.id);
+                const active = activeModuleId === module.id;
+                return (
+                  <View key={module.id} style={styles.moduleWrap}>
+                    <TouchableOpacity
+                      activeOpacity={0.85}
+                      style={[styles.moduleCard, locked && styles.moduleCardLocked]}
+                      onPress={() => !locked && setActiveModuleId(active ? null : module.id)}
+                    >
+                      <View style={styles.moduleTop}>
+                        <View style={[styles.moduleStatus, done ? styles.statusDone : locked ? styles.statusLocked : styles.statusReady]}>
+                          <Text style={styles.moduleStatusText}>{done ? 'DONE' : locked ? 'LOCKED' : 'READY'}</Text>
                         </View>
-                      </MotiView>
-                    );
-                  })}
-                </View>
-              )}
+                        <Text style={styles.moduleLanguage}>{module.language.toUpperCase()}</Text>
+                      </View>
+                      <Text style={styles.moduleTitle}>{module.title}</Text>
+                      <Text style={styles.moduleDesc}>{module.description}</Text>
+                      <Text style={styles.moduleOutcome}>Outcome: {module.outcome}</Text>
+                    </TouchableOpacity>
+
+                    {active && (
+                      <View style={styles.detailCard}>
+                        <Text style={styles.detailTitle}>Starter logic</Text>
+                        <View style={styles.codeBox}>
+                          <Text style={styles.codeText}>{module.starterCode}</Text>
+                        </View>
+                        <View style={styles.detailActions}>
+                          <TouchableOpacity
+                            style={[styles.actionBtn, styles.actionBtnGhost]}
+                            onPress={() => openPractice(module)}
+                          >
+                            <Text style={styles.actionBtnGhostText}>Open Practice Tool</Text>
+                          </TouchableOpacity>
+                          <TouchableOpacity
+                            style={[styles.actionBtn, done ? styles.actionBtnMuted : styles.actionBtnPrimary]}
+                            onPress={() => toggleComplete(module)}
+                          >
+                            <Text style={done ? styles.actionBtnMutedText : styles.actionBtnPrimaryText}>
+                              {done ? 'Mark Incomplete' : 'Mark Complete'}
+                            </Text>
+                          </TouchableOpacity>
+                        </View>
+                      </View>
+                    )}
+                  </View>
+                );
+              })}
             </View>
           );
         })}
@@ -246,50 +392,62 @@ export default function ProtocolScreen({ navigation }: any) {
 
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: COLORS.bg },
+  center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
   header: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: SPACING.base, paddingVertical: SPACING.md, gap: SPACING.sm },
   backBtn: { width: 36, height: 36, borderRadius: RADIUS.md, borderWidth: 1, borderColor: COLORS.border, alignItems: 'center', justifyContent: 'center' },
   backArrow: { fontSize: 18, color: COLORS.textPrimary },
-  headerTitle: { flex: 1, fontSize: FONT_SIZE.lg, fontFamily: FONT_FAMILY.heading, color: COLORS.textPrimary },
-  masteryBadge: { backgroundColor: COLORS.primaryPale, borderRadius: RADIUS.full, paddingHorizontal: SPACING.md, paddingVertical: 6, borderWidth: 1, borderColor: COLORS.borderGlow },
-  masteryText: { fontSize: FONT_SIZE.xs, fontFamily: FONT_FAMILY.bodySemi, color: COLORS.primaryLight },
-  center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
-  masteryCard: { borderRadius: RADIUS.xl, padding: SPACING.xl, marginBottom: SPACING.xl, borderWidth: 1, borderColor: COLORS.borderGlow },
-  masteryRow: { flexDirection: 'row', alignItems: 'center', gap: SPACING.xl },
-  circleOuter: { width: 100, height: 100, position: 'relative', alignItems: 'center', justifyContent: 'center' },
-  circleInner: { position: 'absolute', alignItems: 'center', justifyContent: 'center', zIndex: 2 },
-  circleArc: { position: 'absolute', width: 96, height: 96, borderRadius: 48, borderWidth: 6, borderColor: COLORS.primary },
-  circleNum: { fontSize: FONT_SIZE.xl, fontFamily: FONT_FAMILY.display, color: COLORS.textPrimary },
-  circleLabel: { fontSize: FONT_SIZE.xs, fontFamily: FONT_FAMILY.body, color: COLORS.textMuted },
-  masteryStats: { flex: 1 },
-  masteryStatsLabel: { fontSize: FONT_SIZE.xs, fontFamily: FONT_FAMILY.body, color: COLORS.textMuted },
-  masteryStatsNum: { fontSize: FONT_SIZE['2xl'], fontFamily: FONT_FAMILY.display, color: COLORS.textPrimary },
-  masteryStatsDivider: { fontSize: FONT_SIZE.sm, fontFamily: FONT_FAMILY.body, color: COLORS.textMuted, marginBottom: SPACING.sm },
-  phaseProgress: { gap: 6 },
-  phaseProgressRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  phaseProgressIcon: { fontSize: 12, width: 18 },
-  phaseProgressTrack: { flex: 1, height: 4, backgroundColor: COLORS.border, borderRadius: 2, overflow: 'hidden' },
-  phaseProgressFill: { height: 4, borderRadius: 2 },
-  phaseProgressCount: { fontSize: FONT_SIZE.xs, fontFamily: FONT_FAMILY.bodySemi, width: 28, textAlign: 'right' },
-  phaseCard: { backgroundColor: COLORS.bgCard, borderRadius: RADIUS.xl, borderWidth: 1, borderColor: COLORS.border, marginBottom: SPACING.md, overflow: 'hidden' },
-  phaseHeader: { flexDirection: 'row', alignItems: 'center', padding: SPACING.md, gap: SPACING.md },
+  headerTitle: { flex: 1, fontSize: FONT_SIZE.lg, fontFamily: FONT_FAMILY.bodySemi, color: COLORS.textPrimary },
+  masteryBadge: { borderRadius: RADIUS.full, borderWidth: 1, borderColor: COLORS.borderGlow, paddingHorizontal: 12, paddingVertical: 5, backgroundColor: COLORS.primaryPale },
+  masteryText: { fontFamily: FONT_FAMILY.bodySemi, fontSize: FONT_SIZE.xs, color: COLORS.primaryLight },
+  scroll: { paddingHorizontal: SPACING.base, paddingBottom: 40 },
+  heroCard: { borderRadius: RADIUS.xl, borderWidth: 1, borderColor: COLORS.borderGlow, padding: SPACING.xl, marginBottom: SPACING.lg },
+  heroEyebrow: { fontFamily: FONT_FAMILY.bodySemi, fontSize: FONT_SIZE.xs, letterSpacing: 1.5, color: COLORS.primaryLight, marginBottom: 8 },
+  heroTitle: { fontFamily: FONT_FAMILY.display, fontSize: FONT_SIZE.xl, color: COLORS.textPrimary, marginBottom: 8 },
+  heroText: { fontFamily: FONT_FAMILY.body, fontSize: FONT_SIZE.sm, color: COLORS.textSecondary, lineHeight: 20 },
+  heroStats: { flexDirection: 'row', gap: 10, marginTop: SPACING.lg },
+  heroStat: { flex: 1, borderWidth: 1, borderColor: COLORS.border, backgroundColor: COLORS.bgCard, borderRadius: RADIUS.lg, padding: SPACING.md, alignItems: 'center' },
+  heroStatNum: { fontFamily: FONT_FAMILY.display, fontSize: FONT_SIZE.xl, color: COLORS.textPrimary },
+  heroStatLabel: { fontFamily: FONT_FAMILY.body, fontSize: FONT_SIZE.xs, color: COLORS.textMuted, marginTop: 4, textTransform: 'uppercase' },
+  searchWrap: { flexDirection: 'row', alignItems: 'center', gap: SPACING.sm, backgroundColor: COLORS.bgCard, borderWidth: 1, borderColor: COLORS.border, borderRadius: RADIUS.lg, paddingHorizontal: SPACING.md, marginBottom: SPACING.md },
+  searchIcon: { fontSize: 14, color: COLORS.textMuted },
+  searchInput: { flex: 1, color: COLORS.textPrimary, fontFamily: FONT_FAMILY.body, fontSize: FONT_SIZE.sm, paddingVertical: 12 },
+  filtersRow: { gap: 8, paddingBottom: 4, marginBottom: SPACING.md },
+  filterChip: { borderWidth: 1, borderColor: COLORS.border, borderRadius: RADIUS.full, paddingHorizontal: 14, paddingVertical: 8, backgroundColor: COLORS.bgCard },
+  filterChipActive: { backgroundColor: COLORS.primaryPale, borderColor: COLORS.primary },
+  filterChipText: { color: COLORS.textMuted, fontFamily: FONT_FAMILY.bodySemi, fontSize: FONT_SIZE.xs },
+  filterChipTextActive: { color: COLORS.primaryLight },
+  phaseCard: { backgroundColor: COLORS.bgCard, borderWidth: 1, borderColor: COLORS.border, borderRadius: RADIUS.xl, marginBottom: SPACING.md, overflow: 'hidden' },
+  phaseHeader: { flexDirection: 'row', alignItems: 'center', gap: 12, padding: SPACING.md },
   phaseIcon: { width: 44, height: 44, borderRadius: RADIUS.md, alignItems: 'center', justifyContent: 'center' },
-  phaseIconText: { fontSize: 22 },
-  phaseHeaderBody: { flex: 1 },
-  phaseName: { fontSize: FONT_SIZE.base, fontFamily: FONT_FAMILY.heading, color: COLORS.textPrimary, marginBottom: 2 },
-  phaseSubtitle: { fontSize: FONT_SIZE.xs, fontFamily: FONT_FAMILY.bodySemi, marginBottom: 6 },
-  phaseBar: { height: 4, backgroundColor: COLORS.border, borderRadius: 2, overflow: 'hidden' },
-  phaseBarFill: { height: 4, borderRadius: 2 },
-  chevron: { fontSize: 12, color: COLORS.textMuted },
-  modulesList: { paddingHorizontal: SPACING.md, paddingBottom: SPACING.md },
-  moduleRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: SPACING.sm, borderTopWidth: 1, borderTopColor: COLORS.border, gap: SPACING.sm },
-  moduleRowLocked: { opacity: 0.5 },
-  moduleIcon: { fontSize: 16, width: 22 },
-  moduleName: { flex: 1, fontSize: FONT_SIZE.base, fontFamily: FONT_FAMILY.body, color: COLORS.textPrimary },
-  moduleNameDone: { color: COLORS.textMuted, textDecorationLine: 'line-through' },
-  moduleNameLocked: { color: COLORS.textMuted },
-  startBtn: { borderRadius: RADIUS.md, overflow: 'hidden' },
-  startBtnInner: { paddingHorizontal: 12, paddingVertical: 5 },
-  startBtnText: { fontSize: FONT_SIZE.xs, fontFamily: FONT_FAMILY.bodySemi, color: '#fff' },
-  doneChip: { backgroundColor: 'rgba(16,185,129,0.15)', borderRadius: RADIUS.full, paddingHorizontal: 8, paddingVertical: 3 },
-  doneChipText: { fontSize: FONT_SIZE.xs, fontFamily: FONT_FAMILY.bodySemi, color: COLORS.success },
+  phaseIconText: { fontFamily: FONT_FAMILY.bodySemi, fontSize: FONT_SIZE.base },
+  phaseName: { fontFamily: FONT_FAMILY.bodySemi, fontSize: FONT_SIZE.base, color: COLORS.textPrimary, marginBottom: 2 },
+  phaseMeta: { fontFamily: FONT_FAMILY.body, fontSize: FONT_SIZE.xs, marginBottom: 8 },
+  phaseTrack: { height: 4, backgroundColor: COLORS.border, borderRadius: 2, overflow: 'hidden' },
+  phaseTrackFill: { height: 4, borderRadius: 2 },
+  chevron: { color: COLORS.textMuted, fontSize: 11 },
+  moduleWrap: { borderTopWidth: 1, borderTopColor: COLORS.border },
+  moduleCard: { padding: SPACING.md, gap: 6 },
+  moduleCardLocked: { opacity: 0.55 },
+  moduleTop: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  moduleStatus: { borderRadius: RADIUS.full, paddingHorizontal: 8, paddingVertical: 3 },
+  statusDone: { backgroundColor: COLORS.success + '22' },
+  statusLocked: { backgroundColor: COLORS.warning + '22' },
+  statusReady: { backgroundColor: COLORS.primary + '22' },
+  moduleStatusText: { fontFamily: FONT_FAMILY.bodySemi, fontSize: 10, letterSpacing: 0.8, color: COLORS.textPrimary },
+  moduleLanguage: { fontFamily: FONT_FAMILY.bodySemi, fontSize: 10, letterSpacing: 1, color: COLORS.textMuted },
+  moduleTitle: { fontFamily: FONT_FAMILY.bodySemi, fontSize: FONT_SIZE.base, color: COLORS.textPrimary },
+  moduleDesc: { fontFamily: FONT_FAMILY.body, fontSize: FONT_SIZE.sm, color: COLORS.textSecondary, lineHeight: 19 },
+  moduleOutcome: { fontFamily: FONT_FAMILY.body, fontSize: FONT_SIZE.xs, color: COLORS.textMuted, marginTop: 2 },
+  detailCard: { paddingHorizontal: SPACING.md, paddingBottom: SPACING.md },
+  detailTitle: { fontFamily: FONT_FAMILY.bodySemi, fontSize: FONT_SIZE.sm, color: COLORS.textPrimary, marginBottom: 8 },
+  codeBox: { borderWidth: 1, borderColor: COLORS.border, borderRadius: RADIUS.lg, padding: SPACING.md, backgroundColor: '#0a0a14' },
+  codeText: { fontFamily: FONT_FAMILY.mono, fontSize: FONT_SIZE.xs, color: '#b8ff9f', lineHeight: 18 },
+  detailActions: { flexDirection: 'row', gap: 10, marginTop: SPACING.md },
+  actionBtn: { flex: 1, borderRadius: RADIUS.md, paddingVertical: 12, alignItems: 'center', justifyContent: 'center' },
+  actionBtnGhost: { borderWidth: 1, borderColor: COLORS.border, backgroundColor: COLORS.bgCard },
+  actionBtnPrimary: { backgroundColor: COLORS.primary },
+  actionBtnMuted: { backgroundColor: COLORS.success + '22', borderWidth: 1, borderColor: COLORS.success + '44' },
+  actionBtnGhostText: { color: COLORS.textPrimary, fontFamily: FONT_FAMILY.bodySemi, fontSize: FONT_SIZE.xs },
+  actionBtnPrimaryText: { color: '#fff', fontFamily: FONT_FAMILY.bodySemi, fontSize: FONT_SIZE.xs },
+  actionBtnMutedText: { color: COLORS.success, fontFamily: FONT_FAMILY.bodySemi, fontSize: FONT_SIZE.xs },
 });

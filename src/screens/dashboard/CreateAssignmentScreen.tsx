@@ -73,13 +73,17 @@ export default function CreateAssignmentScreen({ navigation, route }: any) {
       title: form.title.trim(),
       description: form.description.trim() || null,
       instructions: form.instructions.trim() || null,
-      type: form.type,
-      max_score: parseInt(form.max_score) || 100,
-      passing_score: parseInt(form.passing_score) || 50,
+      assignment_type: form.type,
+      max_points: parseInt(form.max_score) || 100,
       due_date: dueDateTime,
-      allow_late_submissions: form.allow_late,
+      metadata: {
+        passing_score: parseInt(form.passing_score) || 50,
+        allow_late: form.allow_late,
+      },
       created_by: profile?.id,
-      status: 'published',
+      school_id: profile?.school_id ?? null,
+      school_name: profile?.school_name ?? null,
+      is_active: true,
     });
 
     if (error) {

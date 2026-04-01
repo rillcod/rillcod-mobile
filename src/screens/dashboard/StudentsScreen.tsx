@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback } from 'react';
+﻿import React, { useEffect, useState, useCallback } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity,
   TextInput, RefreshControl, ActivityIndicator, Platform,
@@ -11,6 +11,8 @@ import { supabase } from '../../lib/supabase';
 import { COLORS } from '../../constants/colors';
 import { FONT_FAMILY, FONT_SIZE, LETTER_SPACING } from '../../constants/typography';
 import { SPACING, RADIUS } from '../../constants/spacing';
+import { Alert } from 'react-native';
+import { AdminCollectionHeader } from '../../components/ui/AdminCollectionHeader';
 
 interface Student {
   id: string;
@@ -22,17 +24,9 @@ interface Student {
   section_class: string | null;
 }
 
-const STATUS_COLORS: Record<string, string> = {
-  true: COLORS.success,
-  false: COLORS.error,
-};
-
 function Avatar({ name, color }: { name: string; color: string }) {
   return (
-    <LinearGradient
-      colors={[color, color + '80']}
-      style={styles.avatar}
-    >
+    <LinearGradient colors={[color, color + '80']} style={styles.avatar}>
       <Text style={styles.avatarText}>{(name || '?')[0].toUpperCase()}</Text>
     </LinearGradient>
   );
@@ -69,7 +63,7 @@ export default function StudentsScreen({ navigation }: any) {
       setTotal(count ?? data.length);
     }
     setLoading(false);
-  }, [profile]);
+  }, [profile, isAdmin]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -78,7 +72,7 @@ export default function StudentsScreen({ navigation }: any) {
       setFiltered(students);
     } else {
       const q = search.toLowerCase();
-      setFiltered(students.filter(s =>
+      setFiltered(students.filter((s) =>
         s.full_name.toLowerCase().includes(q) ||
         s.email.toLowerCase().includes(q) ||
         (s.school_name ?? '').toLowerCase().includes(q)
@@ -92,51 +86,62 @@ export default function StudentsScreen({ navigation }: any) {
     setRefreshing(false);
   };
 
+  const handleDelete = (studentId: string, name: string) => {
+    Alert.alert(
+      'Delete Student',
+      `Permanently remove ${name}?`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              const { error } = await supabase.from('portal_users').delete().eq('id', studentId);
+              if (error) throw error;
+              setStudents((prev) => prev.filter((s) => s.id !== studentId));
+              Alert.alert('Deleted', 'Student removed successfully.');
+            } catch (err: any) {
+              Alert.alert('Error', err.message);
+            }
+          },
+        },
+      ]
+    );
+  };
+
   if (loading) {
     return (
       <View style={styles.loadWrap}>
         <ActivityIndicator color={COLORS.admin} size="large" />
-        <Text style={styles.loadText}>Loading students…</Text>
+        <Text style={styles.loadText}>Loading students...</Text>
       </View>
     );
   }
 
   return (
     <SafeAreaView style={styles.safe}>
-      {/* Header */}
-      <View style={styles.header}>
-        <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}>
-          <Text style={styles.backArrow}>←</Text>
-        </TouchableOpacity>
-        <View style={{ flex: 1 }}>
-          <Text style={styles.title}>Students</Text>
-          <Text style={styles.subtitle}>{total} registered</Text>
-        </View>
-        {canAdd && (
-          <View style={{ flexDirection: 'row', gap: 6 }}>
-            <TouchableOpacity onPress={() => navigation.navigate('BulkRegister')} style={[styles.addBtn, { backgroundColor: COLORS.bgCard, borderWidth: 1, borderColor: COLORS.border }]}>
-              <Text style={[styles.addBtnText, { color: COLORS.textSecondary }]}>📋 Bulk</Text>
-            </TouchableOpacity>
-            <TouchableOpacity onPress={() => navigation.navigate('AddStudent')} style={styles.addBtn}>
-              <Text style={styles.addBtnText}>+ Add</Text>
-            </TouchableOpacity>
-          </View>
-        )}
-      </View>
+      <AdminCollectionHeader
+        title="Students"
+        subtitle={`${total} registered learners`}
+        onBack={() => navigation.goBack()}
+        secondaryAction={canAdd ? { label: 'Bulk', onPress: () => navigation.navigate('BulkRegister') } : undefined}
+        primaryAction={canAdd ? { label: 'Add', onPress: () => navigation.navigate('AddStudent') } : undefined}
+        colors={COLORS}
+      />
 
-      {/* Search */}
       <View style={styles.searchWrap}>
-        <Text style={styles.searchIcon}>🔍</Text>
+        <Text style={styles.searchLabel}>Find</Text>
         <TextInput
           style={styles.searchInput}
-          placeholder="Search by name, email or school…"
+          placeholder="Search by name, email, or school"
           placeholderTextColor={COLORS.textMuted}
           value={search}
           onChangeText={setSearch}
         />
         {!!search && (
           <TouchableOpacity onPress={() => setSearch('')}>
-            <Text style={styles.clearBtn}>✕</Text>
+            <Text style={styles.clearBtn}>Clear</Text>
           </TouchableOpacity>
         )}
       </View>
@@ -148,7 +153,7 @@ export default function StudentsScreen({ navigation }: any) {
       >
         {filtered.length === 0 ? (
           <View style={styles.emptyWrap}>
-            <Text style={styles.emptyEmoji}>👥</Text>
+            <Text style={styles.emptyCode}>ST</Text>
             <Text style={styles.emptyText}>{search ? 'No students match your search.' : 'No students found.'}</Text>
           </View>
         ) : (
@@ -159,29 +164,31 @@ export default function StudentsScreen({ navigation }: any) {
               animate={{ opacity: 1, translateX: 0 }}
               transition={{ type: 'spring', delay: i * 40 }}
             >
-              <TouchableOpacity style={styles.card} activeOpacity={0.8} onPress={() => navigation.navigate('StudentDetail', { studentId: s.id })}>
-                <LinearGradient
-                  colors={[COLORS.admin + '08', 'transparent']}
-                  style={StyleSheet.absoluteFill}
-                />
+              <TouchableOpacity style={styles.card} activeOpacity={0.82} onPress={() => navigation.navigate('StudentDetail', { studentId: s.id })}>
+                <LinearGradient colors={[COLORS.admin + '08', 'transparent']} style={StyleSheet.absoluteFill} />
                 <Avatar name={s.full_name} color={COLORS.admin} />
                 <View style={styles.cardContent}>
                   <Text style={styles.cardName} numberOfLines={1}>{s.full_name}</Text>
                   <Text style={styles.cardEmail} numberOfLines={1}>{s.email}</Text>
                   <View style={styles.cardMeta}>
                     {s.school_name ? (
-                      <View style={styles.metaChip}>
-                        <Text style={styles.metaChipText}>🏫 {s.school_name}</Text>
-                      </View>
+                      <View style={styles.metaChip}><Text style={styles.metaChipText}>{s.school_name}</Text></View>
                     ) : null}
                     {s.section_class ? (
-                      <View style={styles.metaChip}>
-                        <Text style={styles.metaChipText}>📚 {s.section_class}</Text>
-                      </View>
+                      <View style={styles.metaChip}><Text style={styles.metaChipText}>{s.section_class}</Text></View>
                     ) : null}
                   </View>
                 </View>
-                <View style={[styles.statusDot, { backgroundColor: s.is_active ? COLORS.success : COLORS.error }]} />
+                <View style={styles.sideRail}>
+                  <View style={[styles.statusPill, { backgroundColor: s.is_active ? COLORS.success + '20' : COLORS.error + '20' }]}>
+                    <Text style={[styles.statusPillText, { color: s.is_active ? COLORS.success : COLORS.error }]}>{s.is_active ? 'LIVE' : 'OFF'}</Text>
+                  </View>
+                  {isAdmin ? (
+                    <TouchableOpacity onPress={() => handleDelete(s.id, s.full_name)} style={styles.deleteBtn}>
+                      <Text style={styles.deleteBtnText}>DEL</Text>
+                    </TouchableOpacity>
+                  ) : null}
+                </View>
               </TouchableOpacity>
             </MotiView>
           ))
@@ -196,29 +203,21 @@ const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: COLORS.bg },
   loadWrap: { flex: 1, backgroundColor: COLORS.bg, alignItems: 'center', justifyContent: 'center', gap: 12 },
   loadText: { fontFamily: FONT_FAMILY.body, fontSize: FONT_SIZE.sm, color: COLORS.textMuted },
-
-  header: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: SPACING.xl, paddingTop: SPACING.md, paddingBottom: SPACING.sm, gap: SPACING.md },
-  backBtn: { width: 36, height: 36, borderRadius: RADIUS.md, borderWidth: 1, borderColor: COLORS.border, alignItems: 'center', justifyContent: 'center' },
-  backArrow: { fontSize: 18, color: COLORS.textPrimary },
-  title: { fontFamily: FONT_FAMILY.display, fontSize: FONT_SIZE['2xl'], color: COLORS.textPrimary },
-  subtitle: { fontFamily: FONT_FAMILY.body, fontSize: FONT_SIZE.xs, color: COLORS.textMuted, marginTop: 2 },
-
   searchWrap: {
     flexDirection: 'row', alignItems: 'center', gap: SPACING.sm,
     marginHorizontal: SPACING.xl, marginBottom: SPACING.md,
     backgroundColor: COLORS.bgCard, borderWidth: 1, borderColor: COLORS.border,
     borderRadius: RADIUS.lg, paddingHorizontal: SPACING.md, paddingVertical: Platform.OS === 'ios' ? 10 : 6,
   },
-  searchIcon: { fontSize: 14 },
+  searchLabel: { fontFamily: FONT_FAMILY.bodyBold, fontSize: FONT_SIZE.xs, color: COLORS.textMuted, textTransform: 'uppercase', letterSpacing: LETTER_SPACING.wider },
   searchInput: { flex: 1, fontFamily: FONT_FAMILY.body, fontSize: FONT_SIZE.sm, color: COLORS.textPrimary },
-  clearBtn: { fontSize: 12, color: COLORS.textMuted, paddingHorizontal: 4 },
-
+  clearBtn: { fontFamily: FONT_FAMILY.bodySemi, fontSize: FONT_SIZE.xs, color: COLORS.primary, textTransform: 'uppercase' },
   list: { paddingHorizontal: SPACING.xl },
-
   card: {
     flexDirection: 'row', alignItems: 'center', gap: SPACING.md,
     borderWidth: 1, borderColor: COLORS.border, borderRadius: RADIUS.lg,
     padding: SPACING.md, marginBottom: SPACING.sm, overflow: 'hidden',
+    backgroundColor: COLORS.bgCard,
   },
   avatar: { width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center', flexShrink: 0 },
   avatarText: { fontFamily: FONT_FAMILY.display, fontSize: FONT_SIZE.md, color: COLORS.white100 },
@@ -228,11 +227,12 @@ const styles = StyleSheet.create({
   cardMeta: { flexDirection: 'row', flexWrap: 'wrap', gap: 4, marginTop: 4 },
   metaChip: { backgroundColor: COLORS.border, borderRadius: RADIUS.full, paddingHorizontal: 8, paddingVertical: 2 },
   metaChipText: { fontFamily: FONT_FAMILY.body, fontSize: 10, color: COLORS.textSecondary },
-  statusDot: { width: 9, height: 9, borderRadius: 5, flexShrink: 0 },
-  addBtn: { paddingHorizontal: 14, paddingVertical: 7, borderRadius: RADIUS.full, backgroundColor: COLORS.admin, alignItems: 'center', justifyContent: 'center' },
-  addBtnText: { fontFamily: FONT_FAMILY.bodySemi, fontSize: FONT_SIZE.xs, color: COLORS.white100 },
-
+  sideRail: { alignItems: 'flex-end', gap: 8 },
+  statusPill: { paddingHorizontal: 8, paddingVertical: 4, borderRadius: RADIUS.full },
+  statusPillText: { fontFamily: FONT_FAMILY.bodyBold, fontSize: 9, letterSpacing: LETTER_SPACING.wide },
+  deleteBtn: { paddingHorizontal: 8, paddingVertical: 6, borderRadius: RADIUS.sm, backgroundColor: COLORS.error + '10' },
+  deleteBtnText: { fontFamily: FONT_FAMILY.bodyBold, fontSize: 9, color: COLORS.error, letterSpacing: LETTER_SPACING.wide },
   emptyWrap: { alignItems: 'center', paddingVertical: 60, gap: 12 },
-  emptyEmoji: { fontSize: 40 },
+  emptyCode: { fontFamily: FONT_FAMILY.display, fontSize: FONT_SIZE.xl, color: COLORS.textMuted },
   emptyText: { fontFamily: FONT_FAMILY.body, fontSize: FONT_SIZE.sm, color: COLORS.textMuted },
 });

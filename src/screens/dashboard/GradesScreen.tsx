@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback } from 'react';
+﻿import React, { useEffect, useState, useCallback, useMemo } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity,
   RefreshControl, ActivityIndicator,
@@ -13,19 +13,31 @@ import { SPACING, RADIUS } from '../../constants/spacing';
 
 interface Report {
   id: string;
-  course_name: string;
-  report_term: string;
-  report_date: string;
+  course_name: string | null;
+  report_term: string | null;
+  report_date: string | null;
   theory_score: number | null;
   practical_score: number | null;
   attendance_score: number | null;
   overall_score: number | null;
   overall_grade: string | null;
-  is_published: boolean;
+  is_published: boolean | null;
   instructor_name: string | null;
   learning_milestones: string[] | null;
   key_strengths: string | null;
   areas_for_growth: string | null;
+}
+
+interface SubmissionSummary {
+  id: string;
+  status: string | null;
+  grade: number | null;
+}
+
+interface CbtSummary {
+  id: string;
+  status: string | null;
+  score: number | null;
 }
 
 function gradeColor(grade: string | null): string {
@@ -36,55 +48,84 @@ function gradeColor(grade: string | null): string {
   return COLORS.error;
 }
 
-function scoreBar(score: number | null, max = 100): string {
-  if (score == null) return '—';
-  const pct = Math.round((score / max) * 100);
-  const filled = Math.round(pct / 10);
-  return '█'.repeat(filled) + '░'.repeat(10 - filled) + ` ${pct}%`;
-}
-
 export default function GradesScreen({ navigation }: any) {
   const { profile } = useAuth();
   const [reports, setReports] = useState<Report[]>([]);
+  const [submissions, setSubmissions] = useState<SubmissionSummary[]>([]);
+  const [cbtSessions, setCbtSessions] = useState<CbtSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [expanded, setExpanded] = useState<string | null>(null);
 
-  const load = useCallback(async () => {
-    if (!profile) return;
-    try {
-      // Find student record
-      const { data: student } = await supabase
-        .from('students')
-        .select('id')
-        .eq('user_id', profile.id)
-        .maybeSingle();
+  const isParent = profile?.role === 'parent';
 
-      if (!student) {
+  const load = useCallback(async () => {
+    if (!profile?.id) return;
+    try {
+      let targetIds: string[] = [];
+      if (isParent) {
+        const { data } = await supabase.rpc('get_parent_student_ids');
+        targetIds = (data ?? []).filter(Boolean);
+      } else {
+        targetIds = [profile.id];
+      }
+
+      if (!targetIds.length) {
         setReports([]);
+        setSubmissions([]);
+        setCbtSessions([]);
         return;
       }
 
-      const { data } = await supabase
-        .from('student_progress_reports')
-        .select('id, course_name, report_term, report_date, theory_score, practical_score, attendance_score, overall_score, overall_grade, is_published, instructor_name, learning_milestones, key_strengths, areas_for_growth')
-        .eq('student_id', student.id)
-        .eq('is_published', true)
-        .order('report_date', { ascending: false });
+      const [reportRes, submissionRes, cbtRes] = await Promise.all([
+        supabase
+          .from('student_progress_reports')
+          .select('id, course_name, report_term, report_date, theory_score, practical_score, attendance_score, overall_score, overall_grade, is_published, instructor_name, learning_milestones, key_strengths, areas_for_growth')
+          .in('student_id', targetIds)
+          .eq('is_published', true)
+          .order('report_date', { ascending: false }),
+        supabase
+          .from('assignment_submissions')
+          .select('id, status, grade')
+          .in('portal_user_id', targetIds)
+          .limit(200),
+        supabase
+          .from('cbt_sessions')
+          .select('id, status, score')
+          .in('user_id', targetIds)
+          .limit(200),
+      ]);
 
-      setReports(data ?? []);
+      setReports((reportRes.data ?? []) as Report[]);
+      setSubmissions((submissionRes.data ?? []) as SubmissionSummary[]);
+      setCbtSessions((cbtRes.data ?? []) as CbtSummary[]);
     } finally {
       setLoading(false);
       setRefreshing(false);
     }
-  }, [profile]);
+  }, [profile?.id, isParent]);
 
   useEffect(() => { load(); }, [load]);
 
-  // Stats
-  const avgScore = reports.length > 0
-    ? Math.round(reports.reduce((s, r) => s + (r.overall_score ?? 0), 0) / reports.length)
-    : null;
+  const avgScore = useMemo(() => {
+    const valid = reports.filter((report) => report.overall_score != null);
+    if (!valid.length) return null;
+    return Math.round(valid.reduce((sum, report) => sum + (report.overall_score ?? 0), 0) / valid.length);
+  }, [reports]);
+
+  const assignmentAvg = useMemo(() => {
+    const valid = submissions.filter((submission) => submission.grade != null);
+    if (!valid.length) return null;
+    return Math.round(valid.reduce((sum, submission) => sum + (submission.grade ?? 0), 0) / valid.length);
+  }, [submissions]);
+
+  const cbtAvg = useMemo(() => {
+    const valid = cbtSessions.filter((session) => session.score != null);
+    if (!valid.length) return null;
+    return Math.round(valid.reduce((sum, session) => sum + (session.score ?? 0), 0) / valid.length);
+  }, [cbtSessions]);
+
+  const latestGrade = reports[0]?.overall_grade ?? null;
 
   return (
     <SafeAreaView style={styles.safe}>
@@ -99,38 +140,37 @@ export default function GradesScreen({ navigation }: any) {
           />
         }
       >
-        {/* Header */}
         <View style={styles.header}>
           <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}>
             <Text style={styles.backIcon}>←</Text>
           </TouchableOpacity>
-          <Text style={styles.title}>My Grades</Text>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.title}>{isParent ? "Children's Grades" : 'My Grades'}</Text>
+            <Text style={styles.subtitle}>Reports, assignment marks, and CBT performance</Text>
+          </View>
         </View>
 
-        {/* Summary */}
-        {!loading && avgScore != null && (
-          <MotiView
-            from={{ opacity: 0, translateY: 10 }}
-            animate={{ opacity: 1, translateY: 0 }}
-            style={styles.summaryCard}
-          >
-            <View style={styles.summaryItem}>
-              <Text style={styles.summaryValue}>{reports.length}</Text>
-              <Text style={styles.summaryLabel}>Reports</Text>
-            </View>
-            <View style={styles.divider} />
-            <View style={styles.summaryItem}>
-              <Text style={[styles.summaryValue, { color: COLORS.success }]}>{avgScore}%</Text>
-              <Text style={styles.summaryLabel}>Avg Score</Text>
-            </View>
-            <View style={styles.divider} />
-            <View style={styles.summaryItem}>
-              <Text style={[styles.summaryValue, { color: gradeColor(reports[0]?.overall_grade ?? null) }]}>
-                {reports[0]?.overall_grade ?? '—'}
-              </Text>
-              <Text style={styles.summaryLabel}>Latest Grade</Text>
-            </View>
-          </MotiView>
+        {!loading && (
+          <View style={styles.summaryGrid}>
+            {[
+              { label: 'Reports', value: reports.length, color: COLORS.primary },
+              { label: 'Report Avg', value: avgScore != null ? `${avgScore}%` : '—', color: COLORS.success },
+              { label: 'Assignments', value: assignmentAvg != null ? `${assignmentAvg}%` : '—', color: COLORS.info },
+              { label: 'CBT Avg', value: cbtAvg != null ? `${cbtAvg}%` : '—', color: COLORS.warning },
+            ].map((item) => (
+              <View key={item.label} style={styles.summaryCard}>
+                <Text style={[styles.summaryValue, { color: item.color }]}>{item.value}</Text>
+                <Text style={styles.summaryLabel}>{item.label}</Text>
+              </View>
+            ))}
+          </View>
+        )}
+
+        {!loading && latestGrade && (
+          <View style={styles.latestBanner}>
+            <Text style={styles.latestLabel}>Latest Grade</Text>
+            <Text style={[styles.latestValue, { color: gradeColor(latestGrade) }]}>{latestGrade}</Text>
+          </View>
         )}
 
         {loading ? (
@@ -140,46 +180,46 @@ export default function GradesScreen({ navigation }: any) {
         ) : reports.length === 0 ? (
           <View style={styles.empty}>
             <Text style={styles.emptyIcon}>📊</Text>
-            <Text style={styles.emptyTitle}>No reports yet</Text>
+            <Text style={styles.emptyTitle}>No published grades yet</Text>
             <Text style={styles.emptyText}>
-              Your teacher hasn't published any report cards yet.
+              Published report cards will appear here once your academic record is ready.
             </Text>
           </View>
         ) : (
           <View style={styles.reportsList}>
-            {reports.map((r, i) => {
-              const isOpen = expanded === r.id;
-              const gc = gradeColor(r.overall_grade);
+            {reports.map((report, index) => {
+              const isOpen = expanded === report.id;
+              const gc = gradeColor(report.overall_grade);
               return (
                 <MotiView
-                  key={r.id}
+                  key={report.id}
                   from={{ opacity: 0, translateY: 12 }}
                   animate={{ opacity: 1, translateY: 0 }}
-                  transition={{ delay: i * 50 }}
+                  transition={{ delay: index * 50 }}
                 >
                   <TouchableOpacity
                     style={[styles.reportCard, isOpen && { borderColor: COLORS.primary + '55' }]}
-                    onPress={() => setExpanded(isOpen ? null : r.id)}
+                    onPress={() => setExpanded(isOpen ? null : report.id)}
                     activeOpacity={0.85}
                   >
-                    {/* Card header */}
                     <View style={styles.reportHeader}>
                       <View style={{ flex: 1 }}>
-                        <Text style={styles.courseName}>{r.course_name}</Text>
-                        <Text style={styles.termText}>{r.report_term} · {new Date(r.report_date).toLocaleDateString('en-GB', { month: 'short', year: 'numeric' })}</Text>
+                        <Text style={styles.courseName}>{report.course_name ?? 'Progress Report'}</Text>
+                        <Text style={styles.termText}>
+                          {(report.report_term ?? 'Report') + (report.report_date ? ` · ${new Date(report.report_date).toLocaleDateString('en-GB', { month: 'short', year: 'numeric' })}` : '')}
+                        </Text>
                       </View>
                       <View style={{ alignItems: 'center', gap: 4 }}>
-                        <Text style={[styles.grade, { color: gc }]}>{r.overall_grade ?? '—'}</Text>
-                        <Text style={[styles.scoreText, { color: gc }]}>{r.overall_score ?? 0}%</Text>
+                        <Text style={[styles.grade, { color: gc }]}>{report.overall_grade ?? '—'}</Text>
+                        <Text style={[styles.scoreText, { color: gc }]}>{report.overall_score ?? 0}%</Text>
                       </View>
                     </View>
 
-                    {/* Score bars */}
                     <View style={styles.scoreBars}>
                       {[
-                        { label: 'Theory', val: r.theory_score },
-                        { label: 'Practical', val: r.practical_score },
-                        { label: 'Attendance', val: r.attendance_score },
+                        { label: 'Theory', val: report.theory_score },
+                        { label: 'Practical', val: report.practical_score },
+                        { label: 'Attendance', val: report.attendance_score },
                       ].map(({ label, val }) => (
                         <View key={label} style={styles.scoreRow}>
                           <Text style={styles.scoreLabel}>{label}</Text>
@@ -188,7 +228,7 @@ export default function GradesScreen({ navigation }: any) {
                               style={[
                                 styles.barFill,
                                 {
-                                  width: `${val ?? 0}%` as any,
+                                  width: `${val ?? 0}%`,
                                   backgroundColor: (val ?? 0) >= 70 ? COLORS.success : (val ?? 0) >= 50 ? COLORS.warning : COLORS.error,
                                 },
                               ]}
@@ -199,36 +239,35 @@ export default function GradesScreen({ navigation }: any) {
                       ))}
                     </View>
 
-                    {/* Expanded details */}
                     {isOpen && (
                       <MotiView
                         from={{ opacity: 0, height: 0 }}
                         animate={{ opacity: 1, height: 'auto' as any }}
                         style={styles.expandedContent}
                       >
-                        {r.instructor_name && (
-                          <Text style={styles.instructor}>👨‍🏫 {r.instructor_name}</Text>
-                        )}
-                        {r.key_strengths && (
+                        {report.instructor_name ? (
+                          <Text style={styles.instructor}>Instructor: {report.instructor_name}</Text>
+                        ) : null}
+                        {report.key_strengths ? (
                           <View style={styles.infoBox}>
-                            <Text style={[styles.infoBoxLabel, { color: COLORS.success }]}>💪 Key Strengths</Text>
-                            <Text style={styles.infoBoxText}>{r.key_strengths}</Text>
+                            <Text style={[styles.infoBoxLabel, { color: COLORS.success }]}>Key Strengths</Text>
+                            <Text style={styles.infoBoxText}>{report.key_strengths}</Text>
                           </View>
-                        )}
-                        {r.areas_for_growth && (
+                        ) : null}
+                        {report.areas_for_growth ? (
                           <View style={styles.infoBox}>
-                            <Text style={[styles.infoBoxLabel, { color: COLORS.warning }]}>🌱 Areas for Growth</Text>
-                            <Text style={styles.infoBoxText}>{r.areas_for_growth}</Text>
+                            <Text style={[styles.infoBoxLabel, { color: COLORS.warning }]}>Areas for Growth</Text>
+                            <Text style={styles.infoBoxText}>{report.areas_for_growth}</Text>
                           </View>
-                        )}
-                        {r.learning_milestones && r.learning_milestones.length > 0 && (
+                        ) : null}
+                        {report.learning_milestones && report.learning_milestones.length > 0 ? (
                           <View style={styles.infoBox}>
-                            <Text style={[styles.infoBoxLabel, { color: COLORS.info }]}>🏆 Milestones</Text>
-                            {r.learning_milestones.map((m, mi) => (
-                              <Text key={mi} style={[styles.infoBoxText, { marginTop: 2 }]}>• {m}</Text>
+                            <Text style={[styles.infoBoxLabel, { color: COLORS.info }]}>Milestones</Text>
+                            {report.learning_milestones.map((milestone, milestoneIndex) => (
+                              <Text key={milestoneIndex} style={[styles.infoBoxText, { marginTop: 2 }]}>• {milestone}</Text>
                             ))}
                           </View>
-                        )}
+                        ) : null}
                       </MotiView>
                     )}
 
@@ -258,20 +297,32 @@ const styles = StyleSheet.create({
   backBtn: { padding: SPACING.xs },
   backIcon: { fontSize: 22, color: COLORS.textPrimary },
   title: { fontFamily: FONT_FAMILY.display, fontSize: FONT_SIZE['2xl'], color: COLORS.textPrimary },
+  subtitle: { fontFamily: FONT_FAMILY.body, fontSize: FONT_SIZE.xs, color: COLORS.textMuted, marginTop: 2 },
+  summaryGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: SPACING.sm, paddingHorizontal: SPACING.base, marginBottom: SPACING.md },
   summaryCard: {
-    flexDirection: 'row',
+    width: '48%',
+    backgroundColor: COLORS.bgCard,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    borderRadius: RADIUS.lg,
+    padding: SPACING.md,
+  },
+  summaryValue: { fontFamily: FONT_FAMILY.display, fontSize: FONT_SIZE.xl },
+  summaryLabel: { fontFamily: FONT_FAMILY.body, fontSize: FONT_SIZE.xs, color: COLORS.textMuted, marginTop: 4, textTransform: 'uppercase', letterSpacing: 0.8 },
+  latestBanner: {
     marginHorizontal: SPACING.base,
     marginBottom: SPACING.lg,
     backgroundColor: COLORS.bgCard,
     borderWidth: 1,
     borderColor: COLORS.border,
     borderRadius: RADIUS.lg,
-    padding: SPACING.lg,
+    padding: SPACING.md,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
   },
-  summaryItem: { flex: 1, alignItems: 'center', gap: 4 },
-  summaryValue: { fontFamily: FONT_FAMILY.display, fontSize: FONT_SIZE['2xl'], color: COLORS.textPrimary },
-  summaryLabel: { fontFamily: FONT_FAMILY.body, fontSize: FONT_SIZE.xs, color: COLORS.textMuted, textTransform: 'uppercase', letterSpacing: 1 },
-  divider: { width: 1, backgroundColor: COLORS.border, marginVertical: SPACING.xs },
+  latestLabel: { fontFamily: FONT_FAMILY.bodySemi, fontSize: FONT_SIZE.sm, color: COLORS.textMuted },
+  latestValue: { fontFamily: FONT_FAMILY.display, fontSize: FONT_SIZE['2xl'] },
   center: { paddingTop: 80, alignItems: 'center' },
   empty: { alignItems: 'center', paddingTop: 80, gap: SPACING.sm, paddingHorizontal: SPACING['2xl'] },
   emptyIcon: { fontSize: 48 },
@@ -299,12 +350,7 @@ const styles = StyleSheet.create({
   scoreNum: { fontFamily: FONT_FAMILY.bodyMed, fontSize: FONT_SIZE.xs, color: COLORS.textMuted, width: 26, textAlign: 'right' },
   expandedContent: { gap: SPACING.sm, overflow: 'hidden' },
   instructor: { fontFamily: FONT_FAMILY.body, fontSize: FONT_SIZE.sm, color: COLORS.textMuted },
-  infoBox: {
-    backgroundColor: COLORS.bg,
-    borderRadius: RADIUS.sm,
-    padding: SPACING.sm,
-    gap: 4,
-  },
+  infoBox: { backgroundColor: COLORS.bg, borderRadius: RADIUS.sm, padding: SPACING.sm, gap: 4 },
   infoBoxLabel: { fontFamily: FONT_FAMILY.bodySemi, fontSize: FONT_SIZE.xs, textTransform: 'uppercase', letterSpacing: 0.5 },
   infoBoxText: { fontFamily: FONT_FAMILY.body, fontSize: FONT_SIZE.sm, color: COLORS.textSecondary, lineHeight: FONT_SIZE.sm * 1.5 },
   expandHint: { fontFamily: FONT_FAMILY.body, fontSize: FONT_SIZE.xs, color: COLORS.textMuted, textAlign: 'center' },

@@ -17,6 +17,7 @@ interface StudentProfile {
   id: string; full_name: string; email: string; phone: string | null;
   school_name: string | null; section_class: string | null;
   date_of_birth: string | null; is_active: boolean; created_at: string;
+  parent_email?: string | null; parent_name?: string | null; grade_level?: string | null;
 }
 interface Report {
   id: string; course_name: string | null; report_term: string | null;
@@ -64,10 +65,13 @@ export default function StudentDetailScreen({ route, navigation }: any) {
   const load = useCallback(async () => {
     if (!studentId) return;
     try {
-      const [profileRes, subsRes, enrRes, reportsRes, attRes] = await Promise.all([
+      const [profileRes, academicRes, subsRes, enrRes, reportsRes, attRes] = await Promise.all([
         supabase.from('portal_users')
           .select('id, full_name, email, phone, school_name, section_class, date_of_birth, is_active, created_at')
           .eq('id', studentId).single(),
+        supabase.from('students')
+          .select('parent_email, parent_name, grade_level')
+          .eq('user_id', studentId).maybeSingle(),
         supabase.from('assignment_submissions')
           .select('id, status, grade, feedback, submitted_at, assignments(title, max_score, type)')
           .eq('portal_user_id', studentId)
@@ -83,12 +87,19 @@ export default function StudentDetailScreen({ route, navigation }: any) {
           .order('created_at', { ascending: false }).limit(60),
       ]);
 
-      if (profileRes.data) setStudent(profileRes.data as StudentProfile);
-      const subs = (subsRes.data ?? []) as Submission[];
+      if (profileRes.data) {
+        setStudent({
+          ...(profileRes.data as StudentProfile),
+          parent_email: academicRes.data?.parent_email,
+          parent_name: academicRes.data?.parent_name,
+          grade_level: academicRes.data?.grade_level,
+        });
+      }
+      const subs = (subsRes.data ?? []) as unknown as Submission[];
       setSubmissions(subs);
       const rpts = (reportsRes.data ?? []) as Report[];
       setReports(rpts);
-      const att = (attRes.data ?? []) as AttendanceRow[];
+      const att = (attRes.data ?? []) as unknown as AttendanceRow[];
       setAttendance(att);
 
       const presentCount = att.filter(a => a.status === 'present').length;
@@ -138,12 +149,15 @@ export default function StudentDetailScreen({ route, navigation }: any) {
         <MotiView from={{ opacity: 0, scale: 0.92 }} animate={{ opacity: 1, scale: 1 }} transition={{ type: 'spring' }}>
           <View style={s.heroCard}>
             <LinearGradient colors={[COLORS.admin + '12', 'transparent']} style={StyleSheet.absoluteFill} />
-            <LinearGradient colors={COLORS.gradPrimary} style={s.avatar}>
+            <LinearGradient colors={COLORS.gradPrimary as [string, string, ...string[]]} style={s.avatar}>
               <Text style={s.avatarInitial}>{student.full_name[0].toUpperCase()}</Text>
             </LinearGradient>
             <Text style={s.heroName}>{student.full_name}</Text>
             <Text style={s.heroEmail}>{student.email}</Text>
-            {student.school_name ? <Text style={s.schoolTag}>🏫 {student.school_name}</Text> : null}
+            <View style={{ flexDirection: 'row', gap: 8, marginTop: 4 }}>
+              {student.school_name ? <Text style={s.schoolTag}>🏫 {student.school_name}</Text> : null}
+              {student.grade_level ? <Text style={s.schoolTag}>📚 {student.grade_level}</Text> : null}
+            </View>
             <View style={[s.statusPill, { backgroundColor: student.is_active ? COLORS.success + '20' : COLORS.error + '20' }]}>
               <View style={[s.statusDot, { backgroundColor: student.is_active ? COLORS.success : COLORS.error }]} />
               <Text style={[s.statusText, { color: student.is_active ? COLORS.success : COLORS.error }]}>
@@ -201,6 +215,30 @@ export default function StudentDetailScreen({ route, navigation }: any) {
                 </View>
               ))}
             </View>
+            <View style={s.card}>
+              <LinearGradient colors={[COLORS.white05, 'transparent']} style={StyleSheet.absoluteFill} />
+              <Text style={s.cardTitle}>Parent / Guardian</Text>
+              {student.parent_email ? (
+                <>
+                  <View style={s.infoRow}>
+                    <Text style={s.infoEmoji}>👪</Text>
+                    <Text style={s.infoLabel}>Name</Text>
+                    <Text style={s.infoValue}>{student.parent_name || 'Linked'}</Text>
+                  </View>
+                  <View style={[s.infoRow, s.infoRowBorder]}>
+                    <Text style={s.infoEmoji}>📧</Text>
+                    <Text style={s.infoLabel}>Email</Text>
+                    <Text style={s.infoValue}>{student.parent_email}</Text>
+                  </View>
+                </>
+              ) : (
+                <View style={s.infoRow}>
+                  <Text style={s.infoEmoji}>⚠️</Text>
+                  <Text style={s.infoLabel}>No parent linked</Text>
+                </View>
+              )}
+            </View>
+
             <TouchableOpacity style={s.actionBtn} activeOpacity={0.8}
               onPress={() => navigation.navigate('StudentReport', { studentId, studentName: student.full_name })}>
               <LinearGradient colors={[COLORS.accent + '18', 'transparent']} style={StyleSheet.absoluteFill} />
@@ -363,8 +401,10 @@ const s = StyleSheet.create({
   emptyWrap: { flex: 1, alignItems: 'center', justifyContent: 'center' },
   emptyText: { fontFamily: FONT_FAMILY.body, fontSize: FONT_SIZE.sm, color: COLORS.textMuted },
 
-  heroCard: { borderWidth: 1, borderColor: COLORS.border, borderRadius: RADIUS.xl, padding: SPACING.xl,
-    alignItems: 'center', gap: SPACING.sm, marginBottom: SPACING.md, overflow: 'hidden' },
+  heroCard: {
+    borderWidth: 1, borderColor: COLORS.border, borderRadius: RADIUS.xl, padding: SPACING.xl,
+    alignItems: 'center', gap: SPACING.sm, marginBottom: SPACING.md, overflow: 'hidden'
+  },
   avatar: { width: 76, height: 76, borderRadius: 38, alignItems: 'center', justifyContent: 'center' },
   avatarInitial: { fontFamily: FONT_FAMILY.display, fontSize: FONT_SIZE['2xl'], color: COLORS.white100 },
   heroName: { fontFamily: FONT_FAMILY.display, fontSize: FONT_SIZE.xl, color: COLORS.textPrimary, textAlign: 'center' },
@@ -375,34 +415,44 @@ const s = StyleSheet.create({
   statusText: { fontFamily: FONT_FAMILY.bodySemi, fontSize: FONT_SIZE.xs },
 
   statsRow: { flexDirection: 'row', gap: SPACING.xs, marginBottom: SPACING.md },
-  statCard: { flex: 1, borderWidth: 1, borderColor: COLORS.border, borderRadius: RADIUS.lg,
-    paddingVertical: SPACING.sm, alignItems: 'center', gap: 3, overflow: 'hidden' },
+  statCard: {
+    flex: 1, borderWidth: 1, borderColor: COLORS.border, borderRadius: RADIUS.lg,
+    paddingVertical: SPACING.sm, alignItems: 'center', gap: 3, overflow: 'hidden'
+  },
   statValue: { fontFamily: FONT_FAMILY.display, fontSize: FONT_SIZE.lg },
   statLabel: { fontFamily: FONT_FAMILY.body, fontSize: 8, color: COLORS.textMuted, textTransform: 'uppercase', letterSpacing: 0.6 },
 
   tabBar: { flexDirection: 'row', gap: SPACING.xs, marginBottom: SPACING.md },
-  tabBtn: { flex: 1, alignItems: 'center', paddingVertical: SPACING.sm, borderWidth: 1,
-    borderColor: COLORS.border, borderRadius: RADIUS.md, gap: 2 },
+  tabBtn: {
+    flex: 1, alignItems: 'center', paddingVertical: SPACING.sm, borderWidth: 1,
+    borderColor: COLORS.border, borderRadius: RADIUS.md, gap: 2
+  },
   tabBtnActive: { borderColor: COLORS.admin, backgroundColor: COLORS.admin + '14' },
   tabEmoji: { fontSize: 15 },
   tabLabel: { fontFamily: FONT_FAMILY.body, fontSize: 8, color: COLORS.textMuted, textTransform: 'uppercase', letterSpacing: 0.4 },
   tabLabelActive: { color: COLORS.admin, fontFamily: FONT_FAMILY.bodySemi },
 
   card: { borderWidth: 1, borderColor: COLORS.border, borderRadius: RADIUS.xl, overflow: 'hidden', marginBottom: SPACING.md },
-  cardTitle: { fontFamily: FONT_FAMILY.bodySemi, fontSize: FONT_SIZE.xs, color: COLORS.textMuted,
-    textTransform: 'uppercase', letterSpacing: 1.2, padding: SPACING.md, paddingBottom: SPACING.xs },
+  cardTitle: {
+    fontFamily: FONT_FAMILY.bodySemi, fontSize: FONT_SIZE.xs, color: COLORS.textMuted,
+    textTransform: 'uppercase', letterSpacing: 1.2, padding: SPACING.md, paddingBottom: SPACING.xs
+  },
   infoRow: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: SPACING.md, paddingVertical: 11, gap: SPACING.sm },
   infoRowBorder: { borderTopWidth: 1, borderTopColor: COLORS.border },
   infoEmoji: { fontSize: 16, width: 24 },
   infoLabel: { fontFamily: FONT_FAMILY.body, fontSize: FONT_SIZE.sm, color: COLORS.textMuted, flex: 1 },
   infoValue: { fontFamily: FONT_FAMILY.bodySemi, fontSize: FONT_SIZE.sm, color: COLORS.textPrimary },
 
-  actionBtn: { paddingVertical: 13, borderRadius: RADIUS.lg, borderWidth: 1,
-    borderColor: COLORS.accent + '44', alignItems: 'center', overflow: 'hidden', marginBottom: SPACING.md },
+  actionBtn: {
+    paddingVertical: 13, borderRadius: RADIUS.lg, borderWidth: 1,
+    borderColor: COLORS.accent + '44', alignItems: 'center', overflow: 'hidden', marginBottom: SPACING.md
+  },
   actionBtnText: { fontFamily: FONT_FAMILY.bodySemi, fontSize: FONT_SIZE.sm, color: COLORS.accent },
 
-  reportCard: { borderWidth: 1, borderColor: COLORS.border, borderRadius: RADIUS.xl,
-    padding: SPACING.md, marginBottom: SPACING.sm, overflow: 'hidden', gap: SPACING.xs },
+  reportCard: {
+    borderWidth: 1, borderColor: COLORS.border, borderRadius: RADIUS.xl,
+    padding: SPACING.md, marginBottom: SPACING.sm, overflow: 'hidden', gap: SPACING.xs
+  },
   reportHeader: { flexDirection: 'row', alignItems: 'center', gap: SPACING.sm, marginBottom: 4 },
   reportCourse: { fontFamily: FONT_FAMILY.bodySemi, fontSize: FONT_SIZE.sm, color: COLORS.textPrimary },
   reportMeta: { fontFamily: FONT_FAMILY.body, fontSize: FONT_SIZE.xs, color: COLORS.textMuted },
