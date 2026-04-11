@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity,
-  ActivityIndicator, RefreshControl,
+  ActivityIndicator, RefreshControl, Alert,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -13,6 +13,9 @@ import { COLORS } from '../../constants/colors';
 import { FONT_FAMILY, FONT_SIZE } from '../../constants/typography';
 import { SPACING, RADIUS } from '../../constants/spacing';
 import { ROUTES } from '../../navigation/routes';
+import { callAI } from '../../lib/openrouter';
+import { generateAndShareReportPDF } from '../../lib/report-generator';
+import ReportCardPreview from '../../components/ui/ReportCardPreview';
 
 interface ProgressReport {
   id: string;
@@ -91,6 +94,10 @@ export default function StudentReportScreen({ navigation, route }: any) {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [expandedReport, setExpandedReport] = useState<string | null>(null);
+  const [previewReport, setPreviewReport] = useState<string | null>(null);
+  const [generatingPdf, setGeneratingPdf] = useState<string | null>(null);
+  const [generatingAI, setGeneratingAI] = useState<string | null>(null);
+  const [aiInsights, setAiInsights] = useState<Record<string, { strengths: string; growth: string }>>({});
 
   const canEdit = profile?.role === 'admin' || profile?.role === 'teacher' || profile?.role === 'school';
   const isParent = profile?.role === 'parent';
@@ -121,6 +128,57 @@ export default function StudentReportScreen({ navigation, route }: any) {
 
   const onRefresh = async () => { setRefreshing(true); await load(); setRefreshing(false); };
 
+  /** AI-generate key strengths + areas for growth based on scores */
+  const generateAIInsights = useCallback(async (r: ProgressReport) => {
+    if (generatingAI) return;
+    setGeneratingAI(r.id);
+    try {
+      const scores = `Examination: ${r.theory_score ?? 0}%, Evaluation: ${r.practical_score ?? 0}%, Assignment: ${r.attendance_score ?? 0}%, Participation: ${r.participation_score ?? 0}%, Overall: ${r.overall_score ?? 0}%`;
+      const reply = await callAI({
+        messages: [
+          {
+            role: 'system',
+            content: 'You are an expert school teacher writing brief, encouraging report card feedback for Nigerian students. Output ONLY valid JSON with two fields: "strengths" (2 sentences of specific praise) and "growth" (2 sentences of constructive guidance). No extra text.',
+          },
+          {
+            role: 'user',
+            content: `Student: ${studentName || 'Student'}. Course: ${r.course_name}. Term: ${r.report_term}. Scores — ${scores}. Write personalised teacher feedback.`,
+          },
+        ],
+        maxTokens: 300,
+        temperature: 0.7,
+        responseFormatJsonObject: true,
+      });
+      const parsed = JSON.parse(reply);
+      if (parsed.strengths && parsed.growth) {
+        setAiInsights(prev => ({ ...prev, [r.id]: { strengths: parsed.strengths, growth: parsed.growth } }));
+      }
+    } catch (e: any) {
+      Alert.alert('AI Insights', e.message || 'Could not generate insights. Please try again.');
+    } finally {
+      setGeneratingAI(null);
+    }
+  }, [generatingAI, studentName]);
+
+  /** Export a single report to PDF and share */
+  const exportReportPDF = useCallback(async (r: ProgressReport, isModern = false) => {
+    if (generatingPdf) return;
+    setGeneratingPdf(r.id);
+    try {
+      const insights = aiInsights[r.id];
+      await generateAndShareReportPDF({
+        ...r,
+        student_name: studentName || 'Student',
+        key_strengths:    insights?.strengths || r.key_strengths,
+        areas_for_growth: insights?.growth    || r.areas_for_growth,
+      }, null, isModern);
+    } catch (e: any) {
+      Alert.alert('PDF Export', e.message || 'Unable to generate PDF.');
+    } finally {
+      setGeneratingPdf(null);
+    }
+  }, [generatingPdf, studentName, aiInsights]);
+
   if (loading) {
     return (
       <View style={styles.loader}>
@@ -142,16 +200,6 @@ export default function StudentReportScreen({ navigation, route }: any) {
     : null;
 
   const latestReport = publishedReports[0] ?? null;
-  const latestOverall = latestReport?.overall_score ?? avgScore ?? 0;
-  const latestGradeTone = gradeColor(latestReport?.overall_grade ?? null);
-  const latestMetrics = latestReport
-    ? [
-        { label: 'Examination', weight: '40%', value: latestReport.theory_score ?? 0, color: COLORS.info },
-        { label: 'Evaluation', weight: '20%', value: latestReport.practical_score ?? 0, color: COLORS.accent },
-        { label: 'Assignment', weight: '20%', value: latestReport.attendance_score ?? 0, color: COLORS.success },
-        { label: 'Participation', weight: '20%', value: latestReport.participation_score ?? 0, color: COLORS.warning },
-      ]
-    : [];
 
   return (
     <SafeAreaView style={styles.safe}>
@@ -195,113 +243,18 @@ export default function StudentReportScreen({ navigation, route }: any) {
           </View>
         </MotiView>
 
+        {/* ── Live Report Card Preview (mirrors web ReportCard.tsx) ── */}
         {latestReport && (
-          <View style={styles.previewCard}>
-            <LinearGradient colors={[COLORS.accent + '18', COLORS.bgCard]} style={StyleSheet.absoluteFill} />
-            <View style={styles.previewCardHeader}>
-              <Text style={styles.previewCardTitle}>Report Card</Text>
-              <View style={[styles.previewCardBadge, { backgroundColor: latestGradeTone + '25' }]}>
-                <Text style={[styles.previewCardGrade, { color: latestGradeTone }]}>
-                  {(latestReport.overall_grade ?? 'Pending') + ' / ' + (latestReport.overall_score != null ? `${latestReport.overall_score}%` : '--')}
-                </Text>
-              </View>
-            </View>
-            <View style={styles.previewDivider} />
-            <Text style={styles.previewStudentName}>{studentName || 'Student Report Card'}</Text>
-            <Text style={styles.previewMeta}>{latestReport.course_name || 'Course not set'} / {latestReport.report_term}</Text>
-            {latestReport.report_period ? <Text style={styles.previewMeta}>{latestReport.report_period}</Text> : null}
-            {latestReport.school_name ? (
-              <Text style={styles.previewMeta}>
-                {latestReport.school_name}{latestReport.section_class ? ` / ${latestReport.section_class}` : ''}
-              </Text>
-            ) : null}
-            {latestReport.instructor_name ? <Text style={styles.previewMeta}>{latestReport.instructor_name}</Text> : null}
-            <View style={styles.previewDivider} />
-            {latestMetrics.map((metric) => (
-              <View key={metric.label} style={styles.previewScoreRow}>
-                <Text style={styles.previewScoreLabel}>{metric.label}</Text>
-                <View style={styles.previewScoreTrack}>
-                  <View style={[styles.previewScoreFill, { width: `${Math.min(metric.value, 100)}%`, backgroundColor: metric.color }]} />
-                </View>
-                <Text style={[styles.previewScoreVal, { color: metric.color }]}>{metric.value}%</Text>
-              </View>
-            ))}
-            {(latestReport.participation_grade || latestReport.projects_grade || latestReport.homework_grade || latestReport.proficiency_level) && (
-              <>
-                <View style={styles.previewDivider} />
-                <View style={styles.previewChipRow}>
-                  {latestReport.participation_grade ? <View style={styles.previewChip}><Text style={styles.previewChipText}>Participation / {latestReport.participation_grade}</Text></View> : null}
-                  {latestReport.projects_grade ? <View style={styles.previewChip}><Text style={styles.previewChipText}>Projects / {latestReport.projects_grade}</Text></View> : null}
-                  {latestReport.homework_grade ? <View style={styles.previewChip}><Text style={styles.previewChipText}>Homework / {latestReport.homework_grade}</Text></View> : null}
-                  {latestReport.proficiency_level ? <View style={[styles.previewChip, styles.previewChipAccent]}><Text style={[styles.previewChipText, styles.previewChipAccentText]}>Proficiency / {latestReport.proficiency_level}</Text></View> : null}
-                </View>
-              </>
-            )}
-          </View>
-        )}
-
-        {latestReport && (
-          <View style={styles.webParityGrid}>
-            <View style={styles.identityCard}>
-              <Text style={styles.webParityEyebrow}>Authorized Recipient</Text>
-              <Text style={styles.identityName}>{studentName || 'Student'}</Text>
-              <View style={styles.identityGrid}>
-                <View>
-                  <Text style={styles.identityLabel}>Class</Text>
-                  <Text style={styles.identityValue}>{latestReport.section_class || '--'}</Text>
-                </View>
-                <View>
-                  <Text style={styles.identityLabel}>School</Text>
-                  <Text style={styles.identityValue}>{latestReport.school_name || '--'}</Text>
-                </View>
-                <View>
-                  <Text style={styles.identityLabel}>Term</Text>
-                  <Text style={styles.identityValue}>{latestReport.report_term || '--'}</Text>
-                </View>
-                <View>
-                  <Text style={styles.identityLabel}>Status</Text>
-                  <Text style={[styles.identityValue, { color: COLORS.success }]}>CERTIFIED</Text>
-                </View>
-              </View>
-            </View>
-
-            <View style={styles.moduleCard}>
-              <Text style={styles.webParityEyebrow}>Operational Domain</Text>
-              <Text style={styles.identityName}>{latestReport.course_name || '--'}</Text>
-              <View style={styles.moduleBox}>
-                <Text style={styles.identityLabel}>Current Module</Text>
-                <Text style={styles.moduleValue}>{latestReport.current_module || latestReport.report_period || latestReport.course_name || '--'}</Text>
-              </View>
-              <View style={[styles.moduleBox, styles.moduleBoxAccent]}>
-                <Text style={[styles.identityLabel, { color: COLORS.accent }]}>Upcoming Module</Text>
-                <Text style={[styles.moduleValue, { color: COLORS.accent }]}>{latestReport.next_module || latestReport.course_duration || latestReport.proficiency_level || '--'}</Text>
-              </View>
-            </View>
-          </View>
-        )}
-
-        {latestReport && (
-          <View style={styles.matrixCard}>
-            <Text style={styles.matrixTitle}>Assessment Matrix</Text>
-            {latestMetrics.map((metric) => (
-              <View key={metric.label} style={styles.matrixRow}>
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.matrixLabel}>{metric.label} ({metric.weight})</Text>
-                  <View style={styles.matrixTrack}>
-                    <View style={[styles.matrixFill, { width: `${Math.min(metric.value, 100)}%`, backgroundColor: metric.color }]} />
-                  </View>
-                </View>
-                <Text style={[styles.matrixValue, { color: metric.color }]}>{metric.value}%</Text>
-              </View>
-            ))}
-            <View style={styles.matrixFooter}>
-              <View style={styles.matrixGradeBox}>
-                <Text style={styles.matrixGradeLabel}>Composite</Text>
-                <Text style={[styles.matrixGradeValue, { color: latestGradeTone }]}>{latestReport.overall_grade || '--'}</Text>
-                <Text style={styles.matrixGradePct}>{latestOverall}%</Text>
-              </View>
-            </View>
-          </View>
+          <ReportCardPreview
+            report={{
+              ...latestReport,
+              key_strengths:    aiInsights[latestReport.id]?.strengths || latestReport.key_strengths,
+              areas_for_growth: aiInsights[latestReport.id]?.growth    || latestReport.areas_for_growth,
+            }}
+            studentName={studentName}
+            onExportPDF={(isModern) => exportReportPDF(latestReport, isModern)}
+            exportingPdf={generatingPdf === latestReport.id}
+          />
         )}
 
         {/* Tabs */}
@@ -405,8 +358,47 @@ export default function StudentReportScreen({ navigation, route }: any) {
                                 {r.homework_grade && <View style={styles.ratingChip}><Text style={styles.ratingChipText}>Homework / {r.homework_grade}</Text></View>}
                               </View>
                             )}
-                            {r.key_strengths ? <View style={styles.notesBlock}><Text style={styles.notesLabel}>Key Strengths</Text><Text style={styles.notesText}>{r.key_strengths}</Text></View> : null}
-                            {r.areas_for_growth ? <View style={styles.notesBlock}><Text style={styles.notesLabel}>Areas for Growth</Text><Text style={styles.notesText}>{r.areas_for_growth}</Text></View> : null}
+                            {/* AI Insights (generated or from DB) */}
+                            {(r.key_strengths || aiInsights[r.id]?.strengths) ? (
+                              <View style={styles.notesBlock}>
+                                <Text style={styles.notesLabel}>Key Strengths</Text>
+                                <Text style={styles.notesText}>{aiInsights[r.id]?.strengths || r.key_strengths}</Text>
+                              </View>
+                            ) : null}
+                            {(r.areas_for_growth || aiInsights[r.id]?.growth) ? (
+                              <View style={styles.notesBlock}>
+                                <Text style={styles.notesLabel}>Areas for Growth</Text>
+                                <Text style={styles.notesText}>{aiInsights[r.id]?.growth || r.areas_for_growth}</Text>
+                              </View>
+                            ) : null}
+                            {/* AI Generate button — when insights are missing */}
+                            {!r.key_strengths && !r.areas_for_growth && !aiInsights[r.id] && (
+                              <TouchableOpacity
+                                style={styles.aiInsightsBtn}
+                                onPress={() => generateAIInsights(r)}
+                                disabled={generatingAI === r.id}
+                              >
+                                {generatingAI === r.id ? (
+                                  <ActivityIndicator size="small" color={COLORS.accent} />
+                                ) : (
+                                  <Text style={styles.aiInsightsBtnText}>✦ Generate AI Feedback</Text>
+                                )}
+                              </TouchableOpacity>
+                            )}
+                            {/* Regenerate button — when insights exist */}
+                            {(r.key_strengths || aiInsights[r.id]) && (
+                              <TouchableOpacity
+                                style={[styles.aiInsightsBtn, styles.aiInsightsBtnSm]}
+                                onPress={() => generateAIInsights(r)}
+                                disabled={generatingAI === r.id}
+                              >
+                                {generatingAI === r.id ? (
+                                  <ActivityIndicator size="small" color={COLORS.accent} />
+                                ) : (
+                                  <Text style={styles.aiInsightsBtnText}>✦ Regenerate AI Insights</Text>
+                                )}
+                              </TouchableOpacity>
+                            )}
                             {r.instructor_assessment ? <View style={styles.notesBlock}><Text style={styles.notesLabel}>Instructor Assessment</Text><Text style={styles.notesText}>{r.instructor_assessment}</Text></View> : null}
                             {(() => {
                               let miles: string[] = [];
@@ -426,6 +418,23 @@ export default function StudentReportScreen({ navigation, route }: any) {
                             {r.report_date ? (
                               <Text style={styles.reportDate}>{new Date(r.report_date).toLocaleDateString('en-GB')}</Text>
                             ) : null}
+                            {/* PDF Export row */}
+                            <View style={styles.pdfRow}>
+                              <TouchableOpacity
+                                style={[styles.pdfBtn, generatingPdf === r.id && { opacity: 0.6 }]}
+                                onPress={() => exportReportPDF(r, false)}
+                                disabled={!!generatingPdf}
+                              >
+                                {generatingPdf === r.id ? <ActivityIndicator size="small" color="#fff" /> : <Text style={styles.pdfBtnText}>📄 Export Standard PDF</Text>}
+                              </TouchableOpacity>
+                              <TouchableOpacity
+                                style={[styles.pdfBtnModern, generatingPdf === r.id && { opacity: 0.6 }]}
+                                onPress={() => exportReportPDF(r, true)}
+                                disabled={!!generatingPdf}
+                              >
+                                {generatingPdf === r.id ? <ActivityIndicator size="small" color={COLORS.accent} /> : <Text style={[styles.pdfBtnText, { color: COLORS.accent }]}>✦ Export Modern PDF</Text>}
+                              </TouchableOpacity>
+                            </View>
                             {canEdit && (
                               <TouchableOpacity
                                 style={styles.editReportBtn}
@@ -679,4 +688,15 @@ const styles = StyleSheet.create({
   editReportBtn: { marginTop: SPACING.sm, paddingVertical: 9, borderRadius: RADIUS.md, backgroundColor: COLORS.accent + '18', alignItems: 'center', borderWidth: 1, borderColor: COLORS.accent + '40' },
   editReportText: { fontFamily: FONT_FAMILY.bodySemi, fontSize: FONT_SIZE.sm, color: COLORS.accent },
   reportMeta2: { fontFamily: FONT_FAMILY.body, fontSize: FONT_SIZE.xs, color: COLORS.textSecondary },
+
+  // AI Insights button
+  aiInsightsBtn: { marginTop: SPACING.sm, paddingVertical: 10, borderRadius: RADIUS.md, backgroundColor: COLORS.accent + '14', alignItems: 'center', borderWidth: 1, borderColor: COLORS.accent + '35', flexDirection: 'row', justifyContent: 'center', gap: 6 },
+  aiInsightsBtnSm: { paddingVertical: 7 },
+  aiInsightsBtnText: { fontFamily: FONT_FAMILY.bodySemi, fontSize: 12, color: COLORS.accent, letterSpacing: 0.3 },
+
+  // PDF export row
+  pdfRow: { flexDirection: 'row', gap: 8, marginTop: SPACING.sm },
+  pdfBtn: { flex: 1, paddingVertical: 9, borderRadius: RADIUS.md, backgroundColor: COLORS.info, alignItems: 'center' },
+  pdfBtnModern: { flex: 1, paddingVertical: 9, borderRadius: RADIUS.md, backgroundColor: 'transparent', alignItems: 'center', borderWidth: 1, borderColor: COLORS.accent + '50' },
+  pdfBtnText: { fontFamily: FONT_FAMILY.bodySemi, fontSize: 11, color: '#fff', letterSpacing: 0.3 },
 });

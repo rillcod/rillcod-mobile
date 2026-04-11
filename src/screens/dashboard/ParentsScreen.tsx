@@ -33,7 +33,20 @@ interface Parent {
   created_at: string | null;
   child_count?: number;
   approved_children?: number;
+  pending_children?: number;
+  child_names_preview?: string[];
+  staff_notes?: string | null;
 }
+
+type SmartPreset =
+  | 'all'
+  | 'active'
+  | 'inactive'
+  | 'multi_child'
+  | 'single_child'
+  | 'pending_child'
+  | 'no_children'
+  | 'has_notes';
 
 interface ParentFormState {
   full_name: string;
@@ -41,6 +54,7 @@ interface ParentFormState {
   phone: string;
   password: string;
   is_active: boolean;
+  staff_notes: string;
 }
 
 const EMPTY_FORM: ParentFormState = {
@@ -49,6 +63,7 @@ const EMPTY_FORM: ParentFormState = {
   phone: '',
   password: '',
   is_active: true,
+  staff_notes: '',
 };
 
 function generatePassword() {
@@ -61,11 +76,13 @@ function ParentModal({
   parent,
   onClose,
   onSaved,
+  canEditStaffNotes,
 }: {
   visible: boolean;
   parent: Parent | null;
   onClose: () => void;
   onSaved: () => void;
+  canEditStaffNotes: boolean;
 }) {
   const [form, setForm] = useState<ParentFormState>(EMPTY_FORM);
   const [saving, setSaving] = useState(false);
@@ -78,6 +95,7 @@ function ParentModal({
         phone: parent.phone || '',
         password: '',
         is_active: parent.is_active,
+        staff_notes: parent.staff_notes ?? '',
       });
     } else {
       setForm({ ...EMPTY_FORM, password: generatePassword() });
@@ -107,6 +125,7 @@ function ParentModal({
           email: nextEmail,
           phone: nextPhone,
           is_active: form.is_active,
+          ...(canEditStaffNotes ? { staff_notes: form.staff_notes.trim() ? form.staff_notes.trim() : '' } : {}),
         });
 
         if (oldEmail !== nextEmail || oldName !== nextName || oldPhone !== nextPhone) {
@@ -125,6 +144,7 @@ function ParentModal({
           full_name: nextName,
           phone: nextPhone,
           is_active: form.is_active,
+          staff_notes: canEditStaffNotes && form.staff_notes.trim() ? form.staff_notes.trim() : undefined,
         });
 
         Alert.alert('Parent created', `Temporary password: ${password}`);
@@ -204,6 +224,24 @@ function ParentModal({
               <Switch value={form.is_active} onValueChange={(value) => setForm((current) => ({ ...current, is_active: value }))} />
             </View>
 
+            {canEditStaffNotes ? (
+              <>
+                <Text style={[modalStyles.label, { marginTop: SPACING.md }]}>Staff notes (internal)</Text>
+                <Text style={[modalStyles.hint, { marginTop: 4 }]}>
+                  Visible to admin and school staff. Use for call logs, custody context, or fee reminders.
+                </Text>
+                <TextInput
+                  style={[modalStyles.input, modalStyles.notesArea]}
+                  value={form.staff_notes}
+                  onChangeText={(value) => setForm((current) => ({ ...current, staff_notes: value }))}
+                  placeholder="Optional — saved on this parent profile"
+                  placeholderTextColor={COLORS.textMuted}
+                  multiline
+                  textAlignVertical="top"
+                />
+              </>
+            ) : null}
+
             <TouchableOpacity onPress={save} disabled={saving} style={[modalStyles.saveBtn, saving && { opacity: 0.6 }]}>
               <LinearGradient colors={[COLORS.gold, COLORS.primary]} style={modalStyles.saveGradient}>
                 {saving ? <ActivityIndicator color="#fff" size="small" /> : <Text style={modalStyles.saveText}>{parent ? 'Save Parent' : 'Create Parent'}</Text>}
@@ -216,31 +254,149 @@ function ParentModal({
   );
 }
 
+const PRESET_ORDER: SmartPreset[] = [
+  'all',
+  'active',
+  'inactive',
+  'multi_child',
+  'single_child',
+  'pending_child',
+  'no_children',
+  'has_notes',
+];
+
+const PRESET_LABEL: Record<SmartPreset, string> = {
+  all: 'All',
+  active: 'Active',
+  inactive: 'Inactive',
+  multi_child: '2+ kids',
+  single_child: '1 child',
+  pending_child: 'Pending reg',
+  no_children: 'No kids',
+  has_notes: 'Has note',
+};
+
 export default function ParentsScreen({ navigation }: any) {
   const { profile } = useAuth();
   const isAdmin = profile?.role === 'admin';
-  const canManage = profile?.role === 'admin' || profile?.role === 'teacher';
+  const isTeacher = profile?.role === 'teacher';
+  const canManage = profile?.role === 'admin' || profile?.role === 'teacher' || profile?.role === 'school';
+  const canToggleActive = canManage;
   const [parents, setParents] = useState<Parent[]>([]);
   const [search, setSearch] = useState('');
-  const [statusFilter, setStatusFilter] = useState<'all' | 'active' | 'inactive'>('all');
+  const [smartPreset, setSmartPreset] = useState<SmartPreset>('all');
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [modalVisible, setModalVisible] = useState(false);
   const [editingParent, setEditingParent] = useState<Parent | null>(null);
+  const [schoolOptions, setSchoolOptions] = useState<{ id: string; name: string }[]>([]);
+  const [filterSchoolId, setFilterSchoolId] = useState<string | null>(null);
+  const [classOptions, setClassOptions] = useState<string[]>([]);
+  const [filterClass, setFilterClass] = useState<string | null>(null);
+
+  const showSchoolFilter = isAdmin || (isTeacher && schoolOptions.length > 1);
+
+  const schoolIdForClassList = useMemo(() => {
+    if (profile?.role === 'school') return profile.school_id ?? null;
+    if (isAdmin) return filterSchoolId;
+    if (isTeacher) {
+      if (filterSchoolId) return filterSchoolId;
+      if (schoolOptions.length === 1) return schoolOptions[0].id;
+      return null;
+    }
+    return null;
+  }, [profile?.role, profile?.school_id, isAdmin, isTeacher, filterSchoolId, schoolOptions]);
+
+  const hubSubtitle = useMemo(() => {
+    if (profile?.role === 'school') return `Linked learners at ${profile.school_name || 'your school'}`;
+    if (profile?.role === 'teacher') return 'Parents at your partner schools (by learner registration)';
+    return 'Portal accounts with registration links (several children per parent supported)';
+  }, [profile?.role, profile?.school_name]);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      if (!profile?.id || !profile.role || profile.role === 'student' || profile.role === 'parent') {
+        setSchoolOptions([]);
+        return;
+      }
+      try {
+        const rows = await parentService.listSchoolsForParentDirectoryFilter({
+          role: profile.role as 'admin' | 'teacher' | 'school',
+          userId: profile.id,
+          schoolId: profile.school_id,
+        });
+        if (!cancelled) setSchoolOptions(rows);
+      } catch {
+        if (!cancelled) setSchoolOptions([]);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [profile?.id, profile?.role, profile?.school_id]);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      if (!schoolIdForClassList) {
+        setClassOptions([]);
+        return;
+      }
+      try {
+        const rows = await parentService.listDistinctCurrentClassesForSchool(schoolIdForClassList);
+        if (!cancelled) setClassOptions(rows);
+      } catch {
+        if (!cancelled) setClassOptions([]);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [schoolIdForClassList]);
 
   const load = useCallback(async () => {
     try {
-      const rows = await parentService.listParentsDirectoryWithChildStats(200);
+      if (!profile?.id || !profile.role || profile.role === 'student' || profile.role === 'parent') {
+        setParents([]);
+        return;
+      }
+      const role = profile.role as 'admin' | 'teacher' | 'school';
+      let classArg = filterClass;
+      if (isAdmin && !filterSchoolId) classArg = null;
+      if (isTeacher && schoolOptions.length > 1 && !filterSchoolId) classArg = null;
+
+      const rows = await parentService.listParentsDirectoryForStaff({
+        role,
+        userId: profile.id,
+        schoolId: profile.school_id,
+        limit: 320,
+        filterSchoolId: isAdmin || isTeacher ? filterSchoolId : undefined,
+        filterCurrentClass: classArg,
+      });
       setParents(rows as Parent[]);
     } finally {
       setLoading(false);
       setRefreshing(false);
     }
-  }, []);
+  }, [
+    profile?.id,
+    profile?.role,
+    profile?.school_id,
+    filterSchoolId,
+    filterClass,
+    isAdmin,
+    isTeacher,
+    schoolOptions.length,
+  ]);
 
   useEffect(() => {
     load();
   }, [load]);
+
+  useEffect(() => {
+    if (isAdmin && !filterSchoolId && filterClass) setFilterClass(null);
+  }, [isAdmin, filterSchoolId, filterClass]);
 
   const filtered = useMemo(() => {
     const term = search.trim().toLowerCase();
@@ -249,13 +405,40 @@ export default function ParentsScreen({ navigation }: any) {
         !term ||
         parent.full_name.toLowerCase().includes(term) ||
         parent.email.toLowerCase().includes(term) ||
-        (parent.phone || '').toLowerCase().includes(term);
-      const matchesStatus =
-        statusFilter === 'all' ||
-        (statusFilter === 'active' ? parent.is_active : !parent.is_active);
-      return matchesSearch && matchesStatus;
+        (parent.phone || '').toLowerCase().includes(term) ||
+        (parent.child_names_preview ?? []).some((n) => n.toLowerCase().includes(term)) ||
+        (parent.staff_notes ?? '').toLowerCase().includes(term);
+      let presetOk = true;
+      switch (smartPreset) {
+        case 'all':
+          break;
+        case 'active':
+          presetOk = !!parent.is_active;
+          break;
+        case 'inactive':
+          presetOk = !parent.is_active;
+          break;
+        case 'multi_child':
+          presetOk = (parent.child_count ?? 0) >= 2;
+          break;
+        case 'single_child':
+          presetOk = (parent.child_count ?? 0) === 1;
+          break;
+        case 'pending_child':
+          presetOk = (parent.pending_children ?? 0) > 0;
+          break;
+        case 'no_children':
+          presetOk = (parent.child_count ?? 0) === 0;
+          break;
+        case 'has_notes':
+          presetOk = !!(parent.staff_notes && parent.staff_notes.trim());
+          break;
+        default:
+          break;
+      }
+      return matchesSearch && presetOk;
     });
-  }, [parents, search, statusFilter]);
+  }, [parents, search, smartPreset]);
 
   const stats = useMemo(
     () => ({
@@ -263,6 +446,8 @@ export default function ParentsScreen({ navigation }: any) {
       active: parents.filter((parent) => parent.is_active).length,
       inactive: parents.filter((parent) => !parent.is_active).length,
       linkedChildren: parents.reduce((sum, parent) => sum + (parent.child_count ?? 0), 0),
+      multiChild: parents.filter((parent) => (parent.child_count ?? 0) >= 2).length,
+      withNotes: parents.filter((parent) => !!(parent.staff_notes && parent.staff_notes.trim())).length,
     }),
     [parents]
   );
@@ -315,7 +500,7 @@ export default function ParentsScreen({ navigation }: any) {
     <SafeAreaView style={styles.safe}>
       <AdminCollectionHeader
         title="Parents"
-        subtitle={`${parents.length} parent accounts`}
+        subtitle={`${parents.length} accounts · ${hubSubtitle}`}
         onBack={() => navigation.goBack()}
         primaryAction={canManage ? { label: 'Add', onPress: () => { setEditingParent(null); setModalVisible(true); } } : undefined}
         colors={COLORS}
@@ -327,6 +512,8 @@ export default function ParentsScreen({ navigation }: any) {
           { label: 'Active', value: stats.active, color: COLORS.success },
           { label: 'Inactive', value: stats.inactive, color: COLORS.error },
           { label: 'Children', value: stats.linkedChildren, color: COLORS.info },
+          { label: '2+ kids', value: stats.multiChild, color: COLORS.primary },
+          { label: 'Notes', value: stats.withNotes, color: COLORS.accent },
         ].map((item) => (
           <View key={item.label} style={styles.summaryCard}>
             <Text style={[styles.summaryValue, { color: item.color }]}>{item.value}</Text>
@@ -334,6 +521,61 @@ export default function ParentsScreen({ navigation }: any) {
           </View>
         ))}
       </View>
+
+      {showSchoolFilter ? (
+        <View style={styles.scopeBlock}>
+          <Text style={styles.scopeLabel}>School</Text>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.scopePills}>
+            <TouchableOpacity
+              onPress={() => {
+                setFilterSchoolId(null);
+                setFilterClass(null);
+              }}
+              style={[styles.scopePill, !filterSchoolId && styles.scopePillActive]}
+            >
+              <Text style={[styles.scopePillText, !filterSchoolId && styles.scopePillTextActive]}>All</Text>
+            </TouchableOpacity>
+            {schoolOptions.map((s) => {
+              const on = filterSchoolId === s.id;
+              return (
+                <TouchableOpacity
+                  key={s.id}
+                  onPress={() => {
+                    setFilterSchoolId(s.id);
+                    setFilterClass(null);
+                  }}
+                  style={[styles.scopePill, on && styles.scopePillActive]}
+                >
+                  <Text style={[styles.scopePillText, on && styles.scopePillTextActive]} numberOfLines={1}>
+                    {s.name}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
+          </ScrollView>
+        </View>
+      ) : null}
+
+      {schoolIdForClassList ? (
+        <View style={styles.scopeBlock}>
+          <Text style={styles.scopeLabel}>Class</Text>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.scopePills}>
+            <TouchableOpacity onPress={() => setFilterClass(null)} style={[styles.scopePill, !filterClass && styles.scopePillActive]}>
+              <Text style={[styles.scopePillText, !filterClass && styles.scopePillTextActive]}>All classes</Text>
+            </TouchableOpacity>
+            {classOptions.map((c) => {
+              const on = filterClass === c;
+              return (
+                <TouchableOpacity key={c} onPress={() => setFilterClass(c)} style={[styles.scopePill, on && styles.scopePillActive]}>
+                  <Text style={[styles.scopePillText, on && styles.scopePillTextActive]} numberOfLines={1}>
+                    {c}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
+          </ScrollView>
+        </View>
+      ) : null}
 
       <View style={styles.searchWrap}>
         <Text style={styles.searchIcon}>🔍</Text>
@@ -352,11 +594,11 @@ export default function ParentsScreen({ navigation }: any) {
       </View>
 
       <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filters}>
-        {(['all', 'active', 'inactive'] as const).map((filter) => {
-          const selected = statusFilter === filter;
+        {PRESET_ORDER.map((preset) => {
+          const selected = smartPreset === preset;
           return (
-            <TouchableOpacity key={filter} onPress={() => setStatusFilter(filter)} style={[styles.filterPill, selected && styles.filterPillActive]}>
-              <Text style={[styles.filterText, selected && styles.filterTextActive]}>{filter.toUpperCase()}</Text>
+            <TouchableOpacity key={preset} onPress={() => setSmartPreset(preset)} style={[styles.filterPill, selected && styles.filterPillActive]}>
+              <Text style={[styles.filterText, selected && styles.filterTextActive]}>{PRESET_LABEL[preset]}</Text>
             </TouchableOpacity>
           );
         })}
@@ -387,14 +629,31 @@ export default function ParentsScreen({ navigation }: any) {
                     {parent.phone ? <Text style={styles.cardEmail}>{parent.phone}</Text> : null}
                     <View style={styles.metaRow}>
                       <View style={styles.metaChip}>
-                        <Text style={styles.metaChipText}>{parent.child_count ?? 0} children</Text>
+                        <Text style={styles.metaChipText}>
+                          {(parent.child_count ?? 0) === 1 ? '1 child' : `${parent.child_count ?? 0} children`}
+                        </Text>
                       </View>
                       {(parent.approved_children ?? 0) > 0 ? (
                         <View style={styles.metaChip}>
                           <Text style={styles.metaChipText}>{parent.approved_children} approved</Text>
                         </View>
                       ) : null}
+                      {(parent.pending_children ?? 0) > 0 ? (
+                        <View style={[styles.metaChip, { backgroundColor: `${COLORS.warning}28` }]}>
+                          <Text style={[styles.metaChipText, { color: COLORS.warning }]}>{parent.pending_children} pending</Text>
+                        </View>
+                      ) : null}
+                      {parent.staff_notes?.trim() ? (
+                        <View style={[styles.metaChip, { backgroundColor: `${COLORS.accent}22` }]}>
+                          <Text style={[styles.metaChipText, { color: COLORS.accent }]}>Note</Text>
+                        </View>
+                      ) : null}
                     </View>
+                    {parent.child_names_preview?.length ? (
+                      <Text style={styles.previewNames} numberOfLines={2}>
+                        {parent.child_names_preview.join(' · ')}
+                      </Text>
+                    ) : null}
                   </View>
                   <View style={styles.sideRail}>
                     <View style={[styles.statusPill, { backgroundColor: parent.is_active ? `${COLORS.success}20` : `${COLORS.error}20` }]}>
@@ -413,7 +672,7 @@ export default function ParentsScreen({ navigation }: any) {
                     <TouchableOpacity onPress={() => { setEditingParent(parent); setModalVisible(true); }} style={styles.cardAction}>
                       <Text style={styles.cardActionText}>Edit</Text>
                     </TouchableOpacity>
-                    {isAdmin ? (
+                    {canToggleActive ? (
                       <TouchableOpacity onPress={() => toggleActive(parent)} style={styles.cardAction}>
                         <Text style={styles.cardActionText}>{parent.is_active ? 'Deactivate' : 'Activate'}</Text>
                       </TouchableOpacity>
@@ -437,6 +696,7 @@ export default function ParentsScreen({ navigation }: any) {
         parent={editingParent}
         onClose={() => setModalVisible(false)}
         onSaved={load}
+        canEditStaffNotes={canManage}
       />
     </SafeAreaView>
   );
@@ -452,6 +712,8 @@ const modalStyles = StyleSheet.create({
   labelRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   regen: { fontFamily: FONT_FAMILY.bodySemi, fontSize: FONT_SIZE.xs, color: COLORS.primary },
   input: { marginTop: 6, borderWidth: 1, borderColor: COLORS.border, backgroundColor: COLORS.bg, borderRadius: RADIUS.md, paddingHorizontal: SPACING.md, paddingVertical: Platform.OS === 'ios' ? 12 : 9, color: COLORS.textPrimary, fontFamily: FONT_FAMILY.body, fontSize: FONT_SIZE.sm },
+  notesArea: { minHeight: 100, paddingTop: Platform.OS === 'ios' ? 12 : 9 },
+  hint: { fontFamily: FONT_FAMILY.body, fontSize: FONT_SIZE.xs, color: COLORS.textMuted, lineHeight: 18 },
   switchRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: SPACING.lg, marginBottom: SPACING.xl },
   saveBtn: { borderRadius: RADIUS.lg, overflow: 'hidden' },
   saveGradient: { paddingVertical: 14, alignItems: 'center' },
@@ -462,6 +724,13 @@ const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: COLORS.bg },
   loadWrap: { flex: 1, backgroundColor: COLORS.bg, alignItems: 'center', justifyContent: 'center' },
   summaryStrip: { flexDirection: 'row', gap: SPACING.sm, paddingHorizontal: SPACING.xl, marginBottom: SPACING.md, flexWrap: 'wrap' },
+  scopeBlock: { marginBottom: SPACING.sm, paddingHorizontal: SPACING.xl },
+  scopeLabel: { fontFamily: FONT_FAMILY.bodyBold, fontSize: FONT_SIZE.xs, color: COLORS.textMuted, textTransform: 'uppercase', letterSpacing: LETTER_SPACING.wider, marginBottom: 6 },
+  scopePills: { gap: SPACING.sm, paddingBottom: 4 },
+  scopePill: { paddingHorizontal: 12, paddingVertical: 7, borderRadius: RADIUS.full, borderWidth: 1, borderColor: COLORS.border, backgroundColor: COLORS.bgCard, maxWidth: 220 },
+  scopePillActive: { borderColor: COLORS.primary, backgroundColor: `${COLORS.primary}18` },
+  scopePillText: { fontFamily: FONT_FAMILY.bodySemi, fontSize: FONT_SIZE.xs, color: COLORS.textMuted },
+  scopePillTextActive: { color: COLORS.primary },
   summaryCard: { width: '23%', minWidth: 72, borderWidth: 1, borderColor: COLORS.border, backgroundColor: COLORS.bgCard, borderRadius: RADIUS.lg, padding: SPACING.md },
   summaryValue: { fontFamily: FONT_FAMILY.display, fontSize: FONT_SIZE.lg },
   summaryLabel: { marginTop: 4, fontFamily: FONT_FAMILY.bodyBold, fontSize: FONT_SIZE.xs, color: COLORS.textMuted, textTransform: 'uppercase', letterSpacing: LETTER_SPACING.wider },

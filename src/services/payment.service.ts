@@ -10,6 +10,170 @@ export type PaymentAccountUpdate = Database['public']['Tables']['payment_account
 export type PaymentTransactionUpdate = Database['public']['Tables']['payment_transactions']['Update'];
 export type ReceiptInsert = Database['public']['Tables']['receipts']['Insert'];
 
+/** In-memory line row before persisting to `invoices.items` (JSON). */
+export type InvoiceLineDraft = { description: string; quantity: number; unit_price: number; total: number };
+
+/**
+ * Normalizes line-item drafts for `invoices.items` + `invoices.amount` (web-style invoice editor).
+ * Drops blank zero rows; returns null if nothing billable remains.
+ */
+export function finalizeInvoiceLineDrafts(
+  items: InvoiceLineDraft[],
+): { items: Json; amount: number } | null {
+  const rows = items
+    .map((i) => {
+      const qty = Math.max(0, Number(i.quantity) || 0);
+      const unit = Math.max(0, Number(i.unit_price) || 0);
+      const desc = String(i.description ?? '').trim();
+      const total = qty * unit;
+      if (!desc && total <= 0) return null;
+      return { description: desc || 'Item', quantity: qty || 1, unit_price: unit, total };
+    })
+    .filter((x): x is NonNullable<typeof x> => x != null);
+  if (!rows.length) return null;
+  const amount = rows.reduce((s, r) => s + r.total, 0);
+  return { items: rows as unknown as Json, amount };
+}
+
+/** Minimal rows for client-side billing intelligence (invoices + transactions). */
+export type SmartBillingInvoiceInput = { id: string; amount: number; status: string };
+export type SmartBillingTransactionInput = {
+  id: string;
+  amount: number;
+  payment_status: string | null;
+  invoice_id: string | null;
+  created_at: string | null;
+};
+
+export type SmartBillingSignals = {
+  currency: string;
+  outstandingInvoiceAmount: number;
+  outstandingInvoiceCount: number;
+  overdueInvoiceAmount: number;
+  overdueInvoiceCount: number;
+  /** `sent` / `overdue` invoices with no success/completed transaction linked by `invoice_id`. */
+  unpaidWithoutSettledTxCount: number;
+  unpaidWithoutSettledTxAmount: number;
+  settledTxAmount: number;
+  settledTxCount: number;
+  pendingTxCount: number;
+  pendingTxAmount: number;
+  /** Pending / processing older than `staleDays` (follow up with payer or gateway). */
+  stalePendingTxCount: number;
+  stalePendingTxAmount: number;
+  failedTxCount: number;
+};
+
+const SETTLED_STATUSES = new Set(['success', 'completed']);
+const PENDING_LIKE = new Set(['pending', 'processing']);
+
+function isSettledTx(status: string | null | undefined) {
+  return SETTLED_STATUSES.has(String(status ?? '').toLowerCase());
+}
+
+/**
+ * Cross-checks invoices vs `payment_transactions` for mobile finance hubs (no extra round trips).
+ */
+export function computeSmartBillingSignals(
+  invoices: SmartBillingInvoiceInput[],
+  transactions: SmartBillingTransactionInput[],
+  opts?: { now?: Date; staleDays?: number; currencyFallback?: string },
+): SmartBillingSignals {
+  const now = opts?.now ?? new Date();
+  const staleDays = opts?.staleDays ?? 7;
+  const staleMs = staleDays * 86400000;
+  const currency = opts?.currencyFallback ?? 'NGN';
+
+  const settledOnInvoice = new Set(
+    transactions.filter((t) => t.invoice_id && isSettledTx(t.payment_status)).map((t) => t.invoice_id as string),
+  );
+
+  let outstandingInvoiceAmount = 0;
+  let outstandingInvoiceCount = 0;
+  let overdueInvoiceAmount = 0;
+  let overdueInvoiceCount = 0;
+  let unpaidWithoutSettledTxCount = 0;
+  let unpaidWithoutSettledTxAmount = 0;
+
+  for (const inv of invoices) {
+    const amt = Number(inv.amount) || 0;
+    const st = String(inv.status ?? '').toLowerCase();
+    if (st === 'sent') {
+      outstandingInvoiceCount += 1;
+      outstandingInvoiceAmount += amt;
+    }
+    if (st === 'overdue') {
+      overdueInvoiceCount += 1;
+      overdueInvoiceAmount += amt;
+      outstandingInvoiceCount += 1;
+      outstandingInvoiceAmount += amt;
+    }
+    if ((st === 'sent' || st === 'overdue') && !settledOnInvoice.has(inv.id)) {
+      unpaidWithoutSettledTxCount += 1;
+      unpaidWithoutSettledTxAmount += amt;
+    }
+  }
+
+  let settledTxAmount = 0;
+  let settledTxCount = 0;
+  let pendingTxCount = 0;
+  let pendingTxAmount = 0;
+  let stalePendingTxCount = 0;
+  let stalePendingTxAmount = 0;
+  let failedTxCount = 0;
+
+  for (const tx of transactions) {
+    const amt = Number(tx.amount) || 0;
+    const ps = String(tx.payment_status ?? '').toLowerCase();
+    if (isSettledTx(ps)) {
+      settledTxCount += 1;
+      settledTxAmount += amt;
+    } else if (PENDING_LIKE.has(ps)) {
+      pendingTxCount += 1;
+      pendingTxAmount += amt;
+      const created = tx.created_at ? new Date(tx.created_at).getTime() : now.getTime();
+      if (now.getTime() - created > staleMs) {
+        stalePendingTxCount += 1;
+        stalePendingTxAmount += amt;
+      }
+    } else if (ps === 'failed') {
+      failedTxCount += 1;
+    }
+  }
+
+  return {
+    currency,
+    outstandingInvoiceAmount,
+    outstandingInvoiceCount,
+    overdueInvoiceAmount,
+    overdueInvoiceCount,
+    unpaidWithoutSettledTxCount,
+    unpaidWithoutSettledTxAmount,
+    settledTxAmount,
+    settledTxCount,
+    pendingTxCount,
+    pendingTxAmount,
+    stalePendingTxCount,
+    stalePendingTxAmount,
+    failedTxCount,
+  };
+}
+
+/** Failed or long-running pending/processing transactions (finance queue triage). */
+export function transactionNeedsFinanceAttention(
+  tx: SmartBillingTransactionInput,
+  opts?: { now?: Date; staleDays?: number },
+): boolean {
+  const now = opts?.now ?? new Date();
+  const staleDays = opts?.staleDays ?? 7;
+  const staleMs = staleDays * 86400000;
+  const ps = String(tx.payment_status ?? '').toLowerCase();
+  if (ps === 'failed') return true;
+  if (!PENDING_LIKE.has(ps)) return false;
+  const created = tx.created_at ? new Date(tx.created_at).getTime() : now.getTime();
+  return now.getTime() - created > staleMs;
+}
+
 export class PaymentService {
   async listInvoices(params: {
     role: string;

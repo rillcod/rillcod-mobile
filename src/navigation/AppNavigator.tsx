@@ -49,6 +49,7 @@ import ParentCertificatesScreen from '../screens/dashboard/ParentCertificatesScr
 import ParentFeedbackScreen from '../screens/dashboard/ParentFeedbackScreen';
 
 // New admin/shared screens
+import PeopleHubScreen from '../screens/dashboard/PeopleHubScreen';
 import StudentsScreen from '../screens/dashboard/StudentsScreen';
 import StudentImportScreen from '../screens/dashboard/StudentImportScreen';
 import TeachersScreen from '../screens/dashboard/TeachersScreen';
@@ -137,17 +138,18 @@ function withRoleGuard(Component: React.ComponentType<any>, allow: Role[]) {
 }
 
 const AdminOnlySchoolsScreen = withRoleGuard(SchoolsScreen, ['admin']);
-const StaffParentsScreen = withRoleGuard(ParentsScreen, ['admin', 'teacher']);
-const StaffApprovalsScreen = withRoleGuard(ApprovalsScreen, ['admin', 'teacher']);
+const StaffParentsScreen = withRoleGuard(ParentsScreen, ['admin', 'teacher', 'school']);
+const StaffApprovalsScreen = withRoleGuard(ApprovalsScreen, ['admin', 'teacher', 'school']);
 const AdminOnlyUsersScreen = withRoleGuard(UsersScreen, ['admin']);
 const AdminOnlyAddSchoolScreen = withRoleGuard(AddSchoolScreen, ['admin']);
 const AdminOnlyWipeStudentsScreen = withRoleGuard(WipeStudentsScreen, ['admin']);
 const AdminOnlyCardBuilderScreen = withRoleGuard(CardBuilderScreen, ['admin']);
 const AdminOnlyProgramsScreen = withRoleGuard(ProgramsScreen, ['admin']);
 const StaffLessonsScreen = withRoleGuard(LessonsScreen, ['admin', 'teacher']);
-const StaffEnrolStudentsScreen = withRoleGuard(EnrolStudentsScreen, ['admin', 'teacher']);
+const StaffEnrolStudentsScreen = withRoleGuard(EnrolStudentsScreen, ['admin', 'teacher', 'school']);
 const StaffAnalyticsScreen = withRoleGuard(AnalyticsScreen, ['admin', 'school', 'teacher']);
 const StaffTeachersScreen = withRoleGuard(TeachersScreen, ['admin', 'school']);
+const StaffPeopleHubScreen = withRoleGuard(PeopleHubScreen, ['admin', 'teacher', 'school', 'parent']);
 const StaffStudentsScreen = withRoleGuard(StudentsScreen, ['admin', 'teacher', 'school']);
 const StaffStudentImportScreen = withRoleGuard(StudentImportScreen, ['admin', 'teacher', 'school']);
 const StaffAttendanceScreen = withRoleGuard(AttendanceScreen, ['admin', 'teacher', 'school', 'student']);
@@ -405,6 +407,7 @@ function MainStack() {
       <Stack.Screen name={ROUTES.ParentInvoices} component={ParentInvoicesOnlyScreen} />
       <Stack.Screen name={ROUTES.ParentCertificates} component={ParentCertificatesOnlyScreen} />
       <Stack.Screen name={ROUTES.ParentFeedback} component={ParentFeedbackScreenGuard} />
+      <Stack.Screen name={ROUTES.PeopleHub} component={StaffPeopleHubScreen} />
       <Stack.Screen name={ROUTES.Students} component={StaffStudentsScreen} />
       <Stack.Screen name={ROUTES.StudentImport} component={StaffStudentImportScreen} />
       <Stack.Screen name={ROUTES.Teachers} component={StaffTeachersScreen} />

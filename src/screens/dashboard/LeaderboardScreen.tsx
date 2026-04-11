@@ -32,18 +32,25 @@ function getLevel(xp: number): { label: string; color: string } {
 const PODIUM_COLORS = [COLORS.gold, '#C0C0C0', '#CD7F32'];
 const PODIUM_EMOJIS = ['🥇', '🥈', '🥉'];
 
+type LeaderboardMode = 'xp' | 'grades';
+
 export default function LeaderboardScreen({ navigation }: any) {
   const { profile } = useAuth();
   const [students, setStudents] = useState<RankedStudent[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [filterMySchool, setFilterMySchool] = useState(false);
+  const [mode, setMode] = useState<LeaderboardMode>('xp');
 
   const isSchool = profile?.role === 'school';
+  const valueSuffix = mode === 'xp' ? ' XP' : ' pts';
 
   const load = useCallback(async () => {
     try {
-      const ranked = await gamificationService.getGradedSubmissionScoreLeaderboard(500);
+      const ranked =
+        mode === 'xp'
+          ? await gamificationService.getPortalXpLeaderboard(500)
+          : await gamificationService.getGradedSubmissionScoreLeaderboard(500);
       setStudents(ranked as RankedStudent[]);
     } catch (e: any) {
       Alert.alert('Error', e.message);
@@ -51,9 +58,12 @@ export default function LeaderboardScreen({ navigation }: any) {
       setLoading(false);
       setRefreshing(false);
     }
-  }, []);
+  }, [mode]);
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    setLoading(true);
+    load();
+  }, [load]);
 
   const onRefresh = () => { setRefreshing(true); load(); };
 
@@ -84,7 +94,7 @@ export default function LeaderboardScreen({ navigation }: any) {
           </Text>
         </View>
         <Text style={styles.podiumName} numberOfLines={1}>{student.full_name.split(' ')[0]}</Text>
-        <Text style={[styles.podiumXP, { color }]}>{student.xp} XP</Text>
+        <Text style={[styles.podiumXP, { color }]}>{student.xp}{valueSuffix}</Text>
         <View style={[styles.podiumBase, { height, backgroundColor: color + '30', borderTopColor: color }]}>
           <Text style={[styles.podiumRank, { color }]}>#{student.rank}</Text>
         </View>
@@ -121,7 +131,7 @@ export default function LeaderboardScreen({ navigation }: any) {
               <View style={[styles.xpBarFill, { width: `${barWidth}%` as any, backgroundColor: level.color }]} />
             </View>
           </View>
-          <Text style={[styles.rowXP, { color: level.color }]}>{item.xp}</Text>
+          <Text style={[styles.rowXP, { color: level.color }]}>{item.xp}{valueSuffix}</Text>
         </View>
       </MotiView>
     );
@@ -132,16 +142,30 @@ export default function LeaderboardScreen({ navigation }: any) {
       <View style={styles.header}>
         <IconBackButton onPress={() => navigation.goBack()} color={COLORS.textPrimary} style={styles.backBtn} />
         <Text style={styles.headerTitle}>Leaderboard</Text>
-        {(isSchool || profile?.role === 'student') && (
+        <View style={styles.headerActions}>
           <TouchableOpacity
-            style={[styles.filterToggle, filterMySchool && styles.filterToggleActive]}
-            onPress={() => setFilterMySchool(!filterMySchool)}
+            style={[styles.filterToggle, mode === 'xp' && styles.filterToggleActive]}
+            onPress={() => setMode('xp')}
           >
-            <Text style={[styles.filterToggleText, filterMySchool && { color: COLORS.primary }]}>
-              My School
-            </Text>
+            <Text style={[styles.filterToggleText, mode === 'xp' && { color: COLORS.primary }]}>XP</Text>
           </TouchableOpacity>
-        )}
+          <TouchableOpacity
+            style={[styles.filterToggle, mode === 'grades' && styles.filterToggleActive]}
+            onPress={() => setMode('grades')}
+          >
+            <Text style={[styles.filterToggleText, mode === 'grades' && { color: COLORS.primary }]}>Grades</Text>
+          </TouchableOpacity>
+          {(isSchool || profile?.role === 'student') ? (
+            <TouchableOpacity
+              style={[styles.filterToggle, filterMySchool && styles.filterToggleActive]}
+              onPress={() => setFilterMySchool(!filterMySchool)}
+            >
+              <Text style={[styles.filterToggleText, filterMySchool && { color: COLORS.primary }]}>
+                My School
+              </Text>
+            </TouchableOpacity>
+          ) : null}
+        </View>
       </View>
 
       {loading ? (
@@ -152,7 +176,11 @@ export default function LeaderboardScreen({ navigation }: any) {
         <View style={styles.center}>
           <Text style={styles.emptyEmoji}>🏆</Text>
           <Text style={styles.emptyTitle}>No rankings yet</Text>
-          <Text style={styles.emptySubtitle}>Rankings appear once assignments are graded</Text>
+          <Text style={styles.emptySubtitle}>
+            {mode === 'xp'
+              ? 'XP rankings appear when users earn points in the portal.'
+              : 'Grade rankings appear once assignments are graded.'}
+          </Text>
         </View>
       ) : (
         <FlatList
@@ -170,7 +198,9 @@ export default function LeaderboardScreen({ navigation }: any) {
                   colors={['rgba(245,158,11,0.08)', 'transparent']}
                   style={styles.podiumContainer}
                 >
-                  <Text style={styles.podiumTitle}>Top Students 🏆</Text>
+                  <Text style={styles.podiumTitle}>
+                    {mode === 'xp' ? 'Top by portal XP' : 'Top by graded scores'} 🏆
+                  </Text>
                   <View style={styles.podiumRow}>
                     {top3.map((s, i) => renderPodiumItem(s, i))}
                   </View>
@@ -187,9 +217,10 @@ export default function LeaderboardScreen({ navigation }: any) {
 
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: COLORS.bg },
-  header: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: SPACING.base, paddingVertical: SPACING.md, gap: SPACING.sm },
+  header: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: SPACING.base, paddingVertical: SPACING.md, gap: SPACING.sm, flexWrap: 'wrap' },
   backBtn: { width: 36, height: 36, borderRadius: RADIUS.md, borderWidth: 1, borderColor: COLORS.border, alignItems: 'center', justifyContent: 'center' },
-  headerTitle: { flex: 1, fontSize: FONT_SIZE.lg, fontFamily: FONT_FAMILY.heading, color: COLORS.textPrimary },
+  headerTitle: { flex: 1, minWidth: 100, fontSize: FONT_SIZE.lg, fontFamily: FONT_FAMILY.heading, color: COLORS.textPrimary },
+  headerActions: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: SPACING.sm, justifyContent: 'flex-end' },
   filterToggle: { borderRadius: RADIUS.full, borderWidth: 1, borderColor: COLORS.border, paddingHorizontal: SPACING.md, paddingVertical: 6 },
   filterToggleActive: { borderColor: COLORS.primary, backgroundColor: COLORS.primaryPale },
   filterToggleText: { fontSize: FONT_SIZE.sm, fontFamily: FONT_FAMILY.bodySemi, color: COLORS.textMuted },

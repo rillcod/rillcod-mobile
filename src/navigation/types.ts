@@ -22,6 +22,7 @@ export type RootStackParamList = {
   ParentCertificates: { studentId: string; studentName?: string };
   ParentFeedback: undefined;
   // Admin / staff screens
+  PeopleHub: undefined;
   Students: undefined;
   StudentImport: undefined;
   Teachers: undefined;

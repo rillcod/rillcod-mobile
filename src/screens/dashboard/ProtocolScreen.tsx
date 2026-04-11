@@ -5,174 +5,25 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import { useAuth } from '../../contexts/AuthContext';
+import { pathwaysProgressService } from '../../services/pathwaysProgress.service';
 import { COLORS } from '../../constants/colors';
 import { FONT_FAMILY, FONT_SIZE } from '../../constants/typography';
 import { SPACING, RADIUS } from '../../constants/spacing';
-
-const STORAGE_KEY = 'rillcod_protocol_done_v2';
-
-interface ProtocolModule {
-  id: string;
-  title: string;
-  description: string;
-  language: 'javascript' | 'python' | 'html' | 'robotics';
-  outcome: string;
-  starterCode: string;
-}
-
-interface ProtocolPhase {
-  id: number;
-  name: string;
-  icon: string;
-  color: string;
-  modules: ProtocolModule[];
-}
-
-const PROTOCOL_PHASES: ProtocolPhase[] = [
-  {
-    id: 1,
-    name: 'Code Foundations',
-    icon: 'CD',
-    color: COLORS.primary,
-    modules: [
-      {
-        id: 'p1-js-vars',
-        title: 'Variables and output',
-        description: 'Store values, print them, and understand the shape of simple code.',
-        language: 'javascript',
-        outcome: 'You should be able to declare values and explain what each line is doing.',
-        starterCode: "const studentName = 'Ada';\nconst age = 13;\nconsole.log(`My name is ${studentName} and I am ${age}`);",
-      },
-      {
-        id: 'p1-js-flow',
-        title: 'Conditionals and loops',
-        description: 'Control logic with if statements and repeated actions with loops.',
-        language: 'javascript',
-        outcome: 'You should be able to branch logic and repeat a task safely.',
-        starterCode: "for (let i = 1; i <= 5; i++) {\n  if (i % 2 === 0) {\n    console.log('Even', i);\n  }\n}",
-      },
-      {
-        id: 'p1-python-func',
-        title: 'Python functions',
-        description: 'Write reusable functions with parameters and return values.',
-        language: 'python',
-        outcome: 'You should be able to package logic into a named reusable block.',
-        starterCode: "def calculate_area(width, height):\n    return width * height\n\nprint(calculate_area(5, 3))",
-      },
-    ],
-  },
-  {
-    id: 2,
-    name: 'Web Engine',
-    icon: 'WB',
-    color: COLORS.success,
-    modules: [
-      {
-        id: 'p2-html-structure',
-        title: 'HTML structure',
-        description: 'Build semantic layout with headings, sections, lists, and buttons.',
-        language: 'html',
-        outcome: 'You should be able to create a clear page skeleton that a user can navigate.',
-        starterCode: "<main>\n  <h1>STEM Dashboard</h1>\n  <section>\n    <p>Welcome to the lab.</p>\n    <button>Launch</button>\n  </section>\n</main>",
-      },
-      {
-        id: 'p2-html-dom',
-        title: 'DOM interactions',
-        description: 'Connect buttons and page elements to user actions.',
-        language: 'html',
-        outcome: 'You should be able to update page content after a click.',
-        starterCode: "<button onclick=\"launchMission()\">Launch</button>\n<p id=\"status\">Idle</p>\n<script>\nfunction launchMission() {\n  document.getElementById('status').textContent = 'Mission started';\n}\n</script>",
-      },
-      {
-        id: 'p2-js-arrays',
-        title: 'Arrays and mapping',
-        description: 'Transform lists of values into useful UI or summaries.',
-        language: 'javascript',
-        outcome: 'You should be able to filter, map, and summarize a collection.',
-        starterCode: "const scores = [45, 70, 88, 91];\nconst passing = scores.filter((score) => score >= 50);\nconst boosted = passing.map((score) => score + 5);\nconsole.log(boosted);",
-      },
-    ],
-  },
-  {
-    id: 3,
-    name: 'Applied Systems',
-    icon: 'AI',
-    color: COLORS.warning,
-    modules: [
-      {
-        id: 'p3-python-data',
-        title: 'Data and APIs',
-        description: 'Work with dictionaries, arrays, and remote data responses.',
-        language: 'python',
-        outcome: 'You should be able to inspect structured data and extract key values.',
-        starterCode: "student = {'name': 'Musa', 'score': 82}\nprint(student['name'])\nprint(student['score'])",
-      },
-      {
-        id: 'p3-js-async',
-        title: 'Async workflows',
-        description: 'Handle loading, success, and error paths when calling remote services.',
-        language: 'javascript',
-        outcome: 'You should be able to explain the difference between waiting and failing gracefully.',
-        starterCode: "async function loadData() {\n  try {\n    const response = await fetch('https://example.com/data');\n    const data = await response.json();\n    console.log(data);\n  } catch (error) {\n    console.log('Request failed');\n  }\n}",
-      },
-      {
-        id: 'p3-robotics-signals',
-        title: 'Sensors and signals',
-        description: 'Read simple robot inputs and react with output behavior.',
-        language: 'robotics',
-        outcome: 'You should be able to describe an input-process-output loop for a robot.',
-        starterCode: "Read ultrasonic distance\nIf distance < 10cm\n  Stop motors\nElse\n  Keep moving",
-      },
-    ],
-  },
-  {
-    id: 4,
-    name: 'Launch Track',
-    icon: 'LX',
-    color: COLORS.accent,
-    modules: [
-      {
-        id: 'p4-ui-systems',
-        title: 'UI composition',
-        description: 'Combine cards, actions, and status into a coherent interface.',
-        language: 'html',
-        outcome: 'You should be able to assemble a working layout with meaningful states.',
-        starterCode: "<section class=\"card\">\n  <h2>Mission Control</h2>\n  <p>3 tasks pending review</p>\n</section>",
-      },
-      {
-        id: 'p4-project-logic',
-        title: 'Project logic review',
-        description: 'Connect features, data flow, and completion criteria across screens.',
-        language: 'javascript',
-        outcome: 'You should be able to break a feature into logic, UI, and data dependencies.',
-        starterCode: "const feature = {\n  screen: 'Reports',\n  data: ['students', 'grades'],\n  action: 'publish',\n};",
-      },
-      {
-        id: 'p4-capstone',
-        title: 'Capstone readiness',
-        description: 'Prepare for a final build by reviewing the whole sequence.',
-        language: 'robotics',
-        outcome: 'You should know what to build next and which module to revisit if stuck.',
-        starterCode: "Capstone checklist:\n1. Inputs confirmed\n2. Logic reviewed\n3. Output tested\n4. Report prepared",
-      },
-    ],
-  },
-];
-
-const LANGUAGE_FILTERS = [
-  { key: 'all', label: 'All' },
-  { key: 'javascript', label: 'JavaScript' },
-  { key: 'python', label: 'Python' },
-  { key: 'html', label: 'Web' },
-  { key: 'robotics', label: 'Robotics' },
-] as const;
+import { IconBackButton } from '../../components/ui/IconBackButton';
+import { ROUTES, TAB_ROUTES } from '../../navigation/routes';
+import {
+  PROTOCOL_PHASES,
+  PROTOCOL_LANGUAGE_FILTERS,
+  type ProtocolModule,
+} from '../../constants/protocolSyllabus';
 
 export default function ProtocolScreen({ navigation }: any) {
+  const { profile } = useAuth();
   const [doneModules, setDoneModules] = useState<string[]>([]);
   const [expandedPhases, setExpandedPhases] = useState<number[]>([1]);
   const [activeModuleId, setActiveModuleId] = useState<string | null>(null);
-  const [languageFilter, setLanguageFilter] = useState<typeof LANGUAGE_FILTERS[number]['key']>('all');
+  const [languageFilter, setLanguageFilter] = useState<(typeof PROTOCOL_LANGUAGE_FILTERS)[number]['key']>('all');
   const [search, setSearch] = useState('');
   const [loading, setLoading] = useState(true);
 
@@ -180,11 +31,11 @@ export default function ProtocolScreen({ navigation }: any) {
 
   const loadDone = useCallback(async () => {
     try {
-      const stored = await AsyncStorage.getItem(STORAGE_KEY);
-      if (stored) setDoneModules(JSON.parse(stored));
+      const merged = await pathwaysProgressService.loadProtocolDone(profile?.id);
+      setDoneModules(merged);
     } catch {}
     finally { setLoading(false); }
-  }, []);
+  }, [profile?.id]);
 
   useEffect(() => { loadDone(); }, [loadDone]);
 
@@ -207,7 +58,7 @@ export default function ProtocolScreen({ navigation }: any) {
 
   const saveDoneModules = async (next: string[]) => {
     setDoneModules(next);
-    await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+    await pathwaysProgressService.saveProtocolDone(profile?.id, next);
   };
 
   const togglePhase = (phaseId: number) => {
@@ -230,14 +81,14 @@ export default function ProtocolScreen({ navigation }: any) {
 
   const openPractice = (module: ProtocolModule) => {
     if (module.language === 'robotics') {
-      navigation.navigate('Projects');
+      navigation.navigate(ROUTES.Projects);
       return;
     }
     if (module.language === 'html') {
-      navigation.navigate('Learn');
+      navigation.navigate(TAB_ROUTES.Learn);
       return;
     }
-    navigation.navigate('AI');
+    navigation.navigate(ROUTES.AI);
   };
 
   const masteryPct = allModules.length > 0 ? Math.round((doneModules.length / allModules.length) * 100) : 0;
@@ -255,9 +106,7 @@ export default function ProtocolScreen({ navigation }: any) {
   return (
     <SafeAreaView style={styles.safe}>
       <View style={styles.header}>
-        <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}>
-          <Text style={styles.backArrow}>?</Text>
-        </TouchableOpacity>
+        <IconBackButton onPress={() => navigation.goBack()} color={COLORS.textPrimary} style={styles.backBtn} />
         <Text style={styles.headerTitle}>Protocol</Text>
         <View style={styles.masteryBadge}>
           <Text style={styles.masteryText}>{masteryPct}%</Text>
@@ -299,7 +148,7 @@ export default function ProtocolScreen({ navigation }: any) {
         </View>
 
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filtersRow}>
-          {LANGUAGE_FILTERS.map((filter) => (
+          {PROTOCOL_LANGUAGE_FILTERS.map((filter) => (
             <TouchableOpacity
               key={filter.key}
               style={[styles.filterChip, languageFilter === filter.key && styles.filterChipActive]}
@@ -324,13 +173,13 @@ export default function ProtocolScreen({ navigation }: any) {
                   <Text style={[styles.phaseIconText, { color: phase.color }]}>{phase.icon}</Text>
                 </View>
                 <View style={{ flex: 1 }}>
-                  <Text style={styles.phaseName}>Phase {phase.id} ∑ {phase.name}</Text>
-                  <Text style={[styles.phaseMeta, { color: phase.color }]}>{completedCount}/{phase.modules.length} completed ∑ {progress}%</Text>
+                  <Text style={styles.phaseName}>Phase {phase.id} ù {phase.name}</Text>
+                  <Text style={[styles.phaseMeta, { color: phase.color }]}>{completedCount}/{phase.modules.length} completed ù {progress}%</Text>
                   <View style={styles.phaseTrack}>
                     <View style={[styles.phaseTrackFill, { width: `${progress}%`, backgroundColor: phase.color }]} />
                   </View>
                 </View>
-                <Text style={styles.chevron}>{expanded ? '?' : '?'}</Text>
+                <Text style={styles.chevron}>{expanded ? '\u25bc' : '\u25b6'}</Text>
               </TouchableOpacity>
 
               {expanded && phase.modules.map((module) => {
@@ -395,7 +244,6 @@ const styles = StyleSheet.create({
   center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
   header: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: SPACING.base, paddingVertical: SPACING.md, gap: SPACING.sm },
   backBtn: { width: 36, height: 36, borderRadius: RADIUS.md, borderWidth: 1, borderColor: COLORS.border, alignItems: 'center', justifyContent: 'center' },
-  backArrow: { fontSize: 18, color: COLORS.textPrimary },
   headerTitle: { flex: 1, fontSize: FONT_SIZE.lg, fontFamily: FONT_FAMILY.bodySemi, color: COLORS.textPrimary },
   masteryBadge: { borderRadius: RADIUS.full, borderWidth: 1, borderColor: COLORS.borderGlow, paddingHorizontal: 12, paddingVertical: 5, backgroundColor: COLORS.primaryPale },
   masteryText: { fontFamily: FONT_FAMILY.bodySemi, fontSize: FONT_SIZE.xs, color: COLORS.primaryLight },

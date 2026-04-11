@@ -5,74 +5,133 @@ export interface Mission {
   id: string;
   title: string;
   description: string;
+  instructions: string;
   difficulty: Difficulty;
   language: MissionLanguage;
   xp: number;
   starterCode: string;
-  instructions: string;
   tags: string[];
 }
 
 export const MISSIONS: Mission[] = [
   {
-    id: 'm01',
-    title: 'Hello, Variables!',
-    description: 'Declare variables and print your name, age, and favourite subject.',
-    instructions:
-      'Create three variables: name (string), age (number), and subject (string). Then print all three using console.log or print, formatted as a sentence.',
+    id: 'm-js-1',
+    title: 'Hello, Variables',
+    description: 'Declare values and print a student intro sentence.',
+    instructions: 'Create three variables for name, age, and favorite subject. Print them in one clear sentence.',
     difficulty: 'Beginner',
     language: 'javascript',
     xp: 50,
-    starterCode: `// Declare your variables here\nconst name = '';\nconst age = 0;\nconst subject = '';\n\n// Print them\nconsole.log(\`My name is \${name}, I am \${age} years old and I love \${subject}\`);`,
-    tags: ['variables', 'strings', 'console'],
+    starterCode: "const name = '';\nconst age = 0;\nconst subject = '';\nconsole.log(`My name is ${name}, I am ${age}, and I love ${subject}.`);",
+    tags: ['variables', 'strings', 'intro'],
   },
   {
-    id: 'm02',
-    title: 'Loop the Loop',
-    description: 'Use a for loop to print numbers from 1 to 10.',
-    instructions:
-      'Write a for loop that iterates from 1 to 10 (inclusive) and prints each number. Then modify it to print only even numbers.',
+    id: 'm-js-2',
+    title: 'Loop the numbers',
+    description: 'Print numbers and separate odd from even values.',
+    instructions: 'Use a loop from 1 to 10 and label each number as odd or even.',
     difficulty: 'Beginner',
     language: 'javascript',
     xp: 60,
-    starterCode: `// Print numbers 1 to 10\nfor (let i = 1; i <= 10; i++) {\n  console.log(i);\n}\n\n// Now print only even numbers\n`,
-    tags: ['loops', 'for loop', 'iteration'],
+    starterCode: "for (let i = 1; i <= 10; i++) {\n  const label = i % 2 === 0 ? 'even' : 'odd';\n  console.log(i, label);\n}",
+    tags: ['loops', 'control-flow'],
   },
   {
-    id: 'm03',
-    title: 'Function Factory',
-    description: 'Write a function that calculates the area of a rectangle.',
-    instructions:
-      'Create a function called calculateArea that accepts width and height as parameters and returns their product. Test it with at least 3 different inputs.',
-    difficulty: 'Beginner',
-    language: 'javascript',
-    xp: 70,
-    starterCode: `function calculateArea(width, height) {\n  // your code here\n}\n\nconsole.log(calculateArea(5, 3));   // 15\nconsole.log(calculateArea(10, 7));  // 70\nconsole.log(calculateArea(2, 9));   // 18`,
-    tags: ['functions', 'parameters', 'return values'],
-  },
-  {
-    id: 'm07',
-    title: 'Python Basics',
-    description: 'Write a Python program that classifies numbers as positive, negative, or zero.',
-    instructions:
-      'Write a Python function classify_number(n) that returns "positive", "negative", or "zero". Test it with a list of numbers using a for loop.',
+    id: 'm-py-1',
+    title: 'Python classifier',
+    description: 'Classify numbers as positive, negative, or zero.',
+    instructions: 'Write a function classify_number and test it against a list of values.',
     difficulty: 'Beginner',
     language: 'python',
-    xp: 70,
-    starterCode: `def classify_number(n):\n    # return "positive", "negative", or "zero"\n    pass\n\nnumbers = [10, -3, 0, 42, -7, 0, 5]\n\nfor num in numbers:\n    print(f"{num} is {classify_number(num)}")`,
-    tags: ['python', 'conditionals', 'functions'],
+    xp: 65,
+    starterCode: "def classify_number(n):\n    if n > 0:\n        return 'positive'\n    if n < 0:\n        return 'negative'\n    return 'zero'\n\nfor value in [10, -3, 0, 7]:\n    print(value, classify_number(value))",
+    tags: ['python', 'functions'],
   },
   {
-    id: 'r01',
-    title: 'Blink an LED',
-    description: 'Write your first Arduino sketch to blink the built-in LED on and off.',
-    instructions:
-      'Complete the Arduino sketch so the built-in LED (pin 13) blinks: ON for 1 second, OFF for 1 second, forever.',
-    difficulty: 'Beginner',
+    id: 'm-html-1',
+    title: 'DOM detective',
+    description: 'Update page content after a click.',
+    instructions: 'Connect a button to a heading and paragraph so the page changes state when launched.',
+    difficulty: 'Intermediate',
+    language: 'html',
+    xp: 90,
+    starterCode: "<h1 id=\"heading\">Welcome</h1>\n<p id=\"status\">Idle</p>\n<button onclick=\"launch()\">Launch</button>\n<script>\nfunction launch() {\n  document.getElementById('heading').textContent = 'Mission Started';\n  document.getElementById('status').textContent = 'System online';\n}\n</script>",
+    tags: ['dom', 'events'],
+  },
+  {
+    id: 'm-js-3',
+    title: 'Sort and search',
+    description: 'Use arrays to sort values and find a target efficiently.',
+    instructions: 'Sort a score list and then implement a binary-search-style lookup.',
+    difficulty: 'Intermediate',
+    language: 'javascript',
+    xp: 110,
+    starterCode: "const scores = [72, 55, 91, 40, 88];\nconst sorted = [...scores].sort((a, b) => a - b);\nconsole.log(sorted);\n\nfunction hasScore(target) {\n  return sorted.includes(target);\n}\n\nconsole.log(hasScore(88));",
+    tags: ['arrays', 'sorting'],
+  },
+  {
+    id: 'm-robot-1',
+    title: 'Obstacle response',
+    description: 'Describe a robot reaction when distance gets too small.',
+    instructions: 'Build the logic steps for reading ultrasonic distance and stopping a robot when needed.',
+    difficulty: 'Intermediate',
     language: 'robotics',
-    xp: 60,
-    starterCode: `const int LED_PIN = 13;\n\nvoid setup() {\n  pinMode(LED_PIN, OUTPUT);\n}\n\nvoid loop() {\n  digitalWrite(LED_PIN, HIGH);\n  delay(1000);\n  // YOUR CODE HERE\n}`,
-    tags: ['Arduino', 'LED', 'blink'],
-  }
-  // ... more missions from the web project can be added in the same pattern
+    xp: 120,
+    starterCode: "Read distance\nIf distance < 10cm\n  Stop motors\n  Turn right\nElse\n  Move forward",
+    tags: ['robotics', 'sensors'],
+  },
+  {
+    id: 'm-py-2',
+    title: 'Student report objects',
+    description: 'Model student records with structured data.',
+    instructions: 'Create student dictionaries, calculate average score, and print a clean report card.',
+    difficulty: 'Intermediate',
+    language: 'python',
+    xp: 105,
+    starterCode: "students = [\n  {'name': 'Aisha', 'scores': [80, 70, 90]},\n  {'name': 'Tobi', 'scores': [65, 88, 75]},\n]\n\nfor student in students:\n    average = sum(student['scores']) / len(student['scores'])\n    print(student['name'], average)",
+    tags: ['data', 'reports'],
+  },
+  {
+    id: 'm-js-4',
+    title: 'Async fetch flow',
+    description: 'Handle loading, success, and failure when calling a remote service.',
+    instructions: 'Create an async function that fetches JSON and handles errors gracefully.',
+    difficulty: 'Advanced',
+    language: 'javascript',
+    xp: 150,
+    starterCode: "async function loadProfile() {\n  try {\n    const response = await fetch('https://example.com/profile');\n    const data = await response.json();\n    console.log(data);\n  } catch (error) {\n    console.log('Failed to load');\n  }\n}",
+    tags: ['async', 'api'],
+  },
+  {
+    id: 'm-html-2',
+    title: 'Registration form',
+    description: 'Build a simple form with validation messaging.',
+    instructions: 'Create a form for name and email and show an error if either field is empty.',
+    difficulty: 'Advanced',
+    language: 'html',
+    xp: 145,
+    starterCode: "<form id=\"reg\">\n  <input id=\"name\" placeholder=\"Name\" />\n  <input id=\"email\" placeholder=\"Email\" />\n  <button type=\"button\" onclick=\"submitForm()\">Submit</button>\n</form>\n<p id=\"error\"></p>\n<script>\nfunction submitForm() {\n  const name = document.getElementById('name').value;\n  const email = document.getElementById('email').value;\n  if (!name || !email) {\n    document.getElementById('error').textContent = 'All fields are required';\n  }\n}\n</script>",
+    tags: ['form', 'validation'],
+  },
+  {
+    id: 'm-robot-2',
+    title: 'Capstone checklist',
+    description: 'Prepare the final build flow like a real delivery sequence.',
+    instructions: 'List and order the input, control, output, and report steps for a robot build.',
+    difficulty: 'Advanced',
+    language: 'robotics',
+    xp: 170,
+    starterCode: "1. Confirm sensor wiring\n2. Test motion logic\n3. Observe output\n4. Record faults\n5. Publish final notes",
+    tags: ['capstone', 'workflow'],
+  },
+];
+
+export type LangFilter = 'all' | MissionLanguage;
+
+export const MISSION_LANG_FILTERS: { key: LangFilter; label: string }[] = [
+  { key: 'all', label: 'All Languages' },
+  { key: 'javascript', label: 'JavaScript' },
+  { key: 'python', label: 'Python' },
+  { key: 'html', label: 'Web' },
+  { key: 'robotics', label: 'Robotics' },
 ];

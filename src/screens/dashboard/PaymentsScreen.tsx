@@ -20,6 +20,7 @@ import { useAuth } from '../../contexts/AuthContext';
 import { useTheme } from '../../contexts/ThemeContext';
 import {
   paymentService,
+  computeSmartBillingSignals,
   type PaymentAccountInsert,
   type ReceiptInsert,
 } from '../../services/payment.service';
@@ -343,6 +344,18 @@ export default function PaymentsScreen({ navigation }: any) {
       currency: invoices[0]?.currency ?? transactions[0]?.currency ?? 'NGN',
     };
   }, [invoices, transactions]);
+
+  const billingSignals = useMemo(() => {
+    const invIn = invoices.map((i) => ({ id: i.id, amount: i.amount, status: i.status }));
+    const txIn = transactions.map((t) => ({
+      id: t.id,
+      amount: t.amount,
+      payment_status: t.payment_status,
+      invoice_id: t.invoice_id,
+      created_at: t.created_at,
+    }));
+    return computeSmartBillingSignals(invIn, txIn, { currencyFallback: stats.currency });
+  }, [invoices, transactions, stats.currency]);
 
   const getStatusColor = (status: string | null | undefined) => {
     if (status === 'paid' || status === 'success') return colors.success;
@@ -885,6 +898,85 @@ export default function PaymentsScreen({ navigation }: any) {
   };
 
   const renderTransactionCards = () => {
+    if (canManage) {
+      const sig = billingSignals;
+      const issues =
+        sig.unpaidWithoutSettledTxCount + sig.stalePendingTxCount + sig.failedTxCount;
+      let insightTitle = 'Collections in sync';
+      let insightBody =
+        'Open invoices either have a settled transaction on file, or no gateway attempt yet. Use the ledger for approvals and CSV export.';
+      let insightBorder = colors.border;
+      if (sig.unpaidWithoutSettledTxCount > 0) {
+        insightTitle = 'Invoice vs payment gap';
+        insightBody = `${sig.unpaidWithoutSettledTxCount} open invoice(s) (${formatMoney(sig.unpaidWithoutSettledTxAmount, stats.currency)}) have no settled transaction linked. Reconcile in the finance ledger or record bank receipts.`;
+        insightBorder = colors.warning;
+      } else if (sig.stalePendingTxCount > 0 || sig.failedTxCount > 0) {
+        insightTitle = 'Transactions need review';
+        insightBody = `${sig.stalePendingTxCount} stale pending (7d+), ${sig.failedTxCount} failed. Open the ledger to approve, retry, or document outcomes.`;
+        insightBorder = colors.error;
+      }
+      const preview = filteredTransactions.slice(0, 8);
+      return (
+        <>
+          <View style={[styles.smartBanner, { backgroundColor: colors.bgCard, borderColor: insightBorder }]}>
+            <Text style={[styles.smartBannerEyebrow, { color: colors.primary }]}>SMART CHECK · {issues} open issues</Text>
+            <Text style={[styles.smartBannerTitle, { color: colors.textPrimary }]}>{insightTitle}</Text>
+            <Text style={[styles.smartBannerBody, { color: colors.textSecondary }]}>{insightBody}</Text>
+          </View>
+          <View style={styles.ledgerCtaRow}>
+            <TouchableOpacity
+              style={[styles.ledgerCtaPrimary, { backgroundColor: colors.primary, borderColor: colors.primary }]}
+              onPress={() => navigation.navigate(ROUTES.Transactions)}
+            >
+              <Text style={styles.manageBtnPrimaryText}>FULL FINANCE LEDGER</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.ledgerCtaSecondary, { backgroundColor: colors.bgCard, borderColor: colors.border }]}
+              onPress={() => navigation.navigate(ROUTES.Invoices)}
+            >
+              <Text style={[styles.ledgerCtaSecondaryText, { color: colors.textPrimary }]}>INVOICE EDITOR</Text>
+            </TouchableOpacity>
+          </View>
+          {!preview.length ? (
+            <View style={styles.emptyWrap}>
+              <Text style={[styles.emptyCode, { color: colors.textMuted }]}>TX</Text>
+              <Text style={[styles.emptyText, { color: colors.textMuted }]}>No transactions in this search yet.</Text>
+            </View>
+          ) : (
+            preview.map((tx, index) => {
+              const linkedInvoice = invoices.find((invoice) => invoice.id === tx.invoice_id);
+              const txColor = getStatusColor(tx.payment_status);
+              return (
+                <MotiView key={tx.id} from={{ opacity: 0, translateY: 8 }} animate={{ opacity: 1, translateY: 0 }} transition={{ delay: index * 30 }}>
+                  <TouchableOpacity
+                    style={[styles.previewCard, { backgroundColor: colors.bgCard, borderColor: colors.border }]}
+                    onPress={() => navigation.navigate(ROUTES.Transactions)}
+                    activeOpacity={0.88}
+                  >
+                    <View style={{ flex: 1 }}>
+                      <Text style={[styles.previewRef, { color: colors.textPrimary }]} numberOfLines={1}>
+                        {tx.transaction_reference || 'No reference'}
+                      </Text>
+                      <Text style={[styles.previewSub, { color: colors.textMuted }]} numberOfLines={1}>
+                        {linkedInvoice?.invoice_number ?? 'No invoice link'} · {formatDate(tx.created_at)}
+                      </Text>
+                    </View>
+                    <View style={[styles.statusBadge, { backgroundColor: txColor + '14', borderColor: txColor + '35' }]}>
+                      <Text style={[styles.statusText, { color: txColor }]}>{(tx.payment_status ?? 'pending').toUpperCase()}</Text>
+                    </View>
+                    <Text style={[styles.previewAmount, { color: colors.textPrimary }]}>{formatMoney(tx.amount, tx.currency)}</Text>
+                  </TouchableOpacity>
+                </MotiView>
+              );
+            })
+          )}
+          <Text style={[styles.previewFootnote, { color: colors.textMuted }]}>
+            Showing {Math.min(8, filteredTransactions.length)} of {filteredTransactions.length}. Approve, refund, issue receipts, and export CSV in the ledger.
+          </Text>
+        </>
+      );
+    }
+
     if (!filteredTransactions.length) {
       return (
         <View style={styles.emptyWrap}>
@@ -926,41 +1018,6 @@ export default function PaymentsScreen({ navigation }: any) {
               {tx.refunded_at ? <Text style={[styles.cardMeta, { color: colors.error }]}>REFUNDED {formatDate(tx.refunded_at)}</Text> : null}
               {linkedReceipt ? <Text style={[styles.cardMeta, { color: colors.success }]}>{linkedReceipt.receipt_number}</Text> : null}
             </View>
-            {canManage ? (
-              <View style={styles.adminActionsRow}>
-                {(tx.payment_status === 'pending' || tx.payment_status === 'processing') ? (
-                  <TouchableOpacity style={[styles.manageBtn, { backgroundColor: colors.success, borderColor: colors.success }]} onPress={() => updateTransactionStatus(tx, 'success')}>
-                    <Text style={styles.manageBtnPrimaryText}>APPROVE</Text>
-                  </TouchableOpacity>
-                ) : null}
-                {(tx.payment_status === 'success' || tx.payment_status === 'completed') ? (
-                  <TouchableOpacity
-                    style={[styles.manageBtn, { backgroundColor: colors.primary, borderColor: colors.primary }]}
-                    onPress={() => {
-                      setSelectedTransaction(tx);
-                      setReceiptForm((current) => ({
-                        ...current,
-                        payer_type: tx.school_id ? 'school' : 'student',
-                        school_id: tx.school_id ?? '',
-                        student_id: tx.portal_user_id ?? '',
-                        transaction_id: tx.id,
-                        payment_method: tx.payment_method ?? 'bank_transfer',
-                        payment_date: (tx.paid_at ?? tx.created_at ?? new Date().toISOString()).split('T')[0],
-                        reference: tx.transaction_reference ?? '',
-                      }));
-                      setShowReceiptModal(true);
-                    }}
-                  >
-                    <Text style={styles.manageBtnPrimaryText}>{linkedReceipt ? 'REISSUE RECEIPT' : 'ISSUE RECEIPT'}</Text>
-                  </TouchableOpacity>
-                ) : null}
-                {(tx.payment_status === 'success' || tx.payment_status === 'completed') ? (
-                  <TouchableOpacity style={[styles.manageBtn, { backgroundColor: colors.bgCard, borderColor: colors.error }]} onPress={() => updateTransactionStatus(tx, 'refunded', 'Manual refund')}>
-                    <Text style={[styles.manageBtnPrimaryText, { color: colors.error }]}>REFUND</Text>
-                  </TouchableOpacity>
-                ) : null}
-              </View>
-            ) : null}
           </View>
         </MotiView>
       );
@@ -1021,9 +1078,9 @@ export default function PaymentsScreen({ navigation }: any) {
           <Text style={[styles.summaryMeta, { color: colors.textMuted }]}>Paid invoices</Text>
         </View>
         <View style={[styles.summaryCard, { backgroundColor: colors.bgCard, borderColor: colors.border }]}>
-          <Text style={[styles.summaryLabel, { color: colors.primary }]}>PAYSTACK</Text>
-          <Text style={[styles.summaryValue, { color: colors.textPrimary }]}>{stats.successTransactions}</Text>
-          <Text style={[styles.summaryMeta, { color: colors.textMuted }]}>{stats.overdueCount} overdue</Text>
+          <Text style={[styles.summaryLabel, { color: colors.primary }]}>SETTLED TX</Text>
+          <Text style={[styles.summaryValue, { color: colors.textPrimary }]}>{billingSignals.settledTxCount}</Text>
+          <Text style={[styles.summaryMeta, { color: colors.textMuted }]}>{formatMoney(billingSignals.settledTxAmount, stats.currency)}</Text>
         </View>
         <View style={[styles.summaryCard, { backgroundColor: colors.bgCard, borderColor: colors.border }]}>
           <Text style={[styles.summaryLabel, { color: colors.error }]}>REFUNDS</Text>
@@ -1040,7 +1097,7 @@ export default function PaymentsScreen({ navigation }: any) {
       <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.tabsRow}>
         {[
           { key: 'invoices', label: 'INVOICES' },
-          { key: 'transactions', label: 'TRANSACTIONS' },
+          { key: 'transactions', label: canManage ? 'ACTIVITY' : 'TRANSACTIONS' },
           { key: 'receipts', label: 'RECEIPTS' },
           { key: 'accounts', label: 'ACCOUNTS' },
         ].map((item) => (
@@ -1501,6 +1558,19 @@ const getStyles = (colors: any) =>
     summaryLabel: { fontFamily: FONT_FAMILY.bodyBold, fontSize: 10, letterSpacing: LETTER_SPACING.wider, marginBottom: 8 },
     summaryValue: { fontFamily: FONT_FAMILY.display, fontSize: FONT_SIZE.base },
     summaryMeta: { marginTop: 4, fontFamily: FONT_FAMILY.body, fontSize: FONT_SIZE.xs },
+    smartBanner: { marginHorizontal: SPACING.xl, marginBottom: SPACING.md, borderWidth: 1, borderRadius: RADIUS.lg, padding: SPACING.lg, gap: 6 },
+    smartBannerEyebrow: { fontFamily: FONT_FAMILY.bodyBold, fontSize: 9, letterSpacing: LETTER_SPACING.wider },
+    smartBannerTitle: { fontFamily: FONT_FAMILY.bodyBold, fontSize: FONT_SIZE.base },
+    smartBannerBody: { fontFamily: FONT_FAMILY.body, fontSize: FONT_SIZE.sm, lineHeight: 20 },
+    ledgerCtaRow: { flexDirection: 'row', flexWrap: 'wrap', gap: SPACING.sm, marginHorizontal: SPACING.xl, marginBottom: SPACING.md },
+    ledgerCtaPrimary: { flex: 1, minWidth: 140, minHeight: 44, borderWidth: 1, borderRadius: RADIUS.lg, alignItems: 'center', justifyContent: 'center', paddingHorizontal: SPACING.md },
+    ledgerCtaSecondary: { flex: 1, minWidth: 120, minHeight: 44, borderWidth: 1, borderRadius: RADIUS.lg, alignItems: 'center', justifyContent: 'center', paddingHorizontal: SPACING.md },
+    ledgerCtaSecondaryText: { fontFamily: FONT_FAMILY.bodyBold, fontSize: 10, letterSpacing: LETTER_SPACING.wider },
+    previewCard: { flexDirection: 'row', alignItems: 'center', gap: SPACING.sm, borderWidth: 1, borderRadius: RADIUS.lg, padding: SPACING.md, marginBottom: SPACING.sm },
+    previewRef: { fontFamily: FONT_FAMILY.bodyBold, fontSize: FONT_SIZE.sm },
+    previewSub: { marginTop: 2, fontFamily: FONT_FAMILY.body, fontSize: FONT_SIZE.xs },
+    previewAmount: { fontFamily: FONT_FAMILY.display, fontSize: FONT_SIZE.sm },
+    previewFootnote: { fontFamily: FONT_FAMILY.body, fontSize: FONT_SIZE.xs, marginHorizontal: SPACING.xl, marginBottom: SPACING.md, lineHeight: 18 },
     searchWrap: { flexDirection: 'row', alignItems: 'center', gap: SPACING.sm, marginHorizontal: SPACING.xl, marginBottom: SPACING.md, borderWidth: 1, borderRadius: RADIUS.lg, paddingHorizontal: SPACING.md, paddingVertical: 10 },
     searchLabel: { fontFamily: FONT_FAMILY.bodyBold, fontSize: 10, letterSpacing: LETTER_SPACING.wider },
     searchInput: { flex: 1, fontFamily: FONT_FAMILY.body, fontSize: FONT_SIZE.sm },

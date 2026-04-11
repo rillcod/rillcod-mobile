@@ -139,6 +139,15 @@ export class NewsletterService {
     return recipientIds.length;
   }
 
+  async markNewsletterViewedByUser(newsletterId: string, userId: string) {
+    await supabase
+      .from('newsletter_delivery')
+      .update({ is_viewed: true })
+      .eq('newsletter_id', newsletterId)
+      .eq('user_id', userId)
+      .eq('is_viewed', false);
+  }
+
   async deleteNewsletter(id: string) {
     const { error } = await supabase.from('newsletters').delete().eq('id', id);
     if (error) throw error;

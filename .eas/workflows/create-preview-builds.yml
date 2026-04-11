@@ -1,0 +1,10 @@
+# Internal test build — shareable install link on expo.dev (not Play/App Store).
+# Uses eas.json → profile "preview" (APK + distribution internal).
+name: Create Preview Builds
+
+jobs:
+  build_android_preview:
+    type: build
+    params:
+      platform: android
+      profile: preview

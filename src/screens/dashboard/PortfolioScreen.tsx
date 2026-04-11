@@ -1,7 +1,9 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
+  ActivityIndicator,
   Alert,
   Image,
+  RefreshControl,
   ScrollView,
   StyleSheet,
   Text,
@@ -37,6 +39,8 @@ export default function PortfolioScreen({ navigation }: any) {
   const styles = useMemo(() => getStyles(colors), [colors]);
 
   const [projects, setProjects] = useState<PortfolioProject[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
@@ -60,11 +64,20 @@ export default function PortfolioScreen({ navigation }: any) {
   const loadProjects = useCallback(async () => {
     if (!profile || !canUse) {
       setProjects([]);
+      setLoading(false);
+      setRefreshing(false);
       return;
     }
 
-    const data = await projectService.listOwnPortfolioProjectsForStudent(profile.id);
-    setProjects(((data ?? []) as any[]).map((item) => ({ ...item, tags: item.tags ?? [] })));
+    try {
+      const data = await projectService.listOwnPortfolioProjectsForStudent(profile.id);
+      setProjects(((data ?? []) as any[]).map((item) => ({ ...item, tags: item.tags ?? [] })));
+    } catch (e: any) {
+      Alert.alert('Portfolio', e?.message ?? 'Could not load projects.');
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
   }, [canUse, profile]);
 
   useEffect(() => {
@@ -84,17 +97,20 @@ export default function PortfolioScreen({ navigation }: any) {
       updated_at: new Date().toISOString(),
     };
 
-    if (editingId) {
-      await projectService.updatePortfolioProject(editingId, payload);
-    } else {
-      await projectService.insertPortfolioProject({
-        ...payload,
-        user_id: profile.id,
-      });
+    try {
+      if (editingId) {
+        await projectService.updatePortfolioProject(editingId, payload);
+      } else {
+        await projectService.insertPortfolioProject({
+          ...payload,
+          user_id: profile.id,
+        });
+      }
+      resetForm();
+      await loadProjects();
+    } catch (e: any) {
+      Alert.alert('Portfolio', e?.message ?? 'Could not save project.');
     }
-
-    resetForm();
-    await loadProjects();
   }, [canUse, category, description, editingId, imageUrl, loadProjects, profile, projectUrl, resetForm, tags, title]);
 
   const editProject = useCallback((project: PortfolioProject) => {
@@ -114,9 +130,13 @@ export default function PortfolioScreen({ navigation }: any) {
         text: 'Delete',
         style: 'destructive',
         onPress: async () => {
-          await projectService.deletePortfolioProject(project.id);
-          if (editingId === project.id) resetForm();
-          await loadProjects();
+          try {
+            await projectService.deletePortfolioProject(project.id);
+            if (editingId === project.id) resetForm();
+            await loadProjects();
+          } catch (e: any) {
+            Alert.alert('Portfolio', e?.message ?? 'Could not delete project.');
+          }
         },
       },
     ]);
@@ -134,10 +154,32 @@ export default function PortfolioScreen({ navigation }: any) {
     );
   }
 
+  const onRefresh = useCallback(() => {
+    setRefreshing(true);
+    loadProjects();
+  }, [loadProjects]);
+
+  if (loading) {
+    return (
+      <SafeAreaView style={styles.safe}>
+        <ScreenHeader title="Portfolio" subtitle="Showcase your best work" onBack={() => navigation.goBack()} />
+        <View style={styles.center}>
+          <ActivityIndicator size="large" color={colors.primary} />
+        </View>
+      </SafeAreaView>
+    );
+  }
+
   return (
     <SafeAreaView style={styles.safe}>
       <ScreenHeader title="Portfolio" subtitle="Showcase your best work" onBack={() => navigation.goBack()} />
-      <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
+      <ScrollView
+        contentContainerStyle={styles.scroll}
+        showsVerticalScrollIndicator={false}
+        refreshControl={
+          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.primary} />
+        }
+      >
         <View style={styles.formCard}>
           <Text style={styles.sectionTitle}>{editingId ? 'Edit Project' : 'Add Project'}</Text>
           <TextInput style={styles.input} value={title} onChangeText={setTitle} placeholder="Project title" placeholderTextColor={colors.textMuted} />
@@ -211,6 +253,7 @@ export default function PortfolioScreen({ navigation }: any) {
 
 const getStyles = (colors: any) => StyleSheet.create({
   safe: { flex: 1, backgroundColor: colors.bg },
+  center: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: SPACING.xl },
   scroll: { padding: SPACING.xl, paddingBottom: SPACING['3xl'], gap: SPACING.lg },
   formCard: { borderWidth: 1, borderColor: colors.border, backgroundColor: colors.bgCard, borderRadius: RADIUS.lg, padding: SPACING.xl, gap: SPACING.md },
   sectionTitle: { fontFamily: FONT_FAMILY.display, fontSize: FONT_SIZE.xl, color: colors.textPrimary },

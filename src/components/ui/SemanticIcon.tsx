@@ -9,6 +9,8 @@ const GLYPH_TO_ION: Record<string, ComponentProps<typeof Ionicons>['name']> = {
   SC: 'business-outline',
   TC: 'person-outline',
   ST: 'people-outline',
+  /** People hub — unified directory & bulk roster */
+  PH: 'git-network-outline',
   AP: 'shield-checkmark-outline',
   /** Approvals / registration queue */
   AQ: 'clipboard-outline',

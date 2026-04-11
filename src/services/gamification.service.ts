@@ -74,7 +74,7 @@ export class GamificationService {
     return 'Bronze';
   }
 
-  async getLeaderboard(courseId?: string) {
+  async getLeaderboard(courseId?: string, limitRows = 20) {
     let query;
     if (courseId) {
       const { data: course } = await supabase.from('courses').select('program_id').eq('id', courseId).single();
@@ -92,7 +92,7 @@ export class GamificationService {
         .order('total_points', { ascending: false });
     }
 
-    const { data, error } = await query.limit(20);
+    const { data, error } = await query.limit(limitRows);
     if (error) throw error;
 
     return (data ?? []).map((item: any, index: number) => {
@@ -171,6 +171,26 @@ export class GamificationService {
       .map(([portal_user_id, val]) => ({ portal_user_id, ...val, rank: 0 }))
       .sort((a, b) => b.xp - a.xp)
       .map((s, i) => ({ ...s, rank: i + 1 }));
+  }
+
+  /**
+   * Portal-wide XP leaderboard (`user_points`), same row shape as graded-score leaderboard for UI reuse.
+   */
+  async getPortalXpLeaderboard(limitRows = 500) {
+    const { data, error } = await supabase
+      .from('user_points')
+      .select('portal_user_id, total_points, portal_users(full_name, school_name)')
+      .order('total_points', { ascending: false })
+      .limit(limitRows);
+    if (error) throw error;
+
+    return (data ?? []).map((row: any, index: number) => ({
+      portal_user_id: row.portal_user_id as string,
+      full_name: (row.portal_users?.full_name as string) ?? 'Unknown',
+      school_name: (row.portal_users?.school_name as string | null) ?? null,
+      xp: Number(row.total_points) || 0,
+      rank: index + 1,
+    }));
   }
 }
 

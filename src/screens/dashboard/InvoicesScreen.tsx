@@ -9,7 +9,7 @@ import * as Print from 'expo-print';
 import * as Sharing from 'expo-sharing';
 import { useAuth } from '../../contexts/AuthContext';
 import { useTheme } from '../../contexts/ThemeContext';
-import { paymentService, type InvoiceInsert } from '../../services/payment.service';
+import { paymentService, finalizeInvoiceLineDrafts, type InvoiceInsert } from '../../services/payment.service';
 import { studentService } from '../../services/student.service';
 import { schoolService } from '../../services/school.service';
 import type { Json } from '../../types/supabase';
@@ -115,6 +115,7 @@ export default function InvoicesScreen({ navigation }: any) {
   const [editDue, setEditDue] = useState('');
   const [editNotes, setEditNotes] = useState('');
   const [editStatus, setEditStatus] = useState<InvoiceStatus>('sent');
+  const [editItems, setEditItems] = useState<InvoiceItem[]>([{ description: '', quantity: 1, unit_price: 0, total: 0 }]);
   const [savingInvoiceEdit, setSavingInvoiceEdit] = useState(false);
 
   const isAdmin = profile?.role === 'admin';
@@ -189,6 +190,11 @@ export default function InvoicesScreen({ navigation }: any) {
     setEditDue(selectedInvoice.due_date ? String(selectedInvoice.due_date).split('T')[0] : '');
     setEditNotes(selectedInvoice.notes ?? '');
     setEditStatus(selectedInvoice.status);
+    const base =
+      selectedInvoice.items.length > 0
+        ? selectedInvoice.items.map((i) => ({ ...i }))
+        : [{ description: '', quantity: 1, unit_price: 0, total: 0 }];
+    setEditItems(base);
   }, [selectedInvoice]);
 
   const filtered = useMemo(() => {
@@ -260,6 +266,26 @@ export default function InvoicesScreen({ navigation }: any) {
       ...current,
       items: current.items.length === 1 ? current.items : current.items.filter((_, itemIndex) => itemIndex !== index),
     }));
+  };
+
+  const updateEditItem = (index: number, patch: Partial<InvoiceItem>) => {
+    setEditItems((current) => {
+      const items = [...current];
+      const next = { ...items[index], ...patch };
+      next.total = Number(next.quantity || 0) * Number(next.unit_price || 0);
+      items[index] = next;
+      return items;
+    });
+  };
+
+  const addEditItem = () => {
+    setEditItems((current) => [...current, { description: '', quantity: 1, unit_price: 0, total: 0 }]);
+  };
+
+  const removeEditItem = (index: number) => {
+    setEditItems((current) =>
+      current.length === 1 ? current : current.filter((_, itemIndex) => itemIndex !== index),
+    );
   };
 
   const updateBulkItem = (index: number, patch: Partial<InvoiceItem>) => {
@@ -392,21 +418,37 @@ export default function InvoicesScreen({ navigation }: any) {
       Alert.alert('Invoice', 'Paid or cancelled invoices cannot be edited here.');
       return;
     }
+    const finalized = finalizeInvoiceLineDrafts(editItems);
+    if (!finalized) {
+      Alert.alert('Invoice', 'Add at least one line item with description and amount.');
+      return;
+    }
     setSavingInvoiceEdit(true);
     try {
       await paymentService.patchInvoice(selectedInvoice.id, {
         due_date: editDue.trim() || null,
         notes: editNotes.trim() || null,
         status: editStatus,
+        items: finalized.items,
+        amount: finalized.amount,
         updated_at: new Date().toISOString(),
       });
       await load();
+      const nextItems = parseInvoiceItems(finalized.items);
       setSelectedInvoice((prev) =>
         prev && prev.id === selectedInvoice.id
-          ? { ...prev, due_date: editDue.trim() || null, notes: editNotes.trim() || null, status: editStatus }
+          ? {
+              ...prev,
+              due_date: editDue.trim() || null,
+              notes: editNotes.trim() || null,
+              status: editStatus,
+              items: nextItems,
+              amount: finalized.amount,
+            }
           : prev,
       );
-      Alert.alert('Invoice', 'Details saved.');
+      setEditItems(nextItems.length ? nextItems.map((i) => ({ ...i })) : [{ description: '', quantity: 1, unit_price: 0, total: 0 }]);
+      Alert.alert('Invoice', 'Details and line items saved.');
     } catch (error: any) {
       Alert.alert('Invoice', error?.message ?? 'Could not save.');
     } finally {

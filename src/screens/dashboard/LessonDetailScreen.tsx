@@ -18,6 +18,9 @@ import { courseService } from '../../services/course.service';
 import { analyticsService } from '../../services/analytics.service';
 import { gamificationService } from '../../services/gamification.service';
 import { ScreenHeader } from '../../components/ui/ScreenHeader';
+import LessonVoiceReader from '../../components/ui/LessonVoiceReader';
+import LessonAIPanel from '../../components/ui/LessonAIPanel';
+import LessonBlockRenderer, { parseTextToBlocks } from '../../components/ui/LessonBlockRenderer';
 import { ROUTES } from '../../navigation/routes';
 import { FONT_FAMILY, FONT_SIZE } from '../../constants/typography';
 import { SPACING, RADIUS } from '../../constants/spacing';
@@ -128,6 +131,8 @@ export default function LessonDetailScreen({ navigation, route }: any) {
 
   const contentParagraphs = useMemo(() => splitText(lesson?.content), [lesson?.content]);
   const noteParagraphs = useMemo(() => splitText(lesson?.lesson_notes), [lesson?.lesson_notes]);
+  const contentBlocks = useMemo(() => parseTextToBlocks(lesson?.content), [lesson?.content]);
+  const noteBlocks = useMemo(() => parseTextToBlocks(lesson?.lesson_notes), [lesson?.lesson_notes]);
   const layoutBlocks = useMemo(() => normalizeLayout(lesson?.content_layout), [lesson?.content_layout]);
   const objectives = useMemo(() => listify(lessonPlan?.objectives), [lessonPlan?.objectives]);
   const activities = useMemo(() => listify(lessonPlan?.activities), [lessonPlan?.activities]);
@@ -334,27 +339,31 @@ export default function LessonDetailScreen({ navigation, route }: any) {
           </TouchableOpacity>
         </View>
 
-        {contentParagraphs.length > 0 && (
-          <Section title="Core Content" colors={colors}>
-            {contentParagraphs.map((paragraph, index) => <Text key={`c-${index}`} style={[styles.bodyText, { color: colors.textSecondary }]}>{paragraph}</Text>)}
-          </Section>
+        {contentBlocks.length > 0 && (
+          <View style={[styles.section, { backgroundColor: colors.bgCard, borderColor: colors.border }]}>
+            <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>Core Content</Text>
+            <View style={styles.sectionBody}>
+              <LessonBlockRenderer blocks={contentBlocks as any} lessonType={lesson.lesson_type} />
+            </View>
+          </View>
         )}
 
-        {noteParagraphs.length > 0 && (
-          <Section title="Lesson Notes" colors={colors}>
-            {noteParagraphs.map((paragraph, index) => <Text key={`n-${index}`} style={[styles.bodyText, { color: colors.textSecondary }]}>{paragraph}</Text>)}
-          </Section>
+        {noteBlocks.length > 0 && (
+          <View style={[styles.section, { backgroundColor: colors.bgCard, borderColor: colors.border }]}>
+            <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>Lesson Notes</Text>
+            <View style={styles.sectionBody}>
+              <LessonBlockRenderer blocks={noteBlocks as any} lessonType={lesson.lesson_type} />
+            </View>
+          </View>
         )}
 
         {layoutBlocks.length > 0 && (
-          <Section title="Structured Layout" colors={colors}>
-            {layoutBlocks.map((block: LayoutBlock, index: number) => (
-              <View key={`b-${index}`} style={[styles.card, { backgroundColor: colors.bg, borderColor: colors.border }]}>
-                <Text style={[styles.cardTitle, { color: colors.textPrimary }]}>{typeof block.title === 'string' ? block.title : typeof block.type === 'string' ? block.type : `Section ${index + 1}`}</Text>
-                <Text style={[styles.bodyText, { color: colors.textSecondary }]}>{typeof block.content === 'string' ? block.content : JSON.stringify(block.content ?? block, null, 2)}</Text>
-              </View>
-            ))}
-          </Section>
+          <View style={[styles.section, { backgroundColor: colors.bgCard, borderColor: colors.border }]}>
+            <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>Lesson Content</Text>
+            <View style={styles.sectionBody}>
+              <LessonBlockRenderer blocks={layoutBlocks as any} lessonType={lesson.lesson_type} />
+            </View>
+          </View>
         )}
 
         {!isStudent &&
@@ -413,7 +422,23 @@ export default function LessonDetailScreen({ navigation, route }: any) {
           </Section>
         )}
 
-        <TouchableOpacity onPress={markComplete} disabled={marking || completed} style={[styles.primaryAction, { backgroundColor: completed ? colors.success : colors.primary, opacity: marking ? 0.8 : 1 }]}>
+        {/* ── Voice Reader (Neural TTS, mirrors web NeuralVoiceReader) ── */}
+        {!!(lesson.lesson_notes || lesson.content) && (
+          <LessonVoiceReader
+            content={lesson.lesson_notes || lesson.content || lesson.title}
+            title={lesson.title}
+          />
+        )}
+
+        {/* ── AI Learning Suite (Tutor · Image · Video · Diagram) ── */}
+        <LessonAIPanel
+          lessonTitle={lesson.title}
+          lessonNotes={lesson.lesson_notes}
+          courseTitle={lesson.courses?.title}
+          gradeLevel={null}
+        />
+
+        <TouchableOpacity onPress={markComplete} disabled={marking || completed} style={[styles.primaryAction, { backgroundColor: completed ? colors.success : colors.primary, opacity: marking ? 0.8 : 1, marginTop: SPACING.xl }]}>
           {marking ? <ActivityIndicator color="#fff" /> : <Text style={styles.primaryActionText}>{completed ? 'Lesson Completed' : 'Mark Lesson Complete'}</Text>}
         </TouchableOpacity>
 

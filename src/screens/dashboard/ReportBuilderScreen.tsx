@@ -122,11 +122,12 @@ function getMileSuggestions(course: string): string[] {
 }
 
 function calcOverall(theory: string, practical: string, attendance: string, participation: string) {
+  // Standard formula: Theory×40% + Practical×20% + Attendance×20% + Participation×20%
   const scores = [
     { val: parseFloat(theory), weight: 0.4 },
-    { val: parseFloat(practical), weight: 0.35 },
-    { val: parseFloat(attendance), weight: 0.15 },
-    { val: parseFloat(participation), weight: 0.1 },
+    { val: parseFloat(practical), weight: 0.2 },
+    { val: parseFloat(attendance), weight: 0.2 },
+    { val: parseFloat(participation), weight: 0.2 },
   ].filter(s => !isNaN(s.val));
   if (scores.length === 0) return null;
   const totalWeight = scores.reduce((s, x) => s + x.weight, 0);

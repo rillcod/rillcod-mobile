@@ -15,7 +15,11 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useAuth } from '../../contexts/AuthContext';
 import { useTheme } from '../../contexts/ThemeContext';
-import { paymentService } from '../../services/payment.service';
+import {
+  paymentService,
+  computeSmartBillingSignals,
+  transactionNeedsFinanceAttention,
+} from '../../services/payment.service';
 import { ScreenHeader } from '../../components/ui/ScreenHeader';
 import { FONT_FAMILY, FONT_SIZE, LETTER_SPACING } from '../../constants/typography';
 import { SPACING, RADIUS } from '../../constants/spacing';
@@ -96,6 +100,8 @@ export default function TransactionsScreen({ navigation }: any) {
   const [approvingId, setApprovingId] = useState<string | null>(null);
   const [selectedTransaction, setSelectedTransaction] = useState<TransactionRow | null>(null);
   const [receipts, setReceipts] = useState<ReceiptRow[]>([]);
+  const [billingInvoices, setBillingInvoices] = useState<Array<{ id: string; amount: number; status: string }>>([]);
+  const [attentionOnly, setAttentionOnly] = useState(false);
   const [showReceiptModal, setShowReceiptModal] = useState(false);
   const [savingReceipt, setSavingReceipt] = useState(false);
   const [receiptForm, setReceiptForm] = useState({
@@ -118,10 +124,24 @@ export default function TransactionsScreen({ navigation }: any) {
     }
 
     try {
-      const data = await paymentService.listFinanceConsoleTransactionsWithJoins({
-        schoolId: isSchool && profile.school_id ? profile.school_id : undefined,
-      });
-      const receiptRows = await paymentService.listReceiptsForFinanceConsole(200);
+      const [data, receiptRows, invData] = await Promise.all([
+        paymentService.listFinanceConsoleTransactionsWithJoins({
+          schoolId: isSchool && profile.school_id ? profile.school_id : undefined,
+        }),
+        paymentService.listReceiptsForFinanceConsole(200),
+        paymentService.listInvoices({
+          role: profile.role,
+          userId: profile.id,
+          schoolId: profile.school_id,
+        }),
+      ]);
+      setBillingInvoices(
+        ((invData ?? []) as any[]).map((row) => ({
+          id: row.id as string,
+          amount: Number(row.amount ?? 0),
+          status: String(row.status ?? 'sent'),
+        })),
+      );
       setTransactions(
         ((data ?? []) as any[]).map((tx) => ({
           id: tx.id,
@@ -157,6 +177,33 @@ export default function TransactionsScreen({ navigation }: any) {
     load();
   }, [load]);
 
+  const billingSignals = useMemo(() => {
+    const txIn = transactions.map((t) => ({
+      id: t.id,
+      amount: t.amount,
+      payment_status: t.payment_status,
+      invoice_id: t.invoice_id,
+      created_at: t.created_at,
+    }));
+    return computeSmartBillingSignals(billingInvoices, txIn, {
+      currencyFallback: transactions[0]?.currency ?? 'NGN',
+    });
+  }, [billingInvoices, transactions]);
+
+  const attentionTxCount = useMemo(
+    () =>
+      transactions.filter((tx) =>
+        transactionNeedsFinanceAttention({
+          id: tx.id,
+          amount: tx.amount,
+          payment_status: tx.payment_status,
+          invoice_id: tx.invoice_id,
+          created_at: tx.created_at,
+        }),
+      ).length,
+    [transactions],
+  );
+
   const filteredTransactions = useMemo(() => {
     const search = query.trim().toLowerCase();
     return transactions.filter((tx) => {
@@ -170,9 +217,18 @@ export default function TransactionsScreen({ navigation }: any) {
         (tx.transaction_reference ?? '').toLowerCase().includes(search) ||
         (tx.payment_method ?? '').toLowerCase().includes(search) ||
         displayName.toLowerCase().includes(search);
-      return statusMatch && queryMatch;
+      const attentionMatch =
+        !attentionOnly ||
+        transactionNeedsFinanceAttention({
+          id: tx.id,
+          amount: tx.amount,
+          payment_status: tx.payment_status,
+          invoice_id: tx.invoice_id,
+          created_at: tx.created_at,
+        });
+      return statusMatch && queryMatch && attentionMatch;
     });
-  }, [query, statusFilter, transactions]);
+  }, [attentionOnly, query, statusFilter, transactions]);
 
   const stats = useMemo(() => {
     const completed = transactions.filter((tx) => tx.payment_status === 'success' || tx.payment_status === 'completed');
@@ -390,7 +446,7 @@ export default function TransactionsScreen({ navigation }: any) {
     return (
       <SafeAreaView style={styles.safe}>
         <ScreenHeader
-          title="Transactions"
+          title="Finance ledger"
           subtitle="Staff finance workspace"
           onBack={() => navigation.goBack()}
           rightAction={{ label: 'CSV', onPress: () => void exportTransactionsCsv() }}
@@ -406,8 +462,8 @@ export default function TransactionsScreen({ navigation }: any) {
   return (
     <SafeAreaView style={styles.safe}>
       <ScreenHeader
-        title="Transactions"
-        subtitle="Payment records and approval history"
+        title="Finance ledger"
+        subtitle="Transactions reconciled with invoices · CSV export"
         onBack={() => navigation.goBack()}
         rightAction={{ label: 'CSV', onPress: () => void exportTransactionsCsv() }}
       />
@@ -416,6 +472,18 @@ export default function TransactionsScreen({ navigation }: any) {
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.primary} />}
         showsVerticalScrollIndicator={false}
       >
+        <View style={[styles.smartBanner, { backgroundColor: colors.bgCard, borderColor: colors.border }]}>
+          <Text style={[styles.smartEyebrow, { color: colors.primary }]}>SMART RECONCILIATION</Text>
+          <Text style={[styles.smartLine, { color: colors.textPrimary }]}>
+            {billingSignals.unpaidWithoutSettledTxCount} open invoice(s) without settled tx (
+            {formatMoney(billingSignals.unpaidWithoutSettledTxAmount, billingSignals.currency)})
+          </Text>
+          <Text style={[styles.smartLine, { color: colors.textSecondary }]}>
+            {billingSignals.stalePendingTxCount} stale pending (7d+), {billingSignals.failedTxCount} failed,{' '}
+            {billingSignals.settledTxCount} settled ({formatMoney(billingSignals.settledTxAmount, billingSignals.currency)})
+          </Text>
+        </View>
+
         <View style={styles.statRow}>
           <StatCard label="Total" value={String(stats.total)} tone={colors.textPrimary} styles={styles} />
           <StatCard label="Revenue" value={formatMoney(stats.revenue)} tone={colors.success} styles={styles} />
@@ -436,13 +504,27 @@ export default function TransactionsScreen({ navigation }: any) {
         </View>
 
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filterRow}>
+          <TouchableOpacity
+            style={[
+              styles.filterPill,
+              attentionOnly && { borderColor: colors.error, backgroundColor: colors.error + '18' },
+            ]}
+            onPress={() => setAttentionOnly((v) => !v)}
+          >
+            <Text style={[styles.filterText, attentionOnly && { color: colors.error }]}>
+              Attention{attentionTxCount ? ` (${attentionTxCount})` : ''}
+            </Text>
+          </TouchableOpacity>
           {(['all', 'completed', 'pending', 'processing', 'failed', 'refunded'] as const).map((status) => {
             const active = statusFilter === status;
             return (
               <TouchableOpacity
                 key={status}
                 style={[styles.filterPill, active && { borderColor: colors.primary, backgroundColor: colors.primaryPale }]}
-                onPress={() => setStatusFilter(status)}
+                onPress={() => {
+                  setAttentionOnly(false);
+                  setStatusFilter(status);
+                }}
               >
                 <Text style={[styles.filterText, active && { color: colors.primary }]}>{status === 'all' ? 'All' : status}</Text>
               </TouchableOpacity>
@@ -635,6 +717,9 @@ function DetailItem({ label, value, styles }: { label: string; value: string; st
 const getStyles = (colors: any) => StyleSheet.create({
   safe: { flex: 1, backgroundColor: colors.bg },
   scroll: { padding: SPACING.xl, paddingBottom: SPACING['3xl'], gap: SPACING.lg },
+  smartBanner: { borderWidth: 1, borderRadius: RADIUS.lg, padding: SPACING.lg, gap: 6 },
+  smartEyebrow: { fontFamily: FONT_FAMILY.bodyBold, fontSize: 10, letterSpacing: LETTER_SPACING.wider },
+  smartLine: { fontFamily: FONT_FAMILY.body, fontSize: FONT_SIZE.sm, lineHeight: 20 },
   statRow: { flexDirection: 'row', flexWrap: 'wrap', gap: SPACING.md },
   statCard: { flexGrow: 1, minWidth: '47%', borderWidth: 1, borderColor: colors.border, backgroundColor: colors.bgCard, borderRadius: RADIUS.lg, padding: SPACING.lg },
   statValue: { fontFamily: FONT_FAMILY.display, fontSize: FONT_SIZE.xl },

@@ -24,6 +24,7 @@ export const ROUTES = {
   ParentInvoices: 'ParentInvoices',
   ParentCertificates: 'ParentCertificates',
   ParentFeedback: 'ParentFeedback',
+  PeopleHub: 'PeopleHub',
   Students: 'Students',
   StudentImport: 'StudentImport',
   Teachers: 'Teachers',

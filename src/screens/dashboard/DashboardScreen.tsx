@@ -226,6 +226,7 @@ const ACTION_SCREENS: Record<string, string> = {
   'Parent Grades': ROUTES.ParentGrades,
   'Parent Attendance': ROUTES.ParentAttendance,
   IoT: ROUTES.IoT,
+  'People hub': ROUTES.PeopleHub,
 };
 
 /**
@@ -233,11 +234,7 @@ const ACTION_SCREENS: Record<string, string> = {
  * academics/reports → finance → comms. Approvals & Users stay on the admin tab bar.
  */
 const ADMIN_HOME_LINKS = [
-  { icon: 'SC', label: 'Partner Schools', screen: ROUTES.Schools, color: COLORS.info },
-  { icon: 'TC', label: 'Manage Teachers', screen: ROUTES.Teachers, color: COLORS.primary },
-  { icon: 'ST', label: 'Students', screen: ROUTES.Students, color: COLORS.info },
-  { icon: 'IM', label: 'Import Students', screen: ROUTES.StudentImport, color: COLORS.info },
-  { icon: 'PA', label: 'Parents', screen: ROUTES.Parents, color: COLORS.accent },
+  { icon: 'PH', label: 'People hub', screen: ROUTES.PeopleHub, color: COLORS.primary },
   { icon: 'PF', label: 'Parent Feedback', screen: ROUTES.ParentFeedback, color: COLORS.accent },
   { icon: 'BR', label: 'Register Students', screen: ROUTES.BulkRegister, color: COLORS.success },
   { icon: 'EN', label: 'Enrol Students', screen: ROUTES.EnrolStudents, color: COLORS.success },
@@ -253,22 +250,19 @@ const ADMIN_HOME_LINKS = [
   { icon: 'IT', label: 'IoT', screen: ROUTES.IoT, color: COLORS.info },
   { icon: 'PM', label: 'Payments', screen: ROUTES.Payments, color: COLORS.warning },
   { icon: 'BP', label: 'Bulk Payments', screen: ROUTES.BulkPayments, color: COLORS.warning },
-  { icon: 'TX', label: 'Transactions', screen: ROUTES.Transactions, color: COLORS.warning },
   { icon: 'NW', label: 'Newsletters', screen: ROUTES.Newsletters, color: COLORS.accent },
   { icon: 'SG', label: 'Settings', screen: ROUTES.Settings, color: COLORS.textMuted },
 ];
 
 /** Order aligned with web `DashboardNavigation` (teacher): Teaching → Students → Reports → Content → community hubs. */
 const TEACHER_QUICK_LINKS: QuickLink[] = [
+  { icon: 'PH', label: 'People hub', screen: ROUTES.PeopleHub, color: COLORS.primary, desc: 'Students, parents, approvals, imports, and bulk enrol' },
   { icon: 'CL', label: 'My Classes', screen: ROUTES.Classes, color: COLORS.primary, desc: 'Your class rosters, sessions, and detail views (web: My Classes)' },
   { icon: 'LS', label: 'Lessons', screen: ROUTES.Lessons, color: COLORS.info, desc: 'Manage lesson content and delivery sequence' },
   { icon: 'AS', label: 'Assignments', screen: ROUTES.Assignments, color: COLORS.warning, desc: 'Create, review, and grade submissions' },
   { icon: 'CB', label: 'CBT Centre', screen: ROUTES.CBT, color: COLORS.primary, desc: 'Manage exams and computer-based tests' },
   { icon: 'AT', label: 'Attendance', screen: ROUTES.Attendance, color: COLORS.success, desc: 'Register student presence and view sessions' },
   { icon: 'TT', label: 'My week', screen: ROUTES.Timetable, color: COLORS.info, desc: 'Weekly timetable and room slots (web: Timetable)' },
-  { icon: 'ST', label: 'Students', screen: ROUTES.Students, color: COLORS.accent, desc: 'Review students, profiles, and performance' },
-  { icon: 'IM', label: 'Import Students', screen: ROUTES.StudentImport, color: COLORS.info, desc: 'Paste CSV for pending registrations' },
-  { icon: 'PA', label: 'Parents', screen: ROUTES.Parents, color: COLORS.accent, desc: 'Parent contacts and directory' },
   { icon: 'PF', label: 'Parent Feedback', screen: ROUTES.ParentFeedback, color: COLORS.accent, desc: 'Staff inbox for parent messages' },
   { icon: 'PJ', label: 'Projects', screen: ROUTES.Projects, color: COLORS.primary, desc: 'Lab projects and coursework' },
   { icon: 'BR', label: 'Register Students', screen: ROUTES.BulkRegister, color: COLORS.success, desc: 'Batch registration workflow' },
@@ -285,24 +279,23 @@ const TEACHER_QUICK_LINKS: QuickLink[] = [
 /** Mirrors web school sidebar: overview → roster → classes → ops → reports → finance. */
 const SCHOOL_QUICK_LINKS: QuickLink[] = [
   { icon: 'OV', label: 'School Overview', screen: ROUTES.SchoolOverview, color: COLORS.success, desc: 'Open school command metrics and health' },
-  { icon: 'ST', label: 'Students', screen: ROUTES.Students, color: COLORS.info, desc: 'Manage enrolled students and records' },
+  { icon: 'PH', label: 'People hub', screen: ROUTES.PeopleHub, color: COLORS.primary, desc: 'Students, teachers, parents, imports, and enrolment' },
   { icon: 'CL', label: 'Classes', screen: ROUTES.Classes, color: COLORS.primary, desc: 'Class rosters and teaching groups' },
   { icon: 'AT', label: 'Attendance', screen: ROUTES.Attendance, color: COLORS.success, desc: 'Presence sessions and registers' },
   { icon: 'TT', label: 'Timetable', screen: ROUTES.Timetable, color: COLORS.info, desc: 'Weekly schedule for your school' },
   { icon: 'LV', label: 'Live Sessions', screen: ROUTES.LiveSessions, color: COLORS.info, desc: 'Live teaching blocks and links' },
-  { icon: 'TC', label: 'Teachers', screen: ROUTES.Teachers, color: COLORS.primary, desc: 'Track teacher accounts and staffing' },
   { icon: 'RP', label: 'Reports', screen: ROUTES.Reports, color: COLORS.accent, desc: 'Review published reports and outcomes' },
   { icon: 'GR', label: 'Grades', screen: ROUTES.Grades, color: COLORS.accent, desc: 'School-wide graded work' },
   { icon: 'PR', label: 'Progress', screen: ROUTES.Progress, color: COLORS.primary, desc: 'Track school-wide performance trends' },
   { icon: 'BL', label: 'Billing', screen: ROUTES.SchoolBilling, color: COLORS.warning, desc: 'Outstanding fees and Paystack collection' },
-  { icon: 'PM', label: 'Payments', screen: ROUTES.Payments, color: COLORS.warning, desc: 'Review invoices, balances, and dues' },
+  { icon: 'PM', label: 'Payments', screen: ROUTES.Payments, color: COLORS.warning, desc: 'Finance hub · smart invoice checks, receipts, bank accounts' },
   { icon: 'BP', label: 'Bulk Payments', screen: ROUTES.BulkPayments, color: COLORS.warning, desc: 'Batch invoices and receipts' },
-  { icon: 'TX', label: 'Transactions', screen: ROUTES.Transactions, color: COLORS.warning, desc: 'Finance console and receipts' },
   { icon: 'AL', label: 'Notifications', screen: TAB_ROUTES.Notifications, color: COLORS.info, desc: 'Monitor school notices and unread alerts' },
   { icon: 'MG', label: 'Messages', screen: ROUTES.Messages, color: COLORS.info, desc: 'Coordinate with admin, staff, and parents' },
 ];
 
 const PARENT_QUICK_LINKS: QuickLink[] = [
+  { icon: 'PH', label: 'People hub', screen: ROUTES.PeopleHub, color: COLORS.primary, desc: 'Family shortcuts, invoices, and feedback' },
   { icon: 'CH', label: 'My Children', screen: ROUTES.MyChildren, color: COLORS.accent, desc: 'See linked children and their progress' },
   { icon: 'RP', label: 'Report Cards', screen: ROUTES.ParentResults, color: COLORS.primary, desc: 'Open published reports and term results' },
   { icon: 'IV', label: 'Invoices', screen: ROUTES.ParentInvoices, color: COLORS.warning, desc: 'Pay fees and review invoice status' },
@@ -392,10 +385,7 @@ export default function DashboardScreen({ navigation }: any) {
           color: colors.error,
           label: 'ADMINISTRATOR',
           actions: [
-            { icon: 'SC', label: 'Schools', color: colors.primary },
-            { icon: 'ST', label: 'Students', color: colors.info },
-            { icon: 'IM', label: 'Import', color: colors.info },
-            { icon: 'PA', label: 'Parents', color: colors.accent },
+            { icon: 'PH', label: 'People hub', color: colors.primary },
             { icon: 'PF', label: 'Feedback', color: colors.accent },
             { icon: 'PR', label: 'Programs', color: colors.info },
             { icon: 'AS', label: 'Assignments', color: colors.warning },
@@ -411,12 +401,12 @@ export default function DashboardScreen({ navigation }: any) {
           color: colors.primary,
           label: 'INSTRUCTOR',
           actions: [
+            { icon: 'PH', label: 'People hub', color: colors.primary },
             { icon: 'CL', label: 'Classes', color: colors.primary },
             { icon: 'LS', label: 'Lessons', color: colors.info },
             { icon: 'AS', label: 'Assignments', color: colors.warning },
             { icon: 'AT', label: 'Attendance', color: colors.success },
             { icon: 'TT', label: 'Timetable', color: colors.info },
-            { icon: 'ST', label: 'Students', color: colors.accent },
             { icon: 'CB', label: 'CBT', color: colors.warning },
             { icon: 'RB', label: 'Report Builder', color: colors.accent },
             { icon: 'MG', label: 'Messages', color: colors.info },
@@ -429,18 +419,16 @@ export default function DashboardScreen({ navigation }: any) {
           label: 'SCHOOL PARTNER',
           actions: [
             { icon: 'OV', label: 'School Overview', color: colors.success },
-            { icon: 'ST', label: 'Students', color: colors.info },
+            { icon: 'PH', label: 'People hub', color: colors.primary },
             { icon: 'CL', label: 'Classes', color: colors.primary },
             { icon: 'AT', label: 'Attendance', color: colors.success },
             { icon: 'TT', label: 'Timetable', color: colors.info },
             { icon: 'LV', label: 'LiveSessions', color: colors.info },
-            { icon: 'TC', label: 'Teachers', color: colors.primary },
             { icon: 'RP', label: 'Reports', color: colors.accent },
             { icon: 'GR', label: 'Grades', color: colors.accent },
             { icon: 'PR', label: 'Progress', color: colors.primary },
             { icon: 'PM', label: 'Payments', color: colors.warning },
             { icon: 'BP', label: 'Bulk Pay', color: colors.warning },
-            { icon: 'TX', label: 'Transactions', color: colors.warning },
           ],
         };
       case 'parent':
@@ -448,6 +436,7 @@ export default function DashboardScreen({ navigation }: any) {
           color: colors.accent,
           label: 'PARENT PORTAL',
           actions: [
+            { icon: 'PH', label: 'People hub', color: colors.primary },
             { icon: 'CH', label: 'My Children', color: colors.accent },
             { icon: 'RS', label: 'Report Cards', color: colors.primary },
             { icon: 'IV', label: 'Parent Invoices', color: colors.warning },

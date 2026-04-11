@@ -90,6 +90,7 @@ export default function NewslettersScreenV2({ navigation }: any) {
   const [saving, setSaving] = useState(false);
   const [publishing, setPublishing] = useState(false);
   const [generating, setGenerating] = useState(false);
+  const [refining, setRefining] = useState(false);
   const [aiTopic, setAiTopic] = useState('');
   const [aiTone, setAiTone] = useState<(typeof AI_TONES)[number]>('professional');
   const [targetAudience, setTargetAudience] = useState<AudienceType>('all');
@@ -153,6 +154,10 @@ export default function NewslettersScreenV2({ navigation }: any) {
   const openRead = (item: Newsletter) => {
     setActiveNewsletter(item);
     setShowReader(true);
+    // Mark individual newsletter as viewed when student opens it
+    if (!isStaff && profile?.id && item.id) {
+      newsletterService.markNewsletterViewedByUser(item.id, profile.id).catch(() => {});
+    }
   };
 
   const saveDraft = async () => {
@@ -227,6 +232,36 @@ export default function NewslettersScreenV2({ navigation }: any) {
         },
       },
     ]);
+  };
+
+  const refineWithAI = async () => {
+    if (!form.content.trim()) {
+      Alert.alert('Refine', 'Write some content first before refining.');
+      return;
+    }
+    setRefining(true);
+    try {
+      const response = await callAI({
+        temperature: 0.55,
+        maxTokens: 800,
+        messages: [
+          {
+            role: 'system',
+            content:
+              'You are a school newsletter editor. Improve the given newsletter content: fix grammar, improve clarity, add polish, and structure with clear paragraphs. Keep the same tone and facts. Return only the improved content as plain text — no JSON, no extra commentary.',
+          },
+          {
+            role: 'user',
+            content: `Refine this newsletter content:\n\nTitle: ${form.title}\n\nContent:\n${form.content}`,
+          },
+        ],
+      });
+      setForm((curr) => ({ ...curr, content: response.trim() }));
+    } catch (error: any) {
+      Alert.alert('Refine', error?.message ?? 'Could not refine content.');
+    } finally {
+      setRefining(false);
+    }
   };
 
   const generateWithAI = async () => {
@@ -442,6 +477,10 @@ export default function NewslettersScreenV2({ navigation }: any) {
                 multiline
                 style={[styles.input, styles.textarea]}
               />
+
+              <TouchableOpacity style={[styles.secondaryBtn, { minHeight: 42 }]} onPress={refineWithAI} disabled={refining}>
+                <Text style={styles.secondaryBtnText}>{refining ? 'REFINING...' : '✦ REFINE WITH AI'}</Text>
+              </TouchableOpacity>
 
               <Text style={styles.fieldLabel}>PUBLISH AUDIENCE</Text>
               <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.pillRow}>
