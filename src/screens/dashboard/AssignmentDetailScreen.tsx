@@ -12,6 +12,7 @@ import {
   Linking,
 } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
+import * as DocumentPicker from 'expo-document-picker';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { MotiView } from 'moti';
@@ -22,7 +23,7 @@ import { COLORS } from '../../constants/colors';
 import { FONT_FAMILY, FONT_SIZE } from '../../constants/typography';
 import { SPACING, RADIUS } from '../../constants/spacing';
 import { ROUTES } from '../../navigation/routes';
-import { uploadToR2, mimeFromExt } from '../../lib/r2';
+import { uploadToR2, mimeFromExt, getR2SignedViewUrl } from '../../lib/r2';
 import { buildAssignmentWhatsAppShareMessage } from '../../lib/assignmentShare';
 
 interface AssignmentQuestion {
@@ -81,6 +82,83 @@ function isLikelyImageUrl(url: string | null | undefined): boolean {
   return /\.(png|jpe?g|gif|webp|bmp|heic)$/i.test(path);
 }
 
+function isLikelyPdfUrl(url: string | null | undefined): boolean {
+  if (!url) return false;
+  return /\.pdf(\?|$)/i.test(url.split('?')[0]);
+}
+
+async function openUrlSafe(url: string) {
+  try {
+    const ok = await Linking.canOpenURL(url);
+    if (ok) await Linking.openURL(url);
+    else Alert.alert('Cannot open', 'This device cannot open this link.');
+  } catch {
+    Alert.alert('Cannot open', 'Try again or copy the link from the web portal.');
+  }
+}
+
+/** Resolves private R2 objects to a signed GET URL, then shows image and/or open-in-browser controls. */
+function SubmissionAttachmentView({ fileUrl }: { fileUrl: string }) {
+  const [resolved, setResolved] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [imgErr, setImgErr] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    setImgErr(false);
+    void (async () => {
+      const v = await getR2SignedViewUrl(fileUrl);
+      if (!cancelled) {
+        setResolved(v ?? fileUrl);
+        setLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [fileUrl]);
+
+  const uri = resolved ?? fileUrl;
+  const showImage = isLikelyImageUrl(fileUrl) && !isLikelyPdfUrl(fileUrl) && !imgErr;
+
+  if (loading) {
+    return <ActivityIndicator style={{ marginVertical: 10 }} color={COLORS.primary} />;
+  }
+
+  const photoStyle = {
+    width: '100%' as const,
+    height: 220,
+    borderRadius: RADIUS.md,
+    marginTop: SPACING.sm,
+    backgroundColor: COLORS.bg,
+  };
+
+  return (
+    <View style={{ gap: SPACING.sm }}>
+      {showImage ? (
+        <TouchableOpacity onPress={() => void openUrlSafe(uri)} activeOpacity={0.9}>
+          <Image source={{ uri }} style={photoStyle} resizeMode="contain" onError={() => setImgErr(true)} />
+        </TouchableOpacity>
+      ) : null}
+      {imgErr || !showImage ? (
+        <TouchableOpacity
+          onPress={() => void openUrlSafe(uri)}
+          style={{ alignSelf: 'flex-start', paddingVertical: 8, paddingHorizontal: 12, borderRadius: RADIUS.md, borderWidth: 1, borderColor: COLORS.info + '44', backgroundColor: COLORS.info + '10' }}
+        >
+          <Text style={{ fontFamily: FONT_FAMILY.bodySemi, fontSize: FONT_SIZE.sm, color: COLORS.info }}>
+            {isLikelyPdfUrl(fileUrl) ? 'View PDF (opens externally)' : isLikelyImageUrl(fileUrl) ? 'Open image externally' : 'View attachment'}
+          </Text>
+        </TouchableOpacity>
+      ) : (
+        <TouchableOpacity onPress={() => void openUrlSafe(uri)}>
+          <Text style={{ fontFamily: FONT_FAMILY.bodySemi, fontSize: FONT_SIZE.sm, color: COLORS.info, marginTop: 2 }}>Open full size</Text>
+        </TouchableOpacity>
+      )}
+    </View>
+  );
+}
+
 async function openWhatsAppWithMessage(message: string) {
   const enc = encodeURIComponent(message);
   const app = `whatsapp://send?text=${enc}`;
@@ -115,6 +193,10 @@ export default function AssignmentDetailScreen({ route, navigation }: any) {
   const [submissionText, setSubmissionText] = useState('');
   const [filePublicUrl, setFilePublicUrl] = useState<string | null>(null);
   const [filePreviewUri, setFilePreviewUri] = useState<string | null>(null);
+  /** Signed or public URL for in-app preview when there is no local preview URI. */
+  const [resolvedUploadViewUrl, setResolvedUploadViewUrl] = useState<string | null>(null);
+  /** Display name for last picked PDF (local UX only; cleared on reload). */
+  const [pendingAttachmentName, setPendingAttachmentName] = useState<string | null>(null);
   const [uploadingFile, setUploadingFile] = useState(false);
   const [gradingId, setGradingId] = useState<string | null>(null);
   const [gradeInput, setGradeInput] = useState('');
@@ -152,9 +234,11 @@ export default function AssignmentDetailScreen({ route, navigation }: any) {
         const fu = mine?.file_url ?? null;
         setFilePublicUrl(fu);
         setFilePreviewUri(null);
+        setPendingAttachmentName(null);
       } else {
         setFilePublicUrl(null);
         setFilePreviewUri(null);
+        setPendingAttachmentName(null);
       }
     } catch (error: any) {
       Alert.alert('Error', error.message);
@@ -166,6 +250,21 @@ export default function AssignmentDetailScreen({ route, navigation }: any) {
   useEffect(() => {
     load();
   }, [load]);
+
+  useEffect(() => {
+    if (!filePublicUrl || filePreviewUri) {
+      setResolvedUploadViewUrl(null);
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      const v = await getR2SignedViewUrl(filePublicUrl);
+      if (!cancelled) setResolvedUploadViewUrl(v ?? filePublicUrl);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [filePublicUrl, filePreviewUri]);
 
   const saveGrade = async (submissionId: string) => {
     const grade = Number(gradeInput);
@@ -205,6 +304,15 @@ export default function AssignmentDetailScreen({ route, navigation }: any) {
     return url;
   };
 
+  const uploadPickedPdf = async (localUri: string, mimeHint: string | null): Promise<string> => {
+    if (!profile?.id) throw new Error('Not signed in');
+    const key = `assignment-submissions/${profile.id}/${Date.now()}.pdf`;
+    const mime = mimeHint && mimeHint.includes('pdf') ? mimeHint : 'application/pdf';
+    const url = await uploadToR2(localUri, key, mime);
+    if (!url) throw new Error('Upload did not return a URL');
+    return url;
+  };
+
   const pickFromLibrary = async () => {
     if (!profile || mySubmission?.grade != null) return;
     const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
@@ -225,6 +333,7 @@ export default function AssignmentDetailScreen({ route, navigation }: any) {
       const url = await uploadPickedAsset(localUri, asset.mimeType ?? null);
       setFilePublicUrl(url);
       setFilePreviewUri(localUri);
+      setPendingAttachmentName(null);
     } catch (e: any) {
       Alert.alert('Upload failed', e?.message ?? 'Could not upload file');
     } finally {
@@ -248,8 +357,36 @@ export default function AssignmentDetailScreen({ route, navigation }: any) {
       const url = await uploadPickedAsset(localUri, asset.mimeType ?? 'image/jpeg');
       setFilePublicUrl(url);
       setFilePreviewUri(localUri);
+      setPendingAttachmentName(null);
     } catch (e: any) {
       Alert.alert('Upload failed', e?.message ?? 'Could not upload photo');
+    } finally {
+      setUploadingFile(false);
+    }
+  };
+
+  const pickPdf = async () => {
+    if (!profile || mySubmission?.grade != null) return;
+    setUploadingFile(true);
+    try {
+      const res = await DocumentPicker.getDocumentAsync({
+        type: 'application/pdf',
+        multiple: false,
+        copyToCacheDirectory: true,
+      });
+      if (res.canceled) return;
+      const file = res.assets?.[0];
+      if (!file?.uri) {
+        Alert.alert('PDF', 'Could not read the selected file.');
+        return;
+      }
+      const name = (file.name && file.name.trim()) || 'submission.pdf';
+      const url = await uploadPickedPdf(file.uri, file.mimeType ?? null);
+      setFilePublicUrl(url);
+      setFilePreviewUri(null);
+      setPendingAttachmentName(name);
+    } catch (e: any) {
+      Alert.alert('Upload failed', e?.message ?? 'Could not upload PDF');
     } finally {
       setUploadingFile(false);
     }
@@ -258,6 +395,7 @@ export default function AssignmentDetailScreen({ route, navigation }: any) {
   const clearAttachment = () => {
     setFilePublicUrl(null);
     setFilePreviewUri(null);
+    setPendingAttachmentName(null);
   };
 
   const shareToParentsWhatsApp = () => {
@@ -284,7 +422,7 @@ export default function AssignmentDetailScreen({ route, navigation }: any) {
     const textOk = submissionText.trim().length > 0;
     const fileOk = !!filePublicUrl;
     if (!textOk && !fileOk) {
-      Alert.alert('Submission required', 'Write an answer or attach a photo before submitting.');
+      Alert.alert('Submission required', 'Write an answer or attach a photo or PDF before submitting.');
       return;
     }
 
@@ -435,15 +573,7 @@ export default function AssignmentDetailScreen({ route, navigation }: any) {
                       </View>
 
                       {submission.submission_text ? <Text style={styles.submissionText}>{submission.submission_text}</Text> : null}
-                      {submission.file_url && isLikelyImageUrl(submission.file_url) ? (
-                        <TouchableOpacity onPress={() => Linking.openURL(submission.file_url!)} activeOpacity={0.9}>
-                          <Image source={{ uri: submission.file_url }} style={styles.subPhoto} resizeMode="contain" />
-                        </TouchableOpacity>
-                      ) : submission.file_url ? (
-                        <TouchableOpacity onPress={() => Linking.openURL(submission.file_url!)}>
-                          <Text style={styles.linkText}>Open attachment</Text>
-                        </TouchableOpacity>
-                      ) : null}
+                      {submission.file_url ? <SubmissionAttachmentView fileUrl={submission.file_url} /> : null}
                       {submission.feedback ? <Text style={styles.feedback}>Feedback: {submission.feedback}</Text> : null}
                       {pct != null ? <Text style={[styles.scoreText, { color: gradeColor }]}>{submission.grade}/{assignment.max_points ?? 100} · {pct}%</Text> : null}
 
@@ -495,15 +625,27 @@ export default function AssignmentDetailScreen({ route, navigation }: any) {
               </View>
             )}
 
+            {mySubmission?.file_url ? (
+              <View style={styles.sectionCard}>
+                <Text style={styles.sectionTitle}>Submitted file</Text>
+                <SubmissionAttachmentView fileUrl={mySubmission.file_url} />
+              </View>
+            ) : null}
+
             <View style={styles.sectionCard}>
               <Text style={styles.sectionTitle}>{mySubmission ? 'Update Submission' : 'Submit Assignment'}</Text>
-              <Text style={styles.attachHint}>Add a photo from your camera or library (optional). You can submit text only, photo only, or both.</Text>
+              <Text style={styles.attachHint}>
+                Attach a photo (camera or library) or a PDF. You can submit text only, a file only, or both.
+              </Text>
               <View style={styles.attachRow}>
                 <TouchableOpacity style={styles.attachChip} onPress={pickFromCamera} disabled={uploadingFile || submitting || !!mySubmission?.grade}>
                   <Text style={styles.attachChipText}>Take photo</Text>
                 </TouchableOpacity>
                 <TouchableOpacity style={styles.attachChip} onPress={pickFromLibrary} disabled={uploadingFile || submitting || !!mySubmission?.grade}>
                   <Text style={styles.attachChipText}>Choose photo</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={styles.attachChip} onPress={pickPdf} disabled={uploadingFile || submitting || !!mySubmission?.grade}>
+                  <Text style={styles.attachChipText}>Choose PDF</Text>
                 </TouchableOpacity>
                 {(filePreviewUri || filePublicUrl) && !mySubmission?.grade ? (
                   <TouchableOpacity style={styles.attachChipClear} onPress={clearAttachment}>
@@ -513,9 +655,24 @@ export default function AssignmentDetailScreen({ route, navigation }: any) {
               </View>
               {uploadingFile ? <ActivityIndicator style={{ marginVertical: 8 }} color={COLORS.primary} /> : null}
               {(filePreviewUri || filePublicUrl) && isLikelyImageUrl(filePreviewUri || filePublicUrl || '') ? (
-                <Image source={{ uri: filePreviewUri || filePublicUrl || '' }} style={styles.previewPhoto} resizeMode="contain" />
+                <Image
+                  source={{ uri: filePreviewUri || resolvedUploadViewUrl || filePublicUrl || '' }}
+                  style={styles.previewPhoto}
+                  resizeMode="contain"
+                />
+              ) : filePublicUrl && isLikelyPdfUrl(filePublicUrl) ? (
+                <View style={{ marginBottom: SPACING.sm, gap: 6 }}>
+                  {pendingAttachmentName ? (
+                    <Text style={{ fontFamily: FONT_FAMILY.bodySemi, fontSize: FONT_SIZE.xs, color: COLORS.textSecondary }} numberOfLines={2}>
+                      PDF · {pendingAttachmentName}
+                    </Text>
+                  ) : null}
+                  <TouchableOpacity onPress={() => void openUrlSafe(resolvedUploadViewUrl || filePublicUrl)}>
+                    <Text style={styles.linkText}>Preview / open PDF</Text>
+                  </TouchableOpacity>
+                </View>
               ) : filePublicUrl ? (
-                <TouchableOpacity onPress={() => Linking.openURL(filePublicUrl)}>
+                <TouchableOpacity onPress={() => void openUrlSafe(resolvedUploadViewUrl || filePublicUrl)}>
                   <Text style={styles.linkText}>View uploaded file</Text>
                 </TouchableOpacity>
               ) : null}

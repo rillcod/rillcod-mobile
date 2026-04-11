@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback, useRef } from 'react';
+import React, { useEffect, useState, useCallback, useRef, useMemo } from 'react';
 import {
   View,
   Text,
@@ -10,6 +10,7 @@ import {
   Dimensions,
   Platform,
   Linking,
+  Modal,
 } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -18,7 +19,7 @@ import { useAuth } from '../../contexts/AuthContext';
 import { useTheme } from '../../contexts/ThemeContext';
 import { dashboardService } from '../../services/dashboard.service';
 import { notificationService } from '../../services/notification.service';
-import { appSettingsService } from '../../services/app-settings.service';
+import { announcementService } from '../../services/announcement.service';
 import { OfflineBanner } from '../../components/ui/OfflineBanner';
 import { FONT_FAMILY } from '../../constants/typography';
 import { SPACING, RADIUS } from '../../constants/spacing';
@@ -179,7 +180,7 @@ const ACTION_SCREENS: Record<string, string> = {
   Transactions: ROUTES.Transactions,
   Import: ROUTES.StudentImport,
   Feedback: ROUTES.ParentFeedback,
-  'Bulk Pay': ROUTES.BulkPayments,
+  'Bulk Pay': ROUTES.Payments,
   'Report Builder': ROUTES.ReportBuilder,
   Timetable: ROUTES.Timetable,
   Classes: ROUTES.Classes,
@@ -194,13 +195,13 @@ const ACTION_SCREENS: Record<string, string> = {
   ReportBuilder: ROUTES.ReportBuilder,
   Assignments: ROUTES.Assignments,
   Messages: ROUTES.Messages,
-  Notifications: TAB_ROUTES.Notifications,
+  Alerts: TAB_ROUTES.Alerts,
   Newsletters: ROUTES.Newsletters,
   Settings: ROUTES.Settings,
   Analytics: ROUTES.Analytics,
   Progress: ROUTES.Progress,
   SchoolOverview: ROUTES.SchoolOverview,
-  SchoolBilling: ROUTES.SchoolBilling,
+  SchoolBilling: ROUTES.Payments,
   Grades: ROUTES.Grades,
   ManageCertificates: ROUTES.ManageCertificates,
   Certificates: ROUTES.Certificates,
@@ -230,15 +231,11 @@ const ACTION_SCREENS: Record<string, string> = {
 };
 
 /**
- * Admin home quick actions — order mirrors web `DashboardNavigation` (admin): People → bulk ops →
- * academics/reports → finance → comms. Approvals & Users stay on the admin tab bar.
+ * Admin home quick actions — order mirrors web `DashboardNavigation` (admin): People hub (bulk register,
+ * enrol, wipe, feedback, approvals) → academics/reports → finance → comms. People & Payments sit on the tab bar.
  */
 const ADMIN_HOME_LINKS = [
   { icon: 'PH', label: 'People hub', screen: ROUTES.PeopleHub, color: COLORS.primary },
-  { icon: 'PF', label: 'Parent Feedback', screen: ROUTES.ParentFeedback, color: COLORS.accent },
-  { icon: 'BR', label: 'Register Students', screen: ROUTES.BulkRegister, color: COLORS.success },
-  { icon: 'EN', label: 'Enrol Students', screen: ROUTES.EnrolStudents, color: COLORS.success },
-  { icon: 'WB', label: 'Wipe Students', screen: ROUTES.WipeStudents, color: COLORS.error },
   { icon: 'ID', label: 'Card Builder', screen: ROUTES.CardBuilder, color: COLORS.gold },
   { icon: 'PR', label: 'Programs', screen: ROUTES.Programs, color: COLORS.info },
   { icon: 'RB', label: 'Report Builder', screen: ROUTES.ReportBuilder, color: COLORS.accent },
@@ -248,22 +245,21 @@ const ADMIN_HOME_LINKS = [
   { icon: 'CB', label: 'CBT', screen: ROUTES.CBT, color: COLORS.warning },
   { icon: 'AN', label: 'Analytics', screen: ROUTES.Analytics, color: COLORS.success },
   { icon: 'IT', label: 'IoT', screen: ROUTES.IoT, color: COLORS.info },
-  { icon: 'PM', label: 'Payments', screen: ROUTES.Payments, color: COLORS.warning },
-  { icon: 'BP', label: 'Bulk Payments', screen: ROUTES.BulkPayments, color: COLORS.warning },
   { icon: 'NW', label: 'Newsletters', screen: ROUTES.Newsletters, color: COLORS.accent },
   { icon: 'SG', label: 'Settings', screen: ROUTES.Settings, color: COLORS.textMuted },
 ];
 
 /** Order aligned with web `DashboardNavigation` (teacher): Teaching → Students → Reports → Content → community hubs. */
 const TEACHER_QUICK_LINKS: QuickLink[] = [
-  { icon: 'PH', label: 'People hub', screen: ROUTES.PeopleHub, color: COLORS.primary, desc: 'Students, parents, approvals, imports, and bulk enrol' },
+  { icon: 'PH', label: 'People hub', screen: ROUTES.PeopleHub, color: COLORS.primary, desc: 'Students, parents, feedback inbox, approvals, imports, bulk enrol' },
+  { icon: 'AL', label: 'Alerts', screen: ROUTES.NotificationInbox, color: COLORS.info, desc: 'Announcements and unread alerts' },
+  { icon: 'ID', label: 'Profile', screen: ROUTES.UserProfile, color: COLORS.textMuted, desc: 'Account details and settings' },
   { icon: 'CL', label: 'My Classes', screen: ROUTES.Classes, color: COLORS.primary, desc: 'Your class rosters, sessions, and detail views (web: My Classes)' },
   { icon: 'LS', label: 'Lessons', screen: ROUTES.Lessons, color: COLORS.info, desc: 'Manage lesson content and delivery sequence' },
   { icon: 'AS', label: 'Assignments', screen: ROUTES.Assignments, color: COLORS.warning, desc: 'Create, review, and grade submissions' },
   { icon: 'CB', label: 'CBT Centre', screen: ROUTES.CBT, color: COLORS.primary, desc: 'Manage exams and computer-based tests' },
   { icon: 'AT', label: 'Attendance', screen: ROUTES.Attendance, color: COLORS.success, desc: 'Register student presence and view sessions' },
   { icon: 'TT', label: 'My week', screen: ROUTES.Timetable, color: COLORS.info, desc: 'Weekly timetable and room slots (web: Timetable)' },
-  { icon: 'PF', label: 'Parent Feedback', screen: ROUTES.ParentFeedback, color: COLORS.accent, desc: 'Staff inbox for parent messages' },
   { icon: 'PJ', label: 'Projects', screen: ROUTES.Projects, color: COLORS.primary, desc: 'Lab projects and coursework' },
   { icon: 'BR', label: 'Register Students', screen: ROUTES.BulkRegister, color: COLORS.success, desc: 'Batch registration workflow' },
   { icon: 'AQ', label: 'Approvals', screen: ROUTES.Approvals, color: COLORS.success, desc: 'Pending student & summer-school queue' },
@@ -279,7 +275,7 @@ const TEACHER_QUICK_LINKS: QuickLink[] = [
 /** Mirrors web school sidebar: overview → roster → classes → ops → reports → finance. */
 const SCHOOL_QUICK_LINKS: QuickLink[] = [
   { icon: 'OV', label: 'School Overview', screen: ROUTES.SchoolOverview, color: COLORS.success, desc: 'Open school command metrics and health' },
-  { icon: 'PH', label: 'People hub', screen: ROUTES.PeopleHub, color: COLORS.primary, desc: 'Students, teachers, parents, imports, and enrolment' },
+  { icon: 'PH', label: 'People hub', screen: ROUTES.PeopleHub, color: COLORS.primary, desc: 'Students, teachers, parents, feedback, imports, enrolment' },
   { icon: 'CL', label: 'Classes', screen: ROUTES.Classes, color: COLORS.primary, desc: 'Class rosters and teaching groups' },
   { icon: 'AT', label: 'Attendance', screen: ROUTES.Attendance, color: COLORS.success, desc: 'Presence sessions and registers' },
   { icon: 'TT', label: 'Timetable', screen: ROUTES.Timetable, color: COLORS.info, desc: 'Weekly schedule for your school' },
@@ -287,10 +283,8 @@ const SCHOOL_QUICK_LINKS: QuickLink[] = [
   { icon: 'RP', label: 'Reports', screen: ROUTES.Reports, color: COLORS.accent, desc: 'Review published reports and outcomes' },
   { icon: 'GR', label: 'Grades', screen: ROUTES.Grades, color: COLORS.accent, desc: 'School-wide graded work' },
   { icon: 'PR', label: 'Progress', screen: ROUTES.Progress, color: COLORS.primary, desc: 'Track school-wide performance trends' },
-  { icon: 'BL', label: 'Billing', screen: ROUTES.SchoolBilling, color: COLORS.warning, desc: 'Outstanding fees and Paystack collection' },
-  { icon: 'PM', label: 'Payments', screen: ROUTES.Payments, color: COLORS.warning, desc: 'Finance hub · smart invoice checks, receipts, bank accounts' },
-  { icon: 'BP', label: 'Bulk Payments', screen: ROUTES.BulkPayments, color: COLORS.warning, desc: 'Batch invoices and receipts' },
-  { icon: 'AL', label: 'Notifications', screen: TAB_ROUTES.Notifications, color: COLORS.info, desc: 'Monitor school notices and unread alerts' },
+  { icon: 'PM', label: 'Payments', screen: ROUTES.Payments, color: COLORS.warning, desc: 'Your school invoices & receipts; network policy set by admin' },
+  { icon: 'AL', label: 'Alerts', screen: TAB_ROUTES.Alerts, color: COLORS.info, desc: 'Announcements, alerts, and delivery preferences' },
   { icon: 'MG', label: 'Messages', screen: ROUTES.Messages, color: COLORS.info, desc: 'Coordinate with admin, staff, and parents' },
 ];
 
@@ -300,7 +294,7 @@ const PARENT_QUICK_LINKS: QuickLink[] = [
   { icon: 'RP', label: 'Report Cards', screen: ROUTES.ParentResults, color: COLORS.primary, desc: 'Open published reports and term results' },
   { icon: 'IV', label: 'Invoices', screen: ROUTES.ParentInvoices, color: COLORS.warning, desc: 'Pay fees and review invoice status' },
   { icon: 'PF', label: 'Feedback', screen: ROUTES.ParentFeedback, color: COLORS.accent, desc: 'Send feedback and keep communication active' },
-  { icon: 'AL', label: 'Notifications', screen: TAB_ROUTES.Notifications, color: COLORS.info, desc: 'Review new school alerts and updates' },
+  { icon: 'AL', label: 'Alerts', screen: TAB_ROUTES.Alerts, color: COLORS.info, desc: 'Announcements and inbox updates' },
   { icon: 'NW', label: 'Newsletters', screen: ROUTES.Newsletters, color: COLORS.accent, desc: 'Read school newsletters and communication posts' },
   { icon: 'MG', label: 'Messages', screen: ROUTES.Messages, color: COLORS.info, desc: 'Reach teachers and school staff' },
 ];
@@ -365,6 +359,8 @@ export default function DashboardScreen({ navigation }: any) {
   const [studentMission, setStudentMission] = useState<StudentMission | null>(null);
   const [studentLiveSessions, setStudentLiveSessions] = useState<StudentLiveSessionRow[]>([]);
   const [dashboardAnnouncements, setDashboardAnnouncements] = useState<DashboardAnnouncement[]>([]);
+  const [announcementReadIds, setAnnouncementReadIds] = useState<Set<string>>(() => new Set());
+  const [announcementDetail, setAnnouncementDetail] = useState<DashboardAnnouncement | null>(null);
   const [studentPerformance, setStudentPerformance] = useState<StudentPerformanceItem[]>([]);
   const [studentDueSoon, setStudentDueSoon] = useState<StudentDueItem[]>([]);
   const [refreshing, setRefreshing] = useState(false);
@@ -372,11 +368,29 @@ export default function DashboardScreen({ navigation }: any) {
   const [signingOut, setSigningOut] = useState(false);
   const [lastSyncAt, setLastSyncAt] = useState<Date | null>(null);
   const [loadFailures, setLoadFailures] = useState(0);
-  const [homeBannerText, setHomeBannerText] = useState<string | null>(null);
   const loadingRef = useRef(false);
 
   const role = profile?.role ?? 'student';
   const inboxUnread = useInboxUnreadCount(profile?.id);
+
+  const unreadDashboardAnnouncements = useMemo(
+    () => dashboardAnnouncements.filter((a) => !announcementReadIds.has(a.id)),
+    [dashboardAnnouncements, announcementReadIds],
+  );
+
+  const confirmMarkAnnouncementRead = useCallback(async () => {
+    const uid = profile?.id;
+    const row = announcementDetail;
+    if (!uid || !row) return;
+    try {
+      await announcementService.markAnnouncementRead(uid, row.id);
+      setAnnouncementReadIds((prev) => new Set(prev).add(row.id));
+      setAnnouncementDetail(null);
+      await light();
+    } catch {
+      /* ignore */
+    }
+  }, [announcementDetail, profile?.id, light]);
 
   const getRoleConfig = () => {
     switch (role) {
@@ -722,14 +736,15 @@ export default function DashboardScreen({ navigation }: any) {
           created_at: a.created_at,
         }))
       );
+      try {
+        const readList = await announcementService.listReadAnnouncementIds(profile.id);
+        setAnnouncementReadIds(new Set(readList));
+      } catch {
+        setAnnouncementReadIds(new Set());
+      }
     } catch {
       setDashboardAnnouncements([]);
-    }
-    try {
-      const banner = await appSettingsService.getValue('dashboard_home_banner');
-      setHomeBannerText(banner);
-    } catch {
-      setHomeBannerText(null);
+      setAnnouncementReadIds(new Set());
     }
   }, [profile, loadAdminData, loadTeacherData, loadSchoolData, loadParentData, loadStudentData]);
 
@@ -808,11 +823,7 @@ export default function DashboardScreen({ navigation }: any) {
               ) : null}
               <TouchableOpacity
                 style={styles.avatarBtn}
-                onPress={() =>
-                  role === 'admin'
-                    ? safeNavigate(ROUTES.UserProfile)
-                    : safeNavigate(TAB_ROUTES.Profile)
-                }
+                onPress={() => safeNavigate(ROUTES.UserProfile)}
               >
                 <LinearGradient colors={colors.gradPrimary} style={styles.avatarFallback}>
                   <Text style={styles.avatarInitial}>{(profile?.full_name ?? 'U')[0].toUpperCase()}</Text>
@@ -844,23 +855,6 @@ export default function DashboardScreen({ navigation }: any) {
           </View>
         </View>
 
-        {homeBannerText ? (
-          <View
-            style={{
-              marginHorizontal: SPACING.xl,
-              marginBottom: SPACING.md,
-              padding: SPACING.md,
-              borderRadius: RADIUS.lg,
-              borderWidth: 1,
-              borderColor: colors.primary + '44',
-              backgroundColor: colors.primaryPale,
-            }}
-          >
-            <Text style={{ fontFamily: FONT_FAMILY.bodySemi, fontSize: 12, color: colors.primary, marginBottom: 4 }}>NOTICE</Text>
-            <Text style={{ fontFamily: FONT_FAMILY.body, fontSize: 14, color: colors.textPrimary, lineHeight: 20 }}>{homeBannerText}</Text>
-          </View>
-        ) : null}
-
         <SectionErrorBoundary sectionName="Presence List">
           <PresenceList />
         </SectionErrorBoundary>
@@ -876,24 +870,32 @@ export default function DashboardScreen({ navigation }: any) {
           </View>
         </View>
 
-        {dashboardAnnouncements.length > 0 && (
+        {unreadDashboardAnnouncements.length > 0 && (
           <SectionErrorBoundary sectionName="Announcements">
             <View style={styles.section}>
               <View style={styles.sectionHeader}>
                 <Text style={[styles.sectionTitle, { color: colors.textMuted }]}>ANNOUNCEMENTS</Text>
                 <View style={[styles.sectionLine, { backgroundColor: colors.accent }]} />
               </View>
+              <Text style={[styles.dismissHint, { color: colors.textMuted }]}>
+                Data from your school or admin — tap to read the full post, then mark as read. Open Alerts for the full list including read items.
+              </Text>
               <View style={{ gap: SPACING.sm }}>
-                {dashboardAnnouncements.map((a) => (
-                  <View
+                {unreadDashboardAnnouncements.map((a) => (
+                  <TouchableOpacity
                     key={a.id}
-                    style={[styles.announcementCard, { borderColor: colors.border, backgroundColor: colors.bgCard }]}
+                    activeOpacity={0.88}
+                    onPress={() => setAnnouncementDetail(a)}
+                    style={[styles.announcementCard, { borderColor: colors.accent + '55', backgroundColor: colors.bgCard }]}
                   >
-                    <Text style={[styles.announcementTitle, { color: colors.textPrimary }]}>{a.title}</Text>
-                    <Text style={[styles.announcementBody, { color: colors.textSecondary }]} numberOfLines={5}>
+                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8 }}>
+                      <Text style={[styles.announcementTitle, { color: colors.textPrimary, flex: 1 }]}>{a.title}</Text>
+                      <Text style={{ fontFamily: FONT_FAMILY.bodyBold, fontSize: 9, color: colors.primary }}>READ</Text>
+                    </View>
+                    <Text style={[styles.announcementBody, { color: colors.textSecondary }]} numberOfLines={4}>
                       {a.content}
                     </Text>
-                  </View>
+                  </TouchableOpacity>
                 ))}
               </View>
             </View>
@@ -1014,7 +1016,7 @@ export default function DashboardScreen({ navigation }: any) {
                 <View style={{ flex: 1 }}>
                   <Text style={[styles.activityTitle, { color: colors.textPrimary }]}>Alerts & inbox</Text>
                   <Text style={[styles.activityDesc, { color: colors.textSecondary }]}>
-                    Notifications, messages, and newsletters
+                    Announcements, system alerts, messages, and newsletters
                   </Text>
                 </View>
                 {inboxUnread > 0 ? (
@@ -1228,7 +1230,7 @@ export default function DashboardScreen({ navigation }: any) {
                   <TouchableOpacity
                     style={[styles.featureCard, { borderColor: colors.border, backgroundColor: colors.bgCard }]}
                     activeOpacity={0.85}
-                    onPress={() => safeNavigate(TAB_ROUTES.Notifications)}
+                    onPress={() => safeNavigate(TAB_ROUTES.Alerts)}
                   >
                     <Text style={[styles.featureEyebrow, { color: parentHeadline.unreadNotifications > 0 ? colors.warning : colors.info }]}>
                       {parentHeadline.unreadNotifications > 0 ? 'NEW ALERTS' : 'INBOX QUIET'}
@@ -1289,7 +1291,7 @@ export default function DashboardScreen({ navigation }: any) {
                   <TouchableOpacity
                     style={[styles.featureCard, { borderColor: colors.border, backgroundColor: colors.bgCard }]}
                     activeOpacity={0.85}
-                    onPress={() => safeNavigate(TAB_ROUTES.Notifications)}
+                    onPress={() => safeNavigate(TAB_ROUTES.Alerts)}
                   >
                     <Text style={[styles.featureEyebrow, { color: schoolUnreadAlerts > 0 ? colors.info : colors.success }]}>
                       {schoolUnreadAlerts > 0 ? 'UNREAD ALERTS' : 'ALL CLEAR'}
@@ -1646,16 +1648,34 @@ export default function DashboardScreen({ navigation }: any) {
         )}
         </SectionErrorBoundary>
 
-        <MotiView from={{ opacity: 0 }} animate={{ opacity: 1 }} style={styles.banner}>
-          <LinearGradient colors={colors.gradPrimary} style={StyleSheet.absoluteFill} />
-          <Text style={[styles.badgeCode, { color: '#fff' }]}>Rillcod</Text>
-          <View>
-            <Text style={styles.bannerTitle}>RILLCOD ACADEMY CORE</Text>
-            <Text style={styles.bannerSub}>AFRICA'S PREMIER STEM ENGINE · NIGERIA</Text>
-          </View>
-        </MotiView>
         <View style={{ height: 24 }} />
       </ScrollView>
+
+      <Modal visible={!!announcementDetail} transparent animationType="fade" onRequestClose={() => setAnnouncementDetail(null)}>
+        <View style={{ flex: 1, backgroundColor: '#000000aa', justifyContent: 'center', paddingHorizontal: SPACING.xl }}>
+          <View style={{ borderRadius: RADIUS.lg, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.bgCard, padding: SPACING.lg, maxHeight: '85%' }}>
+            <Text style={{ fontFamily: FONT_FAMILY.bodyBold, fontSize: 11, color: colors.primary, letterSpacing: 1, marginBottom: 6 }}>ANNOUNCEMENT</Text>
+            <Text style={{ fontFamily: FONT_FAMILY.display, fontSize: 20, color: colors.textPrimary, marginBottom: SPACING.md }}>{announcementDetail?.title}</Text>
+            <ScrollView style={{ maxHeight: 320 }} showsVerticalScrollIndicator>
+              <Text style={{ fontFamily: FONT_FAMILY.body, fontSize: 14, lineHeight: 22, color: colors.textSecondary }}>{announcementDetail?.content}</Text>
+            </ScrollView>
+            <View style={{ flexDirection: 'row', gap: SPACING.sm, marginTop: SPACING.lg }}>
+              <TouchableOpacity
+                style={{ flex: 1, paddingVertical: 12, borderRadius: RADIUS.sm, borderWidth: 1, borderColor: colors.border, alignItems: 'center' }}
+                onPress={() => setAnnouncementDetail(null)}
+              >
+                <Text style={{ fontFamily: FONT_FAMILY.bodyBold, fontSize: 12, color: colors.textSecondary }}>CLOSE</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={{ flex: 1, paddingVertical: 12, borderRadius: RADIUS.sm, backgroundColor: colors.primary, alignItems: 'center' }}
+                onPress={() => void confirmMarkAnnouncementRead()}
+              >
+                <Text style={{ fontFamily: FONT_FAMILY.bodyBold, fontSize: 12, color: '#fff' }}>MARK AS READ</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -1690,7 +1710,8 @@ const getStyles = (colors: any) => StyleSheet.create({
   announcementCard: { borderWidth: 1, borderRadius: RADIUS.sm, padding: 14, gap: 6 },
   announcementTitle: { fontFamily: FONT_FAMILY.bodyBold, fontSize: 13, letterSpacing: 0.3 },
   announcementBody: { fontFamily: FONT_FAMILY.body, fontSize: 12, lineHeight: 18 },
-  sectionHeader: { flexDirection: 'row', alignItems: 'center', gap: 12, marginBottom: 16 },
+  sectionHeader: { flexDirection: 'row', alignItems: 'center', gap: 12, marginBottom: 8 },
+  dismissHint: { fontFamily: FONT_FAMILY.body, fontSize: 10, lineHeight: 14, marginBottom: 12 },
   sectionTitle: { fontFamily: FONT_FAMILY.bodyBold, fontSize: 10, letterSpacing: 2 },
   sectionLine: { height: 2, flex: 1, borderRadius: 1 },
   actionsGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
@@ -1734,7 +1755,6 @@ const getStyles = (colors: any) => StyleSheet.create({
   activityDesc: { fontFamily: FONT_FAMILY.body, fontSize: 11, marginTop: 2 },
   activityTime: { fontFamily: FONT_FAMILY.mono, fontSize: 9 },
   codeIcon: { fontFamily: FONT_FAMILY.bodyBold, fontSize: 12, letterSpacing: 1 },
-  badgeCode: { fontFamily: FONT_FAMILY.bodyBold, fontSize: 16, letterSpacing: 1 },
   annCard: { flexDirection: 'row', borderWidth: 1, borderRadius: RADIUS.sm, marginBottom: 10, overflow: 'hidden' },
   annBar: { width: 4 },
   annContent: { flex: 1, padding: 12, gap: 4 },
@@ -1744,9 +1764,6 @@ const getStyles = (colors: any) => StyleSheet.create({
   emptyCard: { padding: 24, alignItems: 'center', gap: 10, borderRadius: RADIUS.sm, borderWidth: 1 },
   emptyText: { fontFamily: FONT_FAMILY.mono, fontSize: 9, letterSpacing: 1, textAlign: 'center' },
   emptyCode: { fontFamily: FONT_FAMILY.bodyBold, fontSize: 18, letterSpacing: 1 },
-  banner: { marginHorizontal: SPACING.xl, marginTop: 20, borderRadius: RADIUS.sm, overflow: 'hidden', flexDirection: 'row', alignItems: 'center', padding: 16, gap: 12 },
-  bannerTitle: { fontFamily: FONT_FAMILY.display, fontSize: 16, color: '#fff', letterSpacing: 1 },
-  bannerSub: { fontFamily: FONT_FAMILY.bodyBold, fontSize: 9, color: 'rgba(255,255,255,0.7)', letterSpacing: 1.5 },
   labCard: { padding: 16, borderRadius: RADIUS.md, borderWidth: 1, flexDirection: 'row', alignItems: 'center', gap: 12, overflow: 'hidden', marginTop: 6 },
   labInfo: { flex: 1, gap: 4 },
   labTag: { fontFamily: FONT_FAMILY.bodyBold, fontSize: 9, letterSpacing: 2, marginBottom: 2 },

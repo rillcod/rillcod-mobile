@@ -46,6 +46,15 @@ function gradeColor(g: string | null | undefined) {
   return GRADE_COLOR[g ?? ''] ?? COLORS.textMuted;
 }
 
+/** Mirrors report card fee row — shown only on the student’s report screen, not on the home dashboard. */
+const REPORT_FEE_BADGES: Record<string, { bg: string; text: string; label: string }> = {
+  paid: { bg: '#d1fae5', text: '#065f46', label: 'PAID' },
+  outstanding: { bg: '#fee2e2', text: '#991b1b', label: 'OUTSTANDING' },
+  partial: { bg: '#fef3c7', text: '#92400e', label: 'PARTIAL' },
+  sponsored: { bg: '#dbeafe', text: '#1e40af', label: 'SPONSORED' },
+  waived: { bg: '#ede9fe', text: '#5b21b6', label: 'WAIVED' },
+};
+
 function GradeBar({ counts, total }: { counts: Record<string, number>; total: number }) {
   const grades = ['A', 'B', 'C', 'D', 'F'];
   const colors = [COLORS.success, '#10b981', COLORS.warning, '#f97316', COLORS.error];

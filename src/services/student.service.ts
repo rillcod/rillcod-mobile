@@ -339,10 +339,18 @@ export class StudentService {
     if (error) throw error;
   }
 
-  /** Public marketing registration → `students` pending row (approvals queue). */
-  async insertPublicStudentInterestRow(row: Database['public']['Tables']['students']['Insert']) {
-    const { error } = await supabase.from('students').insert(row);
+  /** Public marketing registration → `students` pending row (approvals queue). Returns `id` for Paystack checkout (RLS may block `.select()` for anon). */
+  async insertPublicStudentInterestRow(row: Database['public']['Tables']['students']['Insert']): Promise<{ id: string }> {
+    const id =
+      row.id ??
+      'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+        const r = (Math.random() * 16) | 0;
+        const v = c === 'x' ? r : (r & 0x3) | 0x8;
+        return v.toString(16);
+      });
+    const { error } = await supabase.from('students').insert({ ...row, id });
     if (error) throw error;
+    return { id };
   }
 }
 

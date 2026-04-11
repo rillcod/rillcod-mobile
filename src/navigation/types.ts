@@ -6,7 +6,7 @@ export type RootStackParamList = {
   PublicStudentRegistration: undefined;
   PublicSchoolRegistration: undefined;
   Main: undefined;
-  /** Stack-only entry points (e.g. admin without Alerts/Profile tabs). */
+  /** Stack-only entry points (e.g. admin without Alerts tab; profile via this route). */
   NotificationInbox: undefined;
   UserProfile: undefined;
   // Detail screens (accessible from tabs)
@@ -98,10 +98,16 @@ export type RootStackParamList = {
 export type TabParamList = {
   Dashboard: undefined;
   Learn: undefined;
-  Notifications: undefined;
-  Profile: undefined;
+  /** Bottom tab: school announcements + system alerts + delivery preferences. */
+  Alerts: undefined;
+  /** Bottom tab for student / parent / school: sign out only (profile via stack `UserProfile`). */
+  MainSignOut: undefined;
   /** Admin tab shell — distinct names so routing stays unambiguous vs stack routes. */
-  AdminApprovals: undefined;
-  AdminUsers: undefined;
+  AdminPeopleHub: undefined;
+  AdminPayments: undefined;
   AdminSignOut: undefined;
+  /** Teacher tab shell — replaces Alerts + Profile tabs. */
+  TeacherMyClass: undefined;
+  TeacherGrading: undefined;
+  TeacherSignOut: undefined;
 };

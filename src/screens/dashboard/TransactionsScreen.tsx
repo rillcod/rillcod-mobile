@@ -115,6 +115,15 @@ export default function TransactionsScreen({ navigation }: any) {
   const isSchool = profile?.role === 'school';
   const canView = isAdmin || isSchool;
 
+  const canApproveTransaction = useCallback(
+    (tx: TransactionRow) => {
+      if (isAdmin) return true;
+      if (!isSchool || !profile?.school_id || !tx.school_id) return false;
+      return tx.school_id === profile.school_id;
+    },
+    [isAdmin, isSchool, profile?.school_id],
+  );
+
   const load = useCallback(async () => {
     if (!profile || !canView) {
       setTransactions([]);
@@ -128,7 +137,10 @@ export default function TransactionsScreen({ navigation }: any) {
         paymentService.listFinanceConsoleTransactionsWithJoins({
           schoolId: isSchool && profile.school_id ? profile.school_id : undefined,
         }),
-        paymentService.listReceiptsForFinanceConsole(200),
+        paymentService.listReceiptsForFinanceConsole({
+          limit: 200,
+          schoolId: isSchool && profile.school_id ? profile.school_id : undefined,
+        }),
         paymentService.listInvoices({
           role: profile.role,
           userId: profile.id,
@@ -281,23 +293,29 @@ export default function TransactionsScreen({ navigation }: any) {
   }, [load]);
 
   const approveTransaction = useCallback(async (tx: TransactionRow) => {
-    if (!isAdmin) return;
+    if (!canApproveTransaction(tx)) return;
 
-    Alert.alert('Approve Transaction', `Mark ${tx.transaction_reference ?? 'this transaction'} as successful?`, [
+    const label =
+      (tx.payment_method ?? '').toLowerCase() === 'bank_transfer'
+        ? 'Verify bank transfer'
+        : 'Approve transaction';
+    const detail = `Mark ${tx.transaction_reference ?? 'this transaction'} as completed and set the linked invoice to paid?`;
+
+    Alert.alert(label, detail, [
       { text: 'Cancel', style: 'cancel' },
       {
-        text: 'Approve',
+        text: 'Confirm',
         onPress: async () => {
           setApprovingId(tx.id);
           try {
-            await updateTransactionStatus(tx, 'success');
+            await updateTransactionStatus(tx, 'completed');
           } finally {
             setApprovingId(null);
           }
         },
       },
     ]);
-  }, [isAdmin, updateTransactionStatus]);
+  }, [canApproveTransaction, updateTransactionStatus]);
 
   const markRefunded = useCallback((tx: TransactionRow) => {
     if (!isAdmin) return;
@@ -608,13 +626,19 @@ export default function TransactionsScreen({ navigation }: any) {
                           <Text style={styles.secondaryBtnText}>Open Invoices</Text>
                         </TouchableOpacity>
                       ) : null}
-                      {isAdmin && (tx.payment_status === 'pending' || tx.payment_status === 'processing') ? (
+                      {canApproveTransaction(tx) && (tx.payment_status === 'pending' || tx.payment_status === 'processing') ? (
                         <TouchableOpacity
                           style={[styles.primaryBtn, approvingId === tx.id && styles.btnDisabled]}
                           onPress={() => approveTransaction(tx)}
                           disabled={approvingId === tx.id}
                         >
-                          <Text style={styles.primaryBtnText}>{approvingId === tx.id ? 'Approving...' : 'Approve Payment'}</Text>
+                          <Text style={styles.primaryBtnText}>
+                            {approvingId === tx.id
+                              ? 'Saving…'
+                              : (tx.payment_method ?? '').toLowerCase() === 'bank_transfer'
+                                ? 'Verify & mark paid'
+                                : 'Mark completed'}
+                          </Text>
                         </TouchableOpacity>
                       ) : null}
                       {isAdmin && (tx.payment_status === 'success' || tx.payment_status === 'completed') ? (

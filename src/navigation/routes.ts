@@ -101,11 +101,14 @@ export type StackRouteName = (typeof ROUTES)[keyof typeof ROUTES];
 export const TAB_ROUTES = {
   Dashboard: 'Dashboard',
   Learn: 'Learn',
-  Notifications: 'Notifications',
-  Profile: 'Profile',
-  AdminApprovals: 'AdminApprovals',
-  AdminUsers: 'AdminUsers',
+  Alerts: 'Alerts',
+  MainSignOut: 'MainSignOut',
+  AdminPeopleHub: 'AdminPeopleHub',
+  AdminPayments: 'AdminPayments',
   AdminSignOut: 'AdminSignOut',
+  TeacherMyClass: 'TeacherMyClass',
+  TeacherGrading: 'TeacherGrading',
+  TeacherSignOut: 'TeacherSignOut',
 } as const satisfies { [K in keyof TabParamList]: K };
 
 export type TabRouteName = (typeof TAB_ROUTES)[keyof typeof TAB_ROUTES];

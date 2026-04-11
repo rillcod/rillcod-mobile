@@ -278,12 +278,16 @@ export default function ProfileScreen({ navigation }: any) {
         {
           text: t('profile.signOut'),
           style: 'destructive',
-          onPress: async () => {
-            await hapticError();
-            await signOut();
+          onPress: () => {
+            void light();
+            // Defer past Alert dismissal so navigation/auth state updates reliably (esp. Android).
+            setTimeout(() => {
+              void signOut();
+            }, 0);
           },
         },
-      ]
+      ],
+      { cancelable: true }
     );
   };
 
@@ -292,7 +296,7 @@ export default function ProfileScreen({ navigation }: any) {
       <StatusBar style={isDark ? 'light' : 'dark'} />
       <OfflineBanner />
 
-      <ScrollView showsVerticalScrollIndicator={false}>
+      <ScrollView showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
 
         {/* Hero Header */}
         <LinearGradient

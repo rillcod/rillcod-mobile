@@ -29,7 +29,8 @@ import { studentService } from '../../services/student.service';
 import { FONT_FAMILY, FONT_SIZE, LETTER_SPACING } from '../../constants/typography';
 import { SPACING, RADIUS } from '../../constants/spacing';
 import { ScreenHeader } from '../../components/ui/ScreenHeader';
-import { ROUTES } from '../../navigation/routes';
+import { BankTransferProofActions } from '../../components/payment/BankTransferProofActions';
+import { ROUTES, TAB_ROUTES } from '../../navigation/routes';
 
 type InvoiceStatus = 'draft' | 'sent' | 'paid' | 'overdue' | 'cancelled';
 type BillingTab = 'invoices' | 'transactions' | 'receipts' | 'accounts';
@@ -191,8 +192,6 @@ export default function PaymentsScreen({ navigation }: any) {
 
   const isAdmin = profile?.role === 'admin';
   const isSchool = profile?.role === 'school';
-  const isStudent = profile?.role === 'student';
-  const isParent = profile?.role === 'parent';
   const canManage = isAdmin || isSchool;
 
   const load = useCallback(async () => {
@@ -203,22 +202,20 @@ export default function PaymentsScreen({ navigation }: any) {
     }
 
     try {
-      let linkedStudentIds: string[] | null = null;
-      if (isParent) {
-        const ids = await schoolService.getParentStudentIds();
-        linkedStudentIds = (ids as string[]).filter(Boolean);
-      }
-
       const [invoiceData, transactionData, accountData, receiptRows] = await Promise.all([
-        isParent && linkedStudentIds?.length === 0 ? [] : paymentService.listInvoices({ role: profile.role, userId: profile.id, schoolId: profile.school_id }),
+        paymentService.listInvoices({ role: profile.role, userId: profile.id, schoolId: profile.school_id }),
         paymentService.listTransactions({
           role: profile.role,
           userId: profile.id,
           schoolId: profile.school_id,
-          forStudentIds: isParent ? linkedStudentIds : undefined,
         }),
         paymentService.listPaymentAccounts({ isAdmin, schoolId: profile.school_id }),
-        canManage ? paymentService.listReceiptRecords(100) : Promise.resolve([]),
+        canManage
+          ? paymentService.listReceiptRecords({
+              limit: 100,
+              schoolId: isSchool && profile.school_id ? profile.school_id : undefined,
+            })
+          : Promise.resolve([]),
       ]);
 
       setInvoices(
@@ -277,7 +274,7 @@ export default function PaymentsScreen({ navigation }: any) {
       setLoading(false);
       setRefreshing(false);
     }
-  }, [isAdmin, isParent, isSchool, isStudent, profile]);
+  }, [isAdmin, isSchool, profile]);
 
   useEffect(() => {
     load();
@@ -483,15 +480,16 @@ export default function PaymentsScreen({ navigation }: any) {
 
     setSavingAccount(true);
     try {
+      const ownerType = isSchool ? 'school' : accountForm.owner_type;
       const payload = {
         label: accountForm.label.trim(),
         bank_name: accountForm.bank_name.trim(),
         account_number: accountForm.account_number.trim(),
         account_name: accountForm.account_name.trim(),
         account_type: accountForm.account_type,
-        owner_type: accountForm.owner_type,
+        owner_type: ownerType,
         payment_note: accountForm.payment_note.trim() || null,
-        school_id: accountForm.owner_type === 'school' ? accountForm.school_id || profile?.school_id || null : null,
+        school_id: ownerType === 'school' ? accountForm.school_id || profile?.school_id || null : null,
         is_active: accountForm.is_active,
         created_by: profile?.id ?? null,
       };
@@ -1024,6 +1022,23 @@ export default function PaymentsScreen({ navigation }: any) {
     });
   };
 
+  const renderAccountCard = (account: PaymentAccount, index: number) => (
+    <MotiView key={account.id} from={{ opacity: 0, translateY: 10 }} animate={{ opacity: 1, translateY: 0 }} transition={{ delay: index * 20 }}>
+      <View style={[styles.card, { backgroundColor: colors.bgCard, borderColor: colors.border }]}>
+        <View style={styles.cardHeader}>
+          <Text style={[styles.transactionTitle, { color: colors.textPrimary }]} numberOfLines={1}>{account.label.toUpperCase()}</Text>
+          <View style={[styles.statusBadge, { backgroundColor: colors.primaryPale, borderColor: colors.primaryGlow }]}>
+            <Text style={[styles.statusText, { color: colors.primary }]}>{account.owner_type.toUpperCase()}</Text>
+          </View>
+        </View>
+        <Text style={[styles.cardTitle, { color: colors.textPrimary }]}>{account.bank_name}</Text>
+        <Text style={[styles.cardSub, { color: colors.textSecondary }]}>{account.account_name}</Text>
+        <Text style={[styles.accountNumber, { color: colors.textPrimary }]}>{account.account_number}</Text>
+        {account.payment_note ? <Text style={[styles.accountNote, { color: colors.textMuted }]}>{account.payment_note}</Text> : null}
+      </View>
+    </MotiView>
+  );
+
   const renderAccounts = () => {
     if (!accounts.length) {
       return (
@@ -1034,28 +1049,41 @@ export default function PaymentsScreen({ navigation }: any) {
       );
     }
 
-    return accounts.map((account, index) => (
-      <MotiView key={account.id} from={{ opacity: 0, translateY: 10 }} animate={{ opacity: 1, translateY: 0 }} transition={{ delay: index * 20 }}>
-        <View style={[styles.card, { backgroundColor: colors.bgCard, borderColor: colors.border }]}> 
-          <View style={styles.cardHeader}>
-            <Text style={[styles.transactionTitle, { color: colors.textPrimary }]} numberOfLines={1}>{account.label.toUpperCase()}</Text>
-            <View style={[styles.statusBadge, { backgroundColor: colors.primaryPale, borderColor: colors.primaryGlow }]}> 
-              <Text style={[styles.statusText, { color: colors.primary }]}>{account.owner_type.toUpperCase()}</Text>
+    if (isSchool) {
+      const official = accounts.filter((a) => a.owner_type === 'rillcod' || a.owner_type === 'global');
+      const schoolOwned = accounts.filter((a) => a.owner_type !== 'rillcod' && a.owner_type !== 'global');
+      return (
+        <>
+          {official.length ? (
+            <View style={{ marginBottom: 12 }}>
+              <Text style={[styles.sectionTitle, { color: colors.textMuted, marginBottom: 8, paddingHorizontal: 4 }]}>OFFICIAL PAY-IN (SHARE WITH FAMILIES)</Text>
+              {official.map((account, index) => renderAccountCard(account, index))}
             </View>
-          </View>
-          <Text style={[styles.cardTitle, { color: colors.textPrimary }]}>{account.bank_name}</Text>
-          <Text style={[styles.cardSub, { color: colors.textSecondary }]}>{account.account_name}</Text>
-          <Text style={[styles.accountNumber, { color: colors.textPrimary }]}>{account.account_number}</Text>
-          {account.payment_note ? <Text style={[styles.accountNote, { color: colors.textMuted }]}>{account.payment_note}</Text> : null}
-        </View>
-      </MotiView>
-    ));
+          ) : null}
+          {schoolOwned.length ? (
+            <View style={{ marginBottom: 12 }}>
+              <Text style={[styles.sectionTitle, { color: colors.textMuted, marginBottom: 8, paddingHorizontal: 4 }]}>YOUR SCHOOL COLLECTION ACCOUNTS</Text>
+              {schoolOwned.map((account, index) => renderAccountCard(account, index + official.length))}
+            </View>
+          ) : null}
+        </>
+      );
+    }
+
+    return accounts.map((account, index) => renderAccountCard(account, index));
   };
   return (
     <SafeAreaView style={styles.safe}>
-      <ScreenHeader title={canManage ? 'PAYMENTS HUB' : 'BILLING'} onBack={() => navigation.goBack()} />
+      <ScreenHeader
+        title={canManage ? 'PAYMENTS HUB' : 'BILLING'}
+        onBack={() =>
+          typeof navigation.canGoBack === 'function' && navigation.canGoBack()
+            ? navigation.goBack()
+            : navigation.navigate(TAB_ROUTES.Dashboard)
+        }
+      />
 
-      {canManage ? (
+      {canManage && isAdmin ? (
         <View style={{ paddingHorizontal: 20, paddingBottom: 8 }}>
           <TouchableOpacity
             onPress={() => navigation.navigate(ROUTES.BulkPayments)}
@@ -1151,6 +1179,23 @@ export default function PaymentsScreen({ navigation }: any) {
         </ScrollView>
       ) : null}
 
+      {tab === 'invoices' && canManage ? (
+        <View style={styles.ledgerCtaRow}>
+          <TouchableOpacity
+            style={[styles.ledgerCtaPrimary, { backgroundColor: colors.primary, borderColor: colors.primary }]}
+            onPress={() => navigation.navigate(ROUTES.Invoices)}
+          >
+            <Text style={styles.manageBtnPrimaryText}>CREATE INVOICES</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.ledgerCtaSecondary, { backgroundColor: colors.bgCard, borderColor: colors.border }]}
+            onPress={() => navigation.navigate(ROUTES.Transactions)}
+          >
+            <Text style={[styles.ledgerCtaSecondaryText, { color: colors.textPrimary }]}>FINANCE LEDGER</Text>
+          </TouchableOpacity>
+        </View>
+      ) : null}
+
       {loading ? (
         <View style={styles.loader}>
           <ActivityIndicator size="large" color={colors.primary} />
@@ -1230,6 +1275,17 @@ export default function PaymentsScreen({ navigation }: any) {
                     <Text style={[styles.heroMeta, { color: selectedInvoice.payment_link ? colors.primary : colors.textMuted }]}>{selectedInvoice.payment_link ? 'PAYSTACK CHECKOUT READY' : 'BANK PAYMENT FLOW ACTIVE'}</Text>
                   </View>
 
+                  {!canManage && selectedInvoice.status !== 'paid' && selectedInvoice.status !== 'cancelled' ? (
+                    <View style={[styles.sectionCard, { backgroundColor: colors.bgCard, borderColor: colors.border }]}>
+                      <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>SMART PAYMENT</Text>
+                      <Text style={[styles.sectionBody, { color: colors.textMuted }]}>
+                        {selectedInvoice.payment_link
+                          ? 'Use Paystack below for instant confirmation, or pay by bank transfer using the account details on this screen — then upload your proof so finance can match your payment.'
+                          : 'Pay by bank transfer using the account details below, then upload your proof so finance can match your payment.'}
+                      </Text>
+                    </View>
+                  ) : null}
+
                   <View style={[styles.sectionCard, { backgroundColor: colors.bgCard, borderColor: colors.border }]}> 
                     <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>LINE ITEMS</Text>
                     {selectedInvoice.items.length ? selectedInvoice.items.map((item, index) => (
@@ -1272,6 +1328,16 @@ export default function PaymentsScreen({ navigation }: any) {
                         </View>
                       ))}
                     </View>
+                  ) : null}
+
+                  {!canManage && selectedInvoice.status !== 'paid' && selectedInvoice.status !== 'cancelled' ? (
+                    <BankTransferProofActions
+                      invoiceId={selectedInvoice.id}
+                      invoiceNumber={selectedInvoice.invoice_number}
+                      amount={selectedInvoice.amount}
+                      currency={selectedInvoice.currency}
+                      onRecorded={() => void load()}
+                    />
                   ) : null}
                 </ScrollView>
 
@@ -1349,27 +1415,36 @@ export default function PaymentsScreen({ navigation }: any) {
                 </View>
               ))}
 
-              <View>
-                <Text style={[styles.formLabel, { color: colors.textMuted }]}>OWNER</Text>
-                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filtersRow}>
-                  {[
-                    { key: 'rillcod', label: 'RILLCOD' },
-                    { key: 'school', label: 'SCHOOL' },
-                  ].map((item) => (
-                    <TouchableOpacity
-                      key={item.key}
-                      onPress={() => setAccountForm((current) => ({ ...current, owner_type: item.key, school_id: item.key === 'school' ? current.school_id || profile?.school_id || '' : '' }))}
-                      style={[
-                        styles.filterChip,
-                        { backgroundColor: colors.bgCard, borderColor: colors.border },
-                        accountForm.owner_type === item.key && { backgroundColor: colors.primaryPale, borderColor: colors.primary },
-                      ]}
-                    >
-                      <Text style={[styles.filterText, { color: accountForm.owner_type === item.key ? colors.primary : colors.textMuted }]}>{item.label}</Text>
-                    </TouchableOpacity>
-                  ))}
-                </ScrollView>
-              </View>
+              {!isSchool ? (
+                <View>
+                  <Text style={[styles.formLabel, { color: colors.textMuted }]}>OWNER</Text>
+                  <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filtersRow}>
+                    {[
+                      { key: 'rillcod', label: 'RILLCOD' },
+                      { key: 'school', label: 'SCHOOL' },
+                    ].map((item) => (
+                      <TouchableOpacity
+                        key={item.key}
+                        onPress={() => setAccountForm((current) => ({ ...current, owner_type: item.key, school_id: item.key === 'school' ? current.school_id || profile?.school_id || '' : '' }))}
+                        style={[
+                          styles.filterChip,
+                          { backgroundColor: colors.bgCard, borderColor: colors.border },
+                          accountForm.owner_type === item.key && { backgroundColor: colors.primaryPale, borderColor: colors.primary },
+                        ]}
+                      >
+                        <Text style={[styles.filterText, { color: accountForm.owner_type === item.key ? colors.primary : colors.textMuted }]}>{item.label}</Text>
+                      </TouchableOpacity>
+                    ))}
+                  </ScrollView>
+                </View>
+              ) : (
+                <View>
+                  <Text style={[styles.formLabel, { color: colors.textMuted }]}>OWNER</Text>
+                  <Text style={[styles.formInput, { color: colors.textSecondary, borderColor: colors.border, backgroundColor: colors.bgCard, paddingVertical: 10 }]}>
+                    School collection account (official Rillcod pay-in details are listed separately on the hub).
+                  </Text>
+                </View>
+              )}
 
               <View>
                 <Text style={[styles.formLabel, { color: colors.textMuted }]}>ACCOUNT TYPE</Text>

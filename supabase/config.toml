@@ -360,6 +360,15 @@ verify_jwt = false
 [functions.paystack-callback]
 verify_jwt = false
 
+[functions.paystack-initialize-public-registration]
+verify_jwt = false
+
+[functions.paystack-verify-public]
+verify_jwt = false
+
+[functions.bank-transfer-submit-proof]
+verify_jwt = true
+
 [functions.openrouter-proxy]
 verify_jwt = true
 

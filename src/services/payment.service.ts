@@ -181,6 +181,8 @@ export class PaymentService {
     schoolId?: string | null;
   }) {
     const { role, userId, schoolId } = params;
+    if (role === 'student') return [];
+
     const isAdmin = role === 'admin';
     const isSchool = role === 'school';
     
@@ -214,6 +216,8 @@ export class PaymentService {
     forStudentIds?: string[] | null;
   }) {
     const { role, userId, schoolId, forStudentIds } = params;
+
+    if (role === 'student') return [];
 
     if (role === 'parent' && (!forStudentIds || forStudentIds.length === 0)) {
       return [];
@@ -311,14 +315,54 @@ export class PaymentService {
     return data ?? null;
   }
 
-  async listReceiptRecords(limit = 100) {
-    const { data, error } = await supabase
+  /** Public registration checkout (no logged-in user). Creates/links invoice then returns Paystack URL. */
+  async initializePublicRegistrationCheckout(params: { studentInterestId: string; payerEmail: string }) {
+    const { data, error } = await supabase.functions.invoke<{
+      authorization_url?: string;
+      reference?: string;
+      access_code?: string;
+      invoice_id?: string;
+      amount_ngn?: number;
+      error?: string;
+    }>('paystack-initialize-public-registration', {
+      body: {
+        student_interest_id: params.studentInterestId,
+        payer_email: params.payerEmail.trim().toLowerCase(),
+      },
+    });
+
+    if (error) throw error;
+    if (data && typeof (data as { error?: string }).error === 'string') {
+      throw new Error((data as { error: string }).error);
+    }
+    return data ?? null;
+  }
+
+  /** After public registration Paystack WebView (no session). Same fulfillment as webhook. */
+  async verifyPaystackReferencePublic(reference: string) {
+    const { data, error } = await supabase.functions.invoke<{
+      fulfilled?: boolean;
+      alreadyDone?: boolean;
+      reason?: string;
+      error?: string;
+    }>('paystack-verify-public', { body: { reference } });
+
+    if (error) throw error;
+    return data ?? null;
+  }
+
+  async listReceiptRecords(params: number | { limit?: number; schoolId?: string | null } = 100) {
+    const opts = typeof params === 'number' ? { limit: params } : (params ?? {});
+    const limit = opts.limit ?? 100;
+    let q = supabase
       .from('receipts')
       .select(
         'id, receipt_number, amount, currency, issued_at, pdf_url, school_id, student_id, transaction_id, metadata',
       )
       .order('issued_at', { ascending: false })
       .limit(limit);
+    if (opts.schoolId) q = q.eq('school_id', opts.schoolId);
+    const { data, error } = await q;
     if (error) throw error;
     return data ?? [];
   }
@@ -353,12 +397,42 @@ export class PaymentService {
     const { data, error } = await supabase
       .from('invoices')
       .select(
-        'id, invoice_number, amount, currency, status, due_date, notes, payment_link, items, created_at',
+        'id, invoice_number, amount, currency, status, due_date, notes, payment_link, items, created_at, school_id',
       )
       .eq('portal_user_id', portalUserId)
       .order('created_at', { ascending: false });
     if (error) throw error;
     return data ?? [];
+  }
+
+  /**
+   * Bank transfer: after R2 upload, registers proof + pending ledger transaction + receipt (Edge).
+   * Invoice remains unpaid until finance marks the transaction completed.
+   */
+  async submitBankTransferProofAfterUpload(params: {
+    invoiceId: string;
+    proofImageUrl: string;
+    payerNote?: string | null;
+  }) {
+    const { data, error } = await supabase.functions.invoke<{
+      ok?: boolean;
+      duplicate?: boolean;
+      message?: string;
+      transaction_id?: string;
+      transaction_reference?: string;
+      error?: string;
+    }>('bank-transfer-submit-proof', {
+      body: {
+        invoice_id: params.invoiceId,
+        proof_image_url: params.proofImageUrl,
+        payer_note: params.payerNote ?? null,
+      },
+    });
+    if (error) throw error;
+    if (data && typeof (data as { error?: string }).error === 'string') {
+      throw new Error((data as { error: string }).error);
+    }
+    return data ?? null;
   }
 
   /** Legacy `payments` rows keyed by `students.id` registration id. */
@@ -446,12 +520,16 @@ export class PaymentService {
     return data ?? [];
   }
 
-  async listReceiptsForFinanceConsole(limit = 200) {
-    const { data, error } = await supabase
+  async listReceiptsForFinanceConsole(params: number | { limit?: number; schoolId?: string | null } = 200) {
+    const opts = typeof params === 'number' ? { limit: params } : (params ?? {});
+    const limit = opts.limit ?? 200;
+    let q = supabase
       .from('receipts')
       .select('id, receipt_number, amount, currency, issued_at, pdf_url, school_id, student_id, transaction_id, metadata')
       .order('issued_at', { ascending: false })
       .limit(limit);
+    if (opts.schoolId) q = q.eq('school_id', opts.schoolId);
+    const { data, error } = await q;
     if (error) throw error;
     return data ?? [];
   }
@@ -463,14 +541,16 @@ export class PaymentService {
     refundReason?: string | null;
   }) {
     const now = new Date().toISOString();
+    /** Postgres check allows `completed` (not `success`); normalize legacy callers. */
+    const normalizedStatus = params.status === 'success' ? 'completed' : params.status;
     const payload: PaymentTransactionUpdate = {
-      payment_status: params.status,
+      payment_status: normalizedStatus,
       updated_at: now,
     };
-    if (params.status === 'success' || params.status === 'completed') {
+    if (normalizedStatus === 'completed') {
       payload.paid_at = now;
     }
-    if (params.status === 'refunded') {
+    if (normalizedStatus === 'refunded') {
       payload.refunded_at = now;
       payload.refund_reason = params.refundReason ?? 'Manual finance action';
     }
@@ -478,15 +558,15 @@ export class PaymentService {
 
     if (params.invoiceId) {
       const invStatus =
-        params.status === 'success' || params.status === 'completed'
+        normalizedStatus === 'completed'
           ? 'paid'
-          : params.status === 'refunded'
+          : normalizedStatus === 'refunded'
             ? 'sent'
             : undefined;
       if (invStatus) {
         await this.patchInvoice(params.invoiceId, {
           status: invStatus,
-          payment_transaction_id: params.status === 'refunded' ? null : params.transactionId,
+          payment_transaction_id: normalizedStatus === 'refunded' ? null : params.transactionId,
           updated_at: now,
         });
       }

@@ -15,6 +15,9 @@ export type ApprovalPendingStudentRow = {
   goals: string | null;
   created_at: string;
   status: string;
+  /** Set when public registration Paystack fee is confirmed (webhook / verify). */
+  registration_payment_at: string | null;
+  registration_paystack_reference: string | null;
 };
 
 export type ApprovalPendingSchoolRow = {
@@ -48,7 +51,7 @@ export class ApprovalService {
       supabase
         .from('students')
         .select(
-          'id, full_name, student_email, parent_email, parent_name, parent_phone, school_id, school_name, current_class, grade_level, enrollment_type, goals, created_at, status',
+          'id, full_name, student_email, parent_email, parent_name, parent_phone, school_id, school_name, current_class, grade_level, enrollment_type, goals, created_at, status, registration_payment_at, registration_paystack_reference',
         )
         .eq('status', 'pending')
         .or('is_deleted.is.null,is_deleted.eq.false')

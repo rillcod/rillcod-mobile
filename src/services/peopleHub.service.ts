@@ -56,7 +56,12 @@ export class PeopleHubService {
       const { data: classes } = await supabase.from('classes').select('id').eq('teacher_id', userId);
       const classIds = (classes ?? []).map((c: { id: string }) => c.id);
       const enrolled = classIds.length
-        ? await supabase.from('enrollments').select('id', { count: 'exact', head: true }).in('class_id', classIds)
+        ? await supabase
+            .from('portal_users')
+            .select('id', { count: 'exact', head: true })
+            .eq('role', 'student')
+            .eq('is_deleted', false)
+            .in('class_id', classIds)
         : { count: 0 };
       base.teacherClasses = classIds.length;
       base.teacherEnrolledStudents = enrolled.count ?? 0;
@@ -112,12 +117,12 @@ export class PeopleHubService {
         .not('parent_email', 'is', null);
       base.parentsPortalTotal = parRows ?? 0;
 
-      const { count: inactive } = await supabase
+      const { count: inactivePortalCount } = await supabase
         .from('portal_users')
         .select('id', { count: 'exact', head: true })
         .eq('school_id', schoolId)
         .eq('is_active', false);
-      base.portalInactiveAnyRole = inactive.count ?? 0;
+      base.portalInactiveAnyRole = inactivePortalCount ?? 0;
       return base;
     }
 

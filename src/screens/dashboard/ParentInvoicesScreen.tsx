@@ -14,6 +14,7 @@ import { FONT_FAMILY, FONT_SIZE } from '../../constants/typography';
 import { SPACING, RADIUS } from '../../constants/spacing';
 import { IconBackButton } from '../../components/ui/IconBackButton';
 import { usePaystack } from '../../hooks/usePaystack';
+import { BankTransferProofActions } from '../../components/payment/BankTransferProofActions';
 
 interface Invoice {
   id: string;
@@ -24,8 +25,25 @@ interface Invoice {
   due_date: string | null;
   notes: string | null;
   payment_link: string | null;
+  school_id?: string | null;
   items: { description: string; amount: number; qty?: number }[] | null;
   created_at: string;
+}
+
+type PayAcc = {
+  id: string;
+  label: string;
+  bank_name: string;
+  account_number: string;
+  account_name: string;
+  owner_type: string;
+  school_id: string | null;
+};
+
+function bankAccountsForInvoice(all: PayAcc[], schoolId: string | null | undefined) {
+  return all.filter(
+    (a) => a.owner_type === 'rillcod' || a.owner_type === 'global' || (schoolId && a.school_id === schoolId),
+  );
 }
 
 interface Payment {
@@ -59,6 +77,7 @@ export default function ParentInvoicesScreen({ navigation, route }: any) {
   const [refreshing, setRefreshing] = useState(false);
   const [activeTab, setActiveTab] = useState<'invoices' | 'payments'>('invoices');
   const [userId, setUserId] = useState<string | null>(null);
+  const [payAccounts, setPayAccounts] = useState<PayAcc[]>([]);
 
   const load = useCallback(async () => {
     try {
@@ -70,6 +89,7 @@ export default function ParentInvoicesScreen({ navigation, route }: any) {
         setInvoices([]);
         setPayments([]);
         setUserId(null);
+        setPayAccounts([]);
         return;
       }
 
@@ -81,8 +101,27 @@ export default function ParentInvoicesScreen({ navigation, route }: any) {
         paymentService.listPaymentsForStudentRegistration(studentId, 30),
       ]);
 
-      setInvoices((invoiceRows as Invoice[]) ?? []);
+      const invs = (invoiceRows as Invoice[]) ?? [];
+      setInvoices(invs);
       setPayments((paymentRows as Payment[]) ?? []);
+
+      let merged: PayAcc[] = [];
+      if (portalUserId) {
+        const schoolIds = [...new Set(invs.map((r) => r.school_id).filter(Boolean))] as string[];
+        const lists = await Promise.all([
+          paymentService.listPaymentAccounts({ isAdmin: false, schoolId: null }),
+          ...schoolIds.map((sid) => paymentService.listPaymentAccounts({ isAdmin: false, schoolId: sid })),
+        ]);
+        const byId = new Map<string, PayAcc>();
+        for (const list of lists) {
+          for (const raw of list ?? []) {
+            const a = raw as PayAcc;
+            byId.set(a.id, a);
+          }
+        }
+        merged = [...byId.values()];
+      }
+      setPayAccounts(merged);
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -125,7 +164,10 @@ export default function ParentInvoicesScreen({ navigation, route }: any) {
         ],
       );
     } else {
-      Alert.alert('Payment', 'Contact your school admin for payment details. Send proof of transfer to get your receipt.');
+      Alert.alert(
+        'Bank transfer',
+        'Use the bank details on this invoice below. After you pay, upload a photo of your receipt — it is saved securely — then send it to Rillcod on WhatsApp from the app.',
+      );
     }
   };
 
@@ -198,6 +240,8 @@ export default function ParentInvoicesScreen({ navigation, route }: any) {
                         st !== 'cancelled' &&
                         (inv.currency || 'NGN').toUpperCase() === 'NGN' &&
                         Boolean(userId);
+                      const showBankTransfer = st !== 'paid' && st !== 'cancelled';
+                      const bankLines = bankAccountsForInvoice(payAccounts, inv.school_id ?? null);
                       const statusColor = STATUS_COLOR[inv.status] ?? COLORS.textMuted;
                       return (
                         <MotiView
@@ -236,6 +280,17 @@ export default function ParentInvoicesScreen({ navigation, route }: any) {
 
                           {inv.notes && <Text style={styles.invoiceNotes}>{inv.notes}</Text>}
 
+                          {showBankTransfer ? (
+                            <View style={styles.smartPayHint}>
+                              <Text style={styles.smartPayTitle}>Smart payment</Text>
+                              <Text style={styles.smartPayBody}>
+                                {isPayable
+                                  ? 'Pay instantly with Paystack, or transfer to the bank account below and upload proof — both routes notify Rillcod for reconciliation.'
+                                  : 'Pay by bank transfer using the details below, then upload proof (card checkout is only available for NGN invoices linked to your child’s portal account).'}
+                              </Text>
+                            </View>
+                          ) : null}
+
                           {isPayable && (
                             <TouchableOpacity
                               style={[styles.payBtn, paystackLoading && { opacity: 0.7 }]}
@@ -246,6 +301,34 @@ export default function ParentInvoicesScreen({ navigation, route }: any) {
                               <Text style={styles.payBtnText}>💳  Pay with Paystack {formatCurrency(inv.amount, inv.currency)}</Text>
                             </TouchableOpacity>
                           )}
+
+                          {showBankTransfer && bankLines.length > 0 ? (
+                            <View style={styles.bankBlock}>
+                              <Text style={styles.bankBlockTitle}>Pay by transfer (company / school)</Text>
+                              {bankLines.map((a) => (
+                                <View key={a.id} style={styles.bankLine}>
+                                  <Text style={styles.bankLabel}>{a.label}</Text>
+                                  <Text style={styles.bankMeta}>
+                                    {a.bank_name} · {a.account_number}
+                                  </Text>
+                                  <Text style={styles.bankMeta}>{a.account_name}</Text>
+                                </View>
+                              ))}
+                            </View>
+                          ) : null}
+
+                          {showBankTransfer && profile?.id ? (
+                            <BankTransferProofActions
+                              invoiceId={inv.id}
+                              invoiceNumber={inv.invoice_number}
+                              amount={inv.amount}
+                              currency={inv.currency}
+                              onRecorded={() => {
+                                setRefreshing(true);
+                                void load();
+                              }}
+                            />
+                          ) : null}
 
                           {inv.status === 'paid' && (
                             <View style={styles.paidRow}>
@@ -356,4 +439,39 @@ const styles = StyleSheet.create({
   payMethod: { fontFamily: FONT_FAMILY.body, fontSize: FONT_SIZE.xs, color: COLORS.textMuted, textTransform: 'capitalize', marginTop: 2 },
   payRef: { fontFamily: FONT_FAMILY.body, fontSize: FONT_SIZE.xs, color: COLORS.textMuted, marginTop: 2 },
   payAmount: { fontFamily: FONT_FAMILY.display, fontSize: FONT_SIZE.lg, color: COLORS.textPrimary },
+  smartPayHint: {
+    borderWidth: 1,
+    borderColor: COLORS.primary + '44',
+    borderRadius: RADIUS.md,
+    padding: SPACING.md,
+    backgroundColor: COLORS.primary + '10',
+  },
+  smartPayTitle: {
+    fontFamily: FONT_FAMILY.bodyBold,
+    fontSize: FONT_SIZE.xs,
+    color: COLORS.primaryLight,
+    textTransform: 'uppercase',
+    letterSpacing: 0.6,
+    marginBottom: 6,
+  },
+  smartPayBody: { fontFamily: FONT_FAMILY.body, fontSize: FONT_SIZE.xs, color: COLORS.textSecondary, lineHeight: 18 },
+  bankBlock: {
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    borderRadius: RADIUS.md,
+    padding: SPACING.md,
+    gap: SPACING.sm,
+    backgroundColor: COLORS.bg,
+  },
+  bankBlockTitle: {
+    fontFamily: FONT_FAMILY.bodySemi,
+    fontSize: FONT_SIZE.xs,
+    color: COLORS.textMuted,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+    marginBottom: 4,
+  },
+  bankLine: { marginBottom: SPACING.sm },
+  bankLabel: { fontFamily: FONT_FAMILY.bodySemi, fontSize: FONT_SIZE.sm, color: COLORS.textPrimary },
+  bankMeta: { fontFamily: FONT_FAMILY.body, fontSize: FONT_SIZE.xs, color: COLORS.textMuted, marginTop: 2 },
 });

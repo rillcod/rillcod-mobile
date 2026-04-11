@@ -60,6 +60,41 @@ export async function uploadToR2(
 }
 
 /**
+ * Returns a short-lived signed GET URL so images/PDFs load in-app when the bucket is not public.
+ * Falls back to the original URL if the edge function is unavailable or rejects the request.
+ */
+export async function getR2SignedViewUrl(publicFileUrl: string | null | undefined): Promise<string | null> {
+  const u = publicFileUrl?.trim();
+  if (!u) return null;
+
+  const { data: session } = await supabase.auth.getSession();
+  const token = session?.session?.access_token;
+  if (!token) return u;
+
+  const base = process.env.EXPO_PUBLIC_SUPABASE_URL;
+  const anon = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY ?? '';
+  if (!base) return u;
+
+  try {
+    const fnRes = await fetch(`${base}/functions/v1/r2-presign`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
+        apikey: anon,
+      },
+      body: JSON.stringify({ mode: 'get', publicUrl: u }),
+    });
+    if (!fnRes.ok) return u;
+    const json = (await fnRes.json()) as { viewUrl?: string; error?: string };
+    if (json.viewUrl) return json.viewUrl;
+  } catch {
+    // ignore
+  }
+  return u;
+}
+
+/**
  * Derive a MIME type from a file extension.
  */
 export function mimeFromExt(ext: string): string {

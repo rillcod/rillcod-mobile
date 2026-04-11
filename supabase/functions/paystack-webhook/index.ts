@@ -1,7 +1,7 @@
 // @ts-nocheck
 // Supabase Edge (Deno).
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.49.1';
-import { fulfillPaystackSuccessfulPayment } from '../paystackFulfillShared.ts';
+import { fulfillPaystackSuccessfulPayment, mergePaystackChargeMetadata } from '../paystackFulfillShared.ts';
 
 async function hmacSha512Hex(secret: string, message: string): Promise<string> {
   const enc = new TextEncoder();
@@ -81,9 +81,24 @@ Deno.serve(async (req) => {
   const reference = String(data.reference ?? '');
   const amountKobo = Number(data.amount);
   const paystackId = data.id ?? data.transaction_id ?? '';
-  const metadata = (data.metadata && typeof data.metadata === 'object')
-    ? (data.metadata as Record<string, unknown>)
-    : {};
+  let metadata: Record<string, unknown> = {};
+  const rawMeta = data.metadata;
+  if (rawMeta != null) {
+    if (typeof rawMeta === 'string') {
+      try {
+        const parsed = JSON.parse(rawMeta) as unknown;
+        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+          metadata = parsed as Record<string, unknown>;
+        }
+      } catch {
+        metadata = {};
+      }
+    } else if (typeof rawMeta === 'object' && !Array.isArray(rawMeta)) {
+      metadata = rawMeta as Record<string, unknown>;
+    }
+  }
+
+  metadata = mergePaystackChargeMetadata(data as Record<string, unknown>, metadata);
 
   if (!reference || !Number.isFinite(amountKobo)) {
     return new Response(JSON.stringify({ error: 'Invalid charge payload' }), {

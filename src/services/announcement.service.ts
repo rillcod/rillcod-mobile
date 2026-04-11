@@ -110,6 +110,25 @@ export class AnnouncementService {
     if (error) throw error;
     return true;
   }
+
+  /** IDs of announcements this user has marked read (server-backed). */
+  async listReadAnnouncementIds(portalUserId: string): Promise<string[]> {
+    const { data, error } = await supabase
+      .from('announcement_reads')
+      .select('announcement_id')
+      .eq('portal_user_id', portalUserId);
+    if (error) throw error;
+    return (data ?? []).map((r: { announcement_id: string }) => r.announcement_id);
+  }
+
+  async markAnnouncementRead(portalUserId: string, announcementId: string) {
+    const now = new Date().toISOString();
+    const { error } = await supabase.from('announcement_reads').upsert(
+      { portal_user_id: portalUserId, announcement_id: announcementId, read_at: now },
+      { onConflict: 'portal_user_id,announcement_id' },
+    );
+    if (error) throw error;
+  }
 }
 
 export const announcementService = new AnnouncementService();

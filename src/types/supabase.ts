@@ -2122,6 +2122,81 @@ export type Database = {
           },
         ]
       }
+      invoice_payment_proofs: {
+        Row: {
+          id: string
+          invoice_id: string
+          submitted_by: string
+          proof_image_url: string
+          payer_note: string | null
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          invoice_id: string
+          submitted_by: string
+          proof_image_url: string
+          payer_note?: string | null
+          created_at?: string
+        }
+        Update: {
+          id?: string
+          invoice_id?: string
+          submitted_by?: string
+          proof_image_url?: string
+          payer_note?: string | null
+          created_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: 'invoice_payment_proofs_invoice_id_fkey'
+            columns: ['invoice_id']
+            isOneToOne: false
+            referencedRelation: 'invoices'
+            referencedColumns: ['id']
+          },
+          {
+            foreignKeyName: 'invoice_payment_proofs_submitted_by_fkey'
+            columns: ['submitted_by']
+            isOneToOne: false
+            referencedRelation: 'portal_users'
+            referencedColumns: ['id']
+          },
+        ]
+      }
+      announcement_reads: {
+        Row: {
+          portal_user_id: string
+          announcement_id: string
+          read_at: string
+        }
+        Insert: {
+          portal_user_id: string
+          announcement_id: string
+          read_at?: string
+        }
+        Update: {
+          portal_user_id?: string
+          announcement_id?: string
+          read_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: 'announcement_reads_announcement_id_fkey'
+            columns: ['announcement_id']
+            isOneToOne: false
+            referencedRelation: 'announcements'
+            referencedColumns: ['id']
+          },
+          {
+            foreignKeyName: 'announcement_reads_portal_user_id_fkey'
+            columns: ['portal_user_id']
+            isOneToOne: false
+            referencedRelation: 'portal_users'
+            referencedColumns: ['id']
+          },
+        ]
+      }
       lab_projects: {
         Row: {
           assignment_id: string | null
@@ -4658,6 +4733,8 @@ export type Database = {
           phone: string | null
           preferred_schedule: string | null
           previous_programming_experience: string | null
+          registration_paystack_reference: string | null
+          registration_payment_at: string | null
           school: string | null
           school_id: string | null
           school_name: string | null
@@ -4704,6 +4781,8 @@ export type Database = {
           phone?: string | null
           preferred_schedule?: string | null
           previous_programming_experience?: string | null
+          registration_paystack_reference?: string | null
+          registration_payment_at?: string | null
           school?: string | null
           school_id?: string | null
           school_name?: string | null
@@ -4750,6 +4829,8 @@ export type Database = {
           phone?: string | null
           preferred_schedule?: string | null
           previous_programming_experience?: string | null
+          registration_paystack_reference?: string | null
+          registration_payment_at?: string | null
           school?: string | null
           school_id?: string | null
           school_name?: string | null

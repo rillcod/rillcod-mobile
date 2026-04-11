@@ -96,7 +96,10 @@ export default function BulkPaymentsScreen({ navigation }: { navigation: { goBac
           schoolId: profile.school_id,
           limit: 200,
         }),
-        paymentService.listReceiptsForFinanceConsole(200),
+        paymentService.listReceiptsForFinanceConsole({
+          limit: 200,
+          schoolId: isSchool && profile.school_id ? profile.school_id : undefined,
+        }),
       ]);
       setArchiveInvoices(inv);
       const batches = paymentService.groupReceiptsByBatchId(rec as { metadata: Json | null }[]);
@@ -106,7 +109,7 @@ export default function BulkPaymentsScreen({ navigation }: { navigation: { goBac
     } catch (e) {
       console.warn('BulkPayments archive', e);
     }
-  }, [profile, isAdmin]);
+  }, [profile, isAdmin, isSchool]);
 
   const load = useCallback(async () => {
     if (!profile) {

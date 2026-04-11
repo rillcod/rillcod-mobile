@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useCallback, useRef, useState } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity,
   TextInput, KeyboardAvoidingView, Platform, Alert, Modal, Image,
@@ -9,6 +9,9 @@ import { MotiView } from 'moti';
 import { StatusBar } from 'expo-status-bar';
 import { Ionicons } from '@expo/vector-icons';
 import { studentService } from '../../services/student.service';
+import { paymentService } from '../../services/payment.service';
+import { PaystackCheckoutModal } from '../../components/payments/PaystackCheckoutModal';
+import { formatNgn, publicRegistrationFeeNgn } from '../../constants/publicRegistrationFees';
 import { COLORS } from '../../constants/colors';
 import { FONT_FAMILY, FONT_SIZE } from '../../constants/typography';
 import { SPACING, RADIUS } from '../../constants/spacing';
@@ -174,8 +177,13 @@ export default function PublicStudentRegistrationScreen({ navigation }: any) {
   const [selectedProgrammes, setSelectedProgrammes] = useState<string[]>([]);
   const [message, setMessage] = useState('');
 
-  // Success modal
+  // Success modal + optional Paystack registration fee
   const [successVisible, setSuccessVisible] = useState(false);
+  const [registeredStudentId, setRegisteredStudentId] = useState<string | null>(null);
+  const [checkoutSession, setCheckoutSession] = useState<{ url: string; ref: string } | null>(null);
+  const [payStarting, setPayStarting] = useState(false);
+  const pendingPayRef = useRef<string | null>(null);
+  const verifyInFlightRef = useRef(false);
 
   const selectedType = ENROLLMENT_TYPES.find(t => t.value === enrollmentType);
 
@@ -201,6 +209,43 @@ export default function PublicStudentRegistrationScreen({ navigation }: any) {
     else setStep(s => s - 1);
   };
 
+  const runVerifyPublicPaystack = useCallback(async (ref: string, fromCheckoutFinish = false) => {
+    if (verifyInFlightRef.current) return;
+    verifyInFlightRef.current = true;
+    const delaysMs = [0, 1800, 4000];
+    try {
+      for (let i = 0; i < delaysMs.length; i++) {
+        if (i > 0) await new Promise((r) => setTimeout(r, delaysMs[i] - delaysMs[i - 1]));
+        try {
+          const res = await paymentService.verifyPaystackReferencePublic(ref);
+          if (res?.fulfilled) {
+            pendingPayRef.current = null;
+            setCheckoutSession(null);
+            Alert.alert(
+              'Payment received',
+              res.alreadyDone
+                ? 'This payment was already recorded. Your registration is marked as paid on our side.'
+                : 'Thank you. Your registration fee is confirmed and linked to your application.',
+              [{ text: 'OK' }],
+            );
+            return;
+          }
+        } catch {
+          /* retry */
+        }
+      }
+      if (fromCheckoutFinish) {
+        Alert.alert(
+          'Payment not confirmed yet',
+          'If you completed payment, it may take a moment to show. Keep this reference handy and contact support if the amount left your account but we do not confirm within an hour.',
+          [{ text: 'OK' }],
+        );
+      }
+    } finally {
+      verifyInFlightRef.current = false;
+    }
+  }, []);
+
   const handleSubmit = async () => {
     if (!parentName.trim() || !parentPhone.trim()) {
       Alert.alert('Required', 'Please fill in parent/guardian name and phone number.');
@@ -208,10 +253,13 @@ export default function PublicStudentRegistrationScreen({ navigation }: any) {
     }
     setSubmitting(true);
     try {
-      await studentService.insertPublicStudentInterestRow({
+      const emailNorm = parentEmail.trim().toLowerCase() || null;
+      const { id } = await studentService.insertPublicStudentInterestRow({
         name: fullName.trim(),
         full_name: fullName.trim(),
-        student_email: parentEmail.trim() || null,
+        /** Used by Paystack init + staff; must match payer_email for online fee. */
+        parent_email: emailNorm,
+        student_email: emailNorm,
         parent_name: parentName.trim(),
         parent_phone: parentPhone.trim(),
         grade_level: gradeLevel,
@@ -226,11 +274,38 @@ export default function PublicStudentRegistrationScreen({ navigation }: any) {
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
       });
+      setRegisteredStudentId(id);
       setSuccessVisible(true);
     } catch (err: any) {
       Alert.alert('Submission Failed', err.message || 'Please try again.');
     } finally {
       setSubmitting(false);
+    }
+  };
+
+  const startRegistrationFeeCheckout = async () => {
+    if (!registeredStudentId) return;
+    const email = parentEmail.trim().toLowerCase();
+    if (!email) {
+      Alert.alert('Email required', 'Add your email on the form (step 3) so we can match your Paystack payment to this registration, then submit again or go back and add it.');
+      return;
+    }
+    setPayStarting(true);
+    try {
+      const data = await paymentService.initializePublicRegistrationCheckout({
+        studentInterestId: registeredStudentId,
+        payerEmail: email,
+      });
+      if (!data?.authorization_url || !data.reference) {
+        Alert.alert('Paystack', (data as { error?: string })?.error || 'Could not start checkout.');
+        return;
+      }
+      pendingPayRef.current = data.reference;
+      setCheckoutSession({ url: data.authorization_url, ref: data.reference });
+    } catch (e: any) {
+      Alert.alert('Paystack', e?.message || 'Could not start payment.');
+    } finally {
+      setPayStarting(false);
     }
   };
 
@@ -454,7 +529,7 @@ export default function PublicStudentRegistrationScreen({ navigation }: any) {
                     )}
                     <View style={[styles.feeNote, { backgroundColor: COLORS.warning + '18' }]}>
                       <Text style={[styles.feeNoteText, { color: COLORS.warning }]}>
-                        💡 Payment details will be sent via WhatsApp/email after submission. Our team will contact you within 24 hours.
+                        💡 You can pay the registration fee online after you submit (add parent email above). We will still contact you on WhatsApp within 24 hours to finalize enrollment.
                       </Text>
                     </View>
                   </View>
@@ -493,8 +568,20 @@ export default function PublicStudentRegistrationScreen({ navigation }: any) {
             <Text style={styles.successEmoji}>🎉</Text>
             <Text style={styles.successTitle}>Application Submitted!</Text>
             <Text style={styles.successSub}>
-              Thank you for registering {fullName} with Rillcod Academy. Our admissions team will contact {parentName} within 24–48 hours to confirm enrollment and share payment details.
+              Thank you for registering {fullName} with Rillcod Academy. Our admissions team will contact {parentName} within 24–48 hours to confirm enrollment.
             </Text>
+
+            {enrollmentType ? (
+              <View style={[styles.feeSummary, { borderColor: COLORS.primary + '44', width: '100%' }]}>
+                <Text style={styles.feeSummaryTitle}>Registration fee (online)</Text>
+                <Text style={[styles.feeVal, { fontSize: FONT_SIZE.lg, color: COLORS.success }]}>
+                  {formatNgn(publicRegistrationFeeNgn(enrollmentType))}
+                </Text>
+                <Text style={[styles.feeNoteText, { color: COLORS.textMuted, marginTop: 6 }]}>
+                  Pay now with Paystack using the same email you entered on the form ({parentEmail.trim() || '—'}). If you did not add an email, use “Back to Login” and register again with an email, or pay via the instructions we send on WhatsApp.
+                </Text>
+              </View>
+            ) : null}
 
             <View style={styles.successInfo}>
               <Text style={styles.successInfoRow}>📱 WhatsApp: +234 800 RILLCOD</Text>
@@ -502,8 +589,22 @@ export default function PublicStudentRegistrationScreen({ navigation }: any) {
             </View>
 
             <TouchableOpacity
+              style={[styles.primaryBtn, (payStarting || !registeredStudentId) && { opacity: 0.65 }]}
+              onPress={() => void startRegistrationFeeCheckout()}
+              disabled={payStarting || !registeredStudentId}
+            >
+              <LinearGradient colors={[COLORS.success, '#15803d']} style={styles.primaryBtnGrad}>
+                <Text style={styles.primaryBtnText}>{payStarting ? 'Opening…' : 'Pay registration fee (Paystack)'}</Text>
+              </LinearGradient>
+            </TouchableOpacity>
+
+            <TouchableOpacity
               style={styles.primaryBtn}
-              onPress={() => { setSuccessVisible(false); navigation.navigate(ROUTES.Login); }}
+              onPress={() => {
+                setSuccessVisible(false);
+                setRegisteredStudentId(null);
+                navigation.navigate(ROUTES.Login);
+              }}
             >
               <LinearGradient colors={COLORS.gradPrimary as any} style={styles.primaryBtnGrad}>
                 <Text style={styles.primaryBtnText}>Back to Login</Text>
@@ -512,6 +613,21 @@ export default function PublicStudentRegistrationScreen({ navigation }: any) {
           </MotiView>
         </View>
       </Modal>
+
+      <PaystackCheckoutModal
+        visible={checkoutSession !== null}
+        checkoutUrl={checkoutSession?.url ?? ''}
+        reference={checkoutSession?.ref ?? ''}
+        onClose={() => {
+          setCheckoutSession(null);
+          pendingPayRef.current = null;
+        }}
+        onFinish={() => {
+          const ref = pendingPayRef.current;
+          setCheckoutSession(null);
+          if (ref) void runVerifyPublicPaystack(ref, true);
+        }}
+      />
     </View>
   );
 }

@@ -53,8 +53,9 @@ export default function ParentFeedbackScreen({ navigation }: any) {
   const isParent = profile?.role === 'parent';
   const isAdmin = profile?.role === 'admin';
   const isTeacher = profile?.role === 'teacher';
+  const isSchool = profile?.role === 'school';
   const canSubmit = isParent;
-  const canReview = isAdmin || isTeacher;
+  const canReview = isAdmin || isTeacher || isSchool;
 
   const [loading, setLoading] = useState(canReview);
   const [refreshing, setRefreshing] = useState(false);
@@ -82,7 +83,7 @@ export default function ParentFeedbackScreen({ navigation }: any) {
         limit: 100,
       })) as FeedbackRow[];
 
-      if (isTeacher && profile.school_name) {
+      if ((isTeacher || isSchool) && profile.school_name) {
         setFeedback(rows.filter((row) => row.school_name === profile.school_name));
       } else {
         setFeedback(rows);
@@ -91,7 +92,7 @@ export default function ParentFeedbackScreen({ navigation }: any) {
       setLoading(false);
       setRefreshing(false);
     }
-  }, [canReview, filter, isTeacher, profile]);
+  }, [canReview, filter, isSchool, isTeacher, profile]);
 
   useEffect(() => {
     loadFeedback();

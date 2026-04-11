@@ -40,6 +40,8 @@ interface PendingStudent {
   goals: string | null;
   created_at: string;
   status: string;
+  registration_payment_at?: string | null;
+  registration_paystack_reference?: string | null;
 }
 
 interface PendingSchool {
@@ -499,6 +501,11 @@ export default function ApprovalsScreen({ navigation }: any) {
                   </View>
 
                   <View style={styles.metaWrap}>
+                    {student.registration_payment_at ? (
+                      <Chip label="Reg. fee paid" color={COLORS.success} />
+                    ) : (
+                      <Chip label="Reg. fee unpaid" color={COLORS.textMuted} />
+                    )}
                     {student.school_name ? <Chip label={student.school_name} color={COLORS.info} /> : null}
                     {student.current_class ? <Chip label={student.current_class} color={COLORS.primary} /> : null}
                     {student.grade_level ? <Chip label={student.grade_level} color={COLORS.warning} /> : null}

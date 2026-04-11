@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   Linking,
+  Modal,
   RefreshControl,
   ScrollView,
   StyleSheet,
@@ -17,6 +18,8 @@ import { useNavigation } from '@react-navigation/native';
 import { useAuth } from '../../contexts/AuthContext';
 import { notificationService } from '../../services/notification.service';
 import { preferenceService } from '../../services/preference.service';
+import { dashboardService } from '../../services/dashboard.service';
+import { announcementService } from '../../services/announcement.service';
 import { OfflineBanner } from '../../components/ui/OfflineBanner';
 import { useTheme } from '../../contexts/ThemeContext';
 import { FONT_FAMILY, FONT_SIZE, LETTER_SPACING } from '../../constants/typography';
@@ -43,6 +46,13 @@ interface NotificationPreferences {
   announcement_notifications: boolean | null;
   grade_notifications: boolean | null;
 }
+
+type InboxAnnouncement = {
+  id: string;
+  title: string;
+  content: string;
+  created_at: string | null;
+};
 
 function timeAgo(dateStr: string | null): string {
   if (!dateStr) return 'just now';
@@ -77,6 +87,9 @@ export default function NotificationsScreenV2() {
   const [refreshing, setRefreshing] = useState(false);
   const [savingPref, setSavingPref] = useState<string | null>(null);
   const [filter, setFilter] = useState<NotificationFilter>('all');
+  const [inboxAnnouncements, setInboxAnnouncements] = useState<InboxAnnouncement[]>([]);
+  const [inboxAnnReadIds, setInboxAnnReadIds] = useState<Set<string>>(() => new Set());
+  const [inboxAnnDetail, setInboxAnnDetail] = useState<InboxAnnouncement | null>(null);
 
   const loadData = useCallback(async () => {
     if (!profile) {
@@ -86,9 +99,15 @@ export default function NotificationsScreenV2() {
     }
 
     try {
-      const [rows, prefs] = await Promise.all([
+      const [rows, prefs, ann, readAnn] = await Promise.all([
         notificationService.listNotifications(profile.id, 80),
         preferenceService.getPreferences(profile.id),
+        dashboardService.listAnnouncementsForAudience({
+          role: profile.role,
+          schoolId: profile.school_id ?? null,
+          limit: 24,
+        }),
+        announcementService.listReadAnnouncementIds(profile.id).catch(() => [] as string[]),
       ]);
 
       setNotifications(
@@ -110,6 +129,15 @@ export default function NotificationsScreenV2() {
         announcement_notifications: prefs.announcement_notifications,
         grade_notifications: prefs.grade_notifications,
       });
+      setInboxAnnouncements(
+        (ann ?? []).map((a) => ({
+          id: a.id,
+          title: a.title,
+          content: a.content,
+          created_at: a.created_at,
+        })),
+      );
+      setInboxAnnReadIds(new Set(Array.isArray(readAnn) ? readAnn.filter(Boolean) : []));
     } catch {
       // keep prior state
     } finally {
@@ -123,6 +151,10 @@ export default function NotificationsScreenV2() {
   }, [loadData]);
 
   const unreadCount = notifications.filter((item) => !item.is_read).length;
+  const unreadAnnouncementCount = useMemo(
+    () => inboxAnnouncements.filter((a) => !inboxAnnReadIds.has(a.id)).length,
+    [inboxAnnouncements, inboxAnnReadIds],
+  );
 
   const filteredNotifications = useMemo(() => {
     if (filter === 'all') return notifications;
@@ -149,6 +181,31 @@ export default function NotificationsScreenV2() {
     try {
       await notificationService.markAllAsRead(profile.id);
       setNotifications((prev) => prev.map((item) => ({ ...item, is_read: true })));
+    } catch {
+      /* ignore */
+    }
+  };
+
+  const markAllAnnouncementsRead = async () => {
+    if (!profile || unreadAnnouncementCount === 0) return;
+    try {
+      for (const a of inboxAnnouncements) {
+        if (!inboxAnnReadIds.has(a.id)) {
+          await announcementService.markAnnouncementRead(profile.id, a.id);
+        }
+      }
+      setInboxAnnReadIds(new Set(inboxAnnouncements.map((x) => x.id)));
+    } catch {
+      /* ignore */
+    }
+  };
+
+  const markOneAnnouncementRead = async (row: InboxAnnouncement) => {
+    if (!profile) return;
+    try {
+      await announcementService.markAnnouncementRead(profile.id, row.id);
+      setInboxAnnReadIds((prev) => new Set(prev).add(row.id));
+      setInboxAnnDetail(null);
     } catch {
       /* ignore */
     }
@@ -192,8 +249,11 @@ export default function NotificationsScreenV2() {
             />
           ) : null}
           <View style={styles.headerTitles}>
-            <Text style={styles.headerTitle}>Notifications</Text>
-            <Text style={styles.headerSub}>{unreadCount} unread alerts</Text>
+            <Text style={styles.headerTitle}>Alerts</Text>
+            <Text style={styles.headerSub}>
+              {unreadCount} unread system alerts
+              {unreadAnnouncementCount > 0 ? ` · ${unreadAnnouncementCount} unread posts` : ''}
+            </Text>
           </View>
         </View>
         <TouchableOpacity style={styles.markAllBtn} onPress={markAllRead} disabled={!unreadCount}>
@@ -201,59 +261,77 @@ export default function NotificationsScreenV2() {
         </TouchableOpacity>
       </View>
 
-      <View style={styles.summaryRow}>
-        {[
-          { label: 'All', value: notifications.length },
-          { label: 'Unread', value: unreadCount },
-          { label: 'Priority', value: notifications.filter((item) => ['warning', 'error'].includes(item.type ?? '')).length },
-        ].map((item) => (
-          <View key={item.label} style={styles.summaryCard}>
-            <Text style={styles.summaryValue}>{item.value}</Text>
-            <Text style={styles.summaryLabel}>{item.label}</Text>
-          </View>
-        ))}
-      </View>
-
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filterRow}>
-        {(['all', 'unread', 'info', 'warning', 'success', 'error'] as NotificationFilter[]).map((item) => (
-          <TouchableOpacity
-            key={item}
-            style={[styles.filterChip, filter === item && styles.filterChipActive]}
-            onPress={() => setFilter(item)}
-          >
-            <Text style={[styles.filterText, filter === item && styles.filterTextActive]}>{item.toUpperCase()}</Text>
-          </TouchableOpacity>
-        ))}
-      </ScrollView>
-
       <ScrollView
         showsVerticalScrollIndicator={false}
         contentContainerStyle={styles.scroll}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); loadData(); }} tintColor={colors.primary} />}
       >
-        <View style={styles.prefCard}>
-          <Text style={styles.prefTitle}>Delivery Preferences</Text>
+        {inboxAnnouncements.length > 0 ? (
+          <View style={[styles.prefCard, { marginBottom: SPACING.md }]}>
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: SPACING.sm }}>
+              <Text style={styles.prefTitle}>Announcements</Text>
+              {unreadAnnouncementCount > 0 ? (
+                <TouchableOpacity onPress={() => void markAllAnnouncementsRead()} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                  <Text style={{ fontFamily: FONT_FAMILY.bodyBold, fontSize: 10, color: colors.primary, letterSpacing: 0.5 }}>MARK ALL READ</Text>
+                </TouchableOpacity>
+              ) : null}
+            </View>
+            <Text style={[styles.prefHint, { marginBottom: SPACING.md }]}>
+              Official posts from your school or admin — same feed as home. Tap to read fully; read items stay listed here.
+            </Text>
+            {inboxAnnouncements.map((a) => {
+              const unread = !inboxAnnReadIds.has(a.id);
+              const accent = unread ? colors.primary : colors.textMuted;
+              return (
+                <TouchableOpacity
+                  key={a.id}
+                  style={[styles.annCard, { borderColor: accent + (unread ? '66' : '33'), backgroundColor: colors.bg }]}
+                  onPress={() => setInboxAnnDetail(a)}
+                  activeOpacity={0.85}
+                >
+                  <View style={{ flexDirection: 'row', justifyContent: 'space-between', gap: 8 }}>
+                    <Text style={[styles.cardTitle, unread && styles.cardTitleUnread, { flex: 1 }]}>{a.title}</Text>
+                    <Text style={{ fontFamily: FONT_FAMILY.bodyBold, fontSize: 9, color: accent }}>{unread ? 'NEW' : 'READ'}</Text>
+                  </View>
+                  <Text style={styles.cardBody} numberOfLines={3}>
+                    {a.content}
+                  </Text>
+                  <Text style={styles.cardTime}>{timeAgo(a.created_at)}</Text>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+        ) : null}
+
+        <Text style={[styles.prefTitle, { marginBottom: SPACING.sm, paddingHorizontal: 2 }]}>System alerts</Text>
+        <Text style={[styles.prefHint, { marginBottom: SPACING.md, paddingHorizontal: 2 }]}>
+          Automated notices (grades, billing, etc.). Use filters below to narrow the list.
+        </Text>
+
+        <View style={styles.summaryRow}>
           {[
-            { key: 'push_enabled', label: 'Push Alerts' },
-            { key: 'email_enabled', label: 'Email Updates' },
-            { key: 'sms_enabled', label: 'SMS Alerts' },
-            { key: 'announcement_notifications', label: 'Announcements' },
-            { key: 'grade_notifications', label: 'Grade Reports' },
+            { label: 'All', value: notifications.length },
+            { label: 'Unread', value: unreadCount },
+            { label: 'Priority', value: notifications.filter((item) => ['warning', 'error'].includes(item.type ?? '')).length },
           ].map((item) => (
-            <View key={item.key} style={styles.prefRow}>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.prefLabel}>{item.label}</Text>
-                <Text style={styles.prefHint}>{savingPref === item.key ? 'Saving...' : 'Control how this reaches you'}</Text>
-              </View>
-              <Switch
-                value={Boolean((preferences as any)[item.key])}
-                onValueChange={(value) => updatePreference(item.key as keyof NotificationPreferences, value)}
-                trackColor={{ false: colors.border, true: colors.primary + '80' }}
-                thumbColor={Boolean((preferences as any)[item.key]) ? colors.primary : '#f4f3f4'}
-              />
+            <View key={item.label} style={styles.summaryCard}>
+              <Text style={styles.summaryValue}>{item.value}</Text>
+              <Text style={styles.summaryLabel}>{item.label}</Text>
             </View>
           ))}
         </View>
+
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filterRow}>
+          {(['all', 'unread', 'info', 'warning', 'success', 'error'] as NotificationFilter[]).map((item) => (
+            <TouchableOpacity
+              key={item}
+              style={[styles.filterChip, filter === item && styles.filterChipActive]}
+              onPress={() => setFilter(item)}
+            >
+              <Text style={[styles.filterText, filter === item && styles.filterTextActive]}>{item.toUpperCase()}</Text>
+            </TouchableOpacity>
+          ))}
+        </ScrollView>
 
         {loading ? (
           <View style={styles.center}>
@@ -280,10 +358,62 @@ export default function NotificationsScreenV2() {
         ) : (
           <View style={styles.emptyWrap}>
             <Text style={styles.emptyTitle}>All clear</Text>
-            <Text style={styles.emptyText}>No notifications match this filter right now.</Text>
+            <Text style={styles.emptyText}>No system alerts match this filter right now.</Text>
           </View>
         )}
+
+        <View style={[styles.prefCard, { marginTop: SPACING.lg }]}>
+          <Text style={styles.prefTitle}>Delivery preferences</Text>
+          {[
+            { key: 'push_enabled', label: 'Push Alerts' },
+            { key: 'email_enabled', label: 'Email Updates' },
+            { key: 'sms_enabled', label: 'SMS Alerts' },
+            { key: 'announcement_notifications', label: 'Announcements' },
+            { key: 'grade_notifications', label: 'Grade Reports' },
+          ].map((item) => (
+            <View key={item.key} style={styles.prefRow}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.prefLabel}>{item.label}</Text>
+                <Text style={styles.prefHint}>{savingPref === item.key ? 'Saving...' : 'Control how this reaches you'}</Text>
+              </View>
+              <Switch
+                value={Boolean((preferences as any)[item.key])}
+                onValueChange={(value) => updatePreference(item.key as keyof NotificationPreferences, value)}
+                trackColor={{ false: colors.border, true: colors.primary + '80' }}
+                thumbColor={Boolean((preferences as any)[item.key]) ? colors.primary : '#f4f3f4'}
+              />
+            </View>
+          ))}
+        </View>
       </ScrollView>
+
+      <Modal visible={!!inboxAnnDetail} transparent animationType="fade" onRequestClose={() => setInboxAnnDetail(null)}>
+        <View style={{ flex: 1, backgroundColor: '#000000aa', justifyContent: 'center', paddingHorizontal: SPACING.xl }}>
+          <View style={{ borderRadius: RADIUS.lg, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.bgCard, padding: SPACING.lg, maxHeight: '88%' }}>
+            <Text style={{ fontFamily: FONT_FAMILY.bodyBold, fontSize: 11, color: colors.primary, letterSpacing: 1, marginBottom: 6 }}>ANNOUNCEMENT</Text>
+            <Text style={{ fontFamily: FONT_FAMILY.display, fontSize: 20, color: colors.textPrimary, marginBottom: SPACING.md }}>{inboxAnnDetail?.title}</Text>
+            <ScrollView style={{ maxHeight: 340 }} showsVerticalScrollIndicator>
+              <Text style={{ fontFamily: FONT_FAMILY.body, fontSize: 14, lineHeight: 22, color: colors.textSecondary }}>{inboxAnnDetail?.content}</Text>
+            </ScrollView>
+            <View style={{ flexDirection: 'row', gap: SPACING.sm, marginTop: SPACING.lg }}>
+              <TouchableOpacity
+                style={{ flex: 1, paddingVertical: 12, borderRadius: RADIUS.full, borderWidth: 1, borderColor: colors.border, alignItems: 'center' }}
+                onPress={() => setInboxAnnDetail(null)}
+              >
+                <Text style={{ fontFamily: FONT_FAMILY.bodyBold, fontSize: 12, color: colors.textSecondary }}>CLOSE</Text>
+              </TouchableOpacity>
+              {inboxAnnDetail && !inboxAnnReadIds.has(inboxAnnDetail.id) ? (
+                <TouchableOpacity
+                  style={{ flex: 1, paddingVertical: 12, borderRadius: RADIUS.full, backgroundColor: colors.primary, alignItems: 'center' }}
+                  onPress={() => void markOneAnnouncementRead(inboxAnnDetail)}
+                >
+                  <Text style={{ fontFamily: FONT_FAMILY.bodyBold, fontSize: 12, color: '#fff' }}>MARK AS READ</Text>
+                </TouchableOpacity>
+              ) : null}
+            </View>
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -298,11 +428,11 @@ const getStyles = (colors: any) =>
     headerSub: { color: colors.primary, fontFamily: FONT_FAMILY.bodyBold, fontSize: FONT_SIZE.xs, letterSpacing: LETTER_SPACING.wide },
     markAllBtn: { paddingHorizontal: SPACING.md, paddingVertical: 10, borderWidth: 1, borderColor: colors.primary, borderRadius: RADIUS.full, backgroundColor: colors.primaryPale },
     markAllText: { color: colors.primary, fontFamily: FONT_FAMILY.bodyBold, fontSize: 10, letterSpacing: LETTER_SPACING.wider },
-    summaryRow: { flexDirection: 'row', gap: SPACING.sm, paddingHorizontal: SPACING.xl, marginBottom: SPACING.md },
+    summaryRow: { flexDirection: 'row', gap: SPACING.sm, marginBottom: SPACING.md },
     summaryCard: { flex: 1, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.bgCard, borderRadius: RADIUS.lg, padding: SPACING.md },
     summaryValue: { color: colors.textPrimary, fontFamily: FONT_FAMILY.display, fontSize: FONT_SIZE.xl },
     summaryLabel: { color: colors.textMuted, fontFamily: FONT_FAMILY.bodyBold, fontSize: 10, letterSpacing: LETTER_SPACING.wider, marginTop: 4 },
-    filterRow: { paddingHorizontal: SPACING.xl, paddingBottom: SPACING.md, gap: SPACING.sm },
+    filterRow: { paddingBottom: SPACING.md, gap: SPACING.sm },
     filterChip: { borderWidth: 1, borderColor: colors.border, backgroundColor: colors.bgCard, borderRadius: RADIUS.full, paddingHorizontal: 14, paddingVertical: 8 },
     filterChipActive: { borderColor: colors.primary, backgroundColor: colors.primaryPale },
     filterText: { color: colors.textMuted, fontFamily: FONT_FAMILY.bodyBold, fontSize: 10, letterSpacing: LETTER_SPACING.wider },
@@ -326,4 +456,11 @@ const getStyles = (colors: any) =>
     emptyWrap: { paddingVertical: 70, alignItems: 'center', gap: SPACING.sm },
     emptyTitle: { color: colors.textPrimary, fontFamily: FONT_FAMILY.display, fontSize: FONT_SIZE.xl },
     emptyText: { color: colors.textMuted, fontFamily: FONT_FAMILY.body, fontSize: FONT_SIZE.sm, textAlign: 'center' },
+    annCard: {
+      borderWidth: 1,
+      borderRadius: RADIUS.md,
+      padding: SPACING.md,
+      marginBottom: SPACING.sm,
+      gap: 6,
+    },
   });

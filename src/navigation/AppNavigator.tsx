@@ -156,6 +156,7 @@ const StaffAttendanceScreen = withRoleGuard(AttendanceScreen, ['admin', 'teacher
 const StaffPaymentsScreen = withRoleGuard(PaymentsScreen, ['admin', 'school']);
 const StaffBulkPaymentsScreen = withRoleGuard(BulkPaymentsScreen, ['admin', 'school']);
 const StaffTransactionsScreen = withRoleGuard(TransactionsScreen, ['admin', 'school']);
+const StaffInvoicesScreen = withRoleGuard(InvoicesScreen, ['admin', 'school']);
 const ProgressAccessScreen = withRoleGuard(ProgressScreen, ['admin', 'school']);
 const AdminOnlyIoTScreen = withRoleGuard(IoTScreen, ['admin']);
 const StaffReportsScreen = withRoleGuard(ReportsScreen, ['admin', 'teacher', 'school', 'student']);
@@ -185,7 +186,7 @@ const ParentAttendanceOnlyScreen = withRoleGuard(ParentAttendanceScreen, ['paren
 const ParentGradesOnlyScreen = withRoleGuard(ParentGradesScreen, ['parent']);
 const ParentInvoicesOnlyScreen = withRoleGuard(ParentInvoicesScreen, ['parent']);
 const ParentCertificatesOnlyScreen = withRoleGuard(ParentCertificatesScreen, ['parent']);
-const ParentFeedbackScreenGuard = withRoleGuard(ParentFeedbackScreen, ['admin', 'teacher', 'parent']);
+const ParentFeedbackScreenGuard = withRoleGuard(ParentFeedbackScreen, ['admin', 'teacher', 'school', 'parent']);
 const ParentChildrenOnlyScreen = withRoleGuard(MyChildrenScreen, ['parent']);
 const PlaygroundAccessScreen = withRoleGuard(PlaygroundScreen, ['admin', 'teacher', 'student']);
 const PortfolioAccessScreen = withRoleGuard(PortfolioScreen, ['student']);
@@ -261,9 +262,10 @@ function AdminSignOutTabPlaceholder() {
 // ── Main bottom tabs ──────────────────────────────────────────────────────────
 function MainTabs() {
   const { profile, signOut } = useAuth();
-  const unread = useInboxUnreadCount(profile?.id);
-  const showLearnTab = profile?.role === 'student';
   const isAdmin = profile?.role === 'admin';
+  const isTeacher = profile?.role === 'teacher';
+  const unread = useInboxUnreadCount(!isAdmin && !isTeacher ? profile?.id : undefined);
+  const showLearnTab = profile?.role === 'student';
 
   return (
     <Tab.Navigator
@@ -298,9 +300,9 @@ function MainTabs() {
           }}
         />
       ) : null}
-      {!isAdmin ? (
+      {!isAdmin && !isTeacher ? (
         <Tab.Screen
-          name={TAB_ROUTES.Notifications}
+          name={TAB_ROUTES.Alerts}
           component={NotificationsScreen}
           options={{
             tabBarLabel: 'Alerts',
@@ -320,22 +322,22 @@ function MainTabs() {
       {isAdmin ? (
         <>
           <Tab.Screen
-            name={TAB_ROUTES.AdminApprovals}
-            component={StaffApprovalsScreen}
+            name={TAB_ROUTES.AdminPeopleHub}
+            component={StaffPeopleHubScreen}
             options={{
-              tabBarLabel: 'Approvals',
+              tabBarLabel: 'People',
               tabBarIcon: ({ focused, color, size }) => (
-                <TabIcon outlineName="shield-outline" solidName="shield" focused={focused} color={color} size={size} />
+                <TabIcon outlineName="people-circle-outline" solidName="people-circle" focused={focused} color={color} size={size} />
               ),
             }}
           />
           <Tab.Screen
-            name={TAB_ROUTES.AdminUsers}
-            component={AdminOnlyUsersScreen}
+            name={TAB_ROUTES.AdminPayments}
+            component={StaffPaymentsScreen}
             options={{
-              tabBarLabel: 'Users',
+              tabBarLabel: 'Payments',
               tabBarIcon: ({ focused, color, size }) => (
-                <TabIcon outlineName="people-outline" solidName="people" focused={focused} color={color} size={size} />
+                <TabIcon outlineName="wallet-outline" solidName="wallet" focused={focused} color={color} size={size} />
               ),
             }}
           />
@@ -370,15 +372,85 @@ function MainTabs() {
           />
         </>
       ) : null}
-      {!isAdmin ? (
+      {isTeacher ? (
+        <>
+          <Tab.Screen
+            name={TAB_ROUTES.TeacherMyClass}
+            component={StaffClassesScreen}
+            options={{
+              tabBarLabel: 'My class',
+              tabBarIcon: ({ focused, color, size }) => (
+                <TabIcon outlineName="school-outline" solidName="school" focused={focused} color={color} size={size} />
+              ),
+            }}
+          />
+          <Tab.Screen
+            name={TAB_ROUTES.TeacherGrading}
+            component={StaffGradesScreen}
+            options={{
+              tabBarLabel: 'Grading',
+              tabBarIcon: ({ focused, color, size }) => (
+                <TabIcon outlineName="ribbon-outline" solidName="ribbon" focused={focused} color={color} size={size} />
+              ),
+            }}
+          />
+          <Tab.Screen
+            name={TAB_ROUTES.TeacherSignOut}
+            component={AdminSignOutTabPlaceholder}
+            options={{
+              tabBarLabel: 'Sign out',
+              tabBarIcon: ({ color, size }) => (
+                <Ionicons name="log-out-outline" size={size} color={color} />
+              ),
+              tabBarButton: (props) => {
+                const { children, style, accessibilityState } = props;
+                return (
+                  <TouchableOpacity
+                    accessibilityRole="button"
+                    accessibilityState={accessibilityState}
+                    activeOpacity={0.7}
+                    style={style}
+                    onPress={() => {
+                      Alert.alert('Sign out', 'Leave the instructor portal?', [
+                        { text: 'Cancel', style: 'cancel' },
+                        { text: 'Sign out', style: 'destructive', onPress: () => void signOut() },
+                      ]);
+                    }}
+                  >
+                    {children}
+                  </TouchableOpacity>
+                );
+              },
+            }}
+          />
+        </>
+      ) : null}
+      {!isAdmin && !isTeacher ? (
         <Tab.Screen
-          name={TAB_ROUTES.Profile}
-          component={ProfileScreen}
+          name={TAB_ROUTES.MainSignOut}
+          component={AdminSignOutTabPlaceholder}
           options={{
-            tabBarLabel: 'Profile',
-            tabBarIcon: ({ focused, color, size }) => (
-              <TabIcon outlineName="person-outline" solidName="person" focused={focused} color={color} size={size} />
-            ),
+            tabBarLabel: 'Sign out',
+            tabBarIcon: ({ color, size }) => <Ionicons name="log-out-outline" size={size} color={color} />,
+            tabBarButton: (props) => {
+              const { children, style, accessibilityState } = props;
+              return (
+                <TouchableOpacity
+                  accessibilityRole="button"
+                  accessibilityState={accessibilityState}
+                  activeOpacity={0.7}
+                  style={style}
+                  onPress={() => {
+                    Alert.alert('Sign out', 'Leave the portal?', [
+                      { text: 'Cancel', style: 'cancel' },
+                      { text: 'Sign out', style: 'destructive', onPress: () => void signOut() },
+                    ]);
+                  }}
+                >
+                  {children}
+                </TouchableOpacity>
+              );
+            },
           }}
         />
       ) : null}
@@ -396,7 +468,7 @@ function MainStack() {
       <Stack.Screen name={ROUTES.Assignments} component={StaffAssignmentsScreen} />
       <Stack.Screen name={ROUTES.Grades} component={StaffGradesScreen} />
       <Stack.Screen name={ROUTES.Certificates} component={CertificatesScreen} />
-      <Stack.Screen name={ROUTES.Invoices} component={InvoicesScreen} />
+      <Stack.Screen name={ROUTES.Invoices} component={StaffInvoicesScreen} />
       <Stack.Screen name={ROUTES.Messages} component={MessagesScreen} />
       <Stack.Screen name={ROUTES.Settings} component={SettingsScreen} />
       <Stack.Screen name={ROUTES.MyChildren} component={ParentChildrenOnlyScreen} />

@@ -13,7 +13,7 @@ import { useAuth } from '../../contexts/AuthContext';
 import { useTheme } from '../../contexts/ThemeContext';
 import { peopleHubService, type PeopleHubSnapshot } from '../../services/peopleHub.service';
 import { ScreenHeader } from '../../components/ui/ScreenHeader';
-import { ROUTES } from '../../navigation/routes';
+import { ROUTES, TAB_ROUTES } from '../../navigation/routes';
 import { FONT_FAMILY, FONT_SIZE, LETTER_SPACING } from '../../constants/typography';
 import { SPACING, RADIUS } from '../../constants/spacing';
 
@@ -61,7 +61,11 @@ function buildInsight(role: string, s: PeopleHubSnapshot): { title: string; deta
   };
 }
 
-export default function PeopleHubScreen({ navigation }: { navigation: { navigate: (name: string, params?: object) => void; goBack: () => void } }) {
+export default function PeopleHubScreen({
+  navigation,
+}: {
+  navigation: { navigate: (name: string, params?: object) => void; goBack: () => void; canGoBack?: () => boolean };
+}) {
   const { profile } = useAuth();
   const { colors } = useTheme();
   const styles = useMemo(() => getStyles(colors), [colors]);
@@ -136,6 +140,7 @@ export default function PeopleHubScreen({ navigation }: { navigation: { navigate
     }
     if (role === 'teacher') {
       return [
+        { key: 'pf', title: 'Parent feedback', meta: 'Inbox for your school', route: ROUTES.ParentFeedback },
         { key: 'app', title: 'Approvals', meta: 'Pending registrations', route: ROUTES.Approvals },
         { key: 'imp', title: 'Import students', meta: 'CSV intake', route: ROUTES.StudentImport },
         { key: 'br', title: 'Bulk register', meta: 'Batch onboarding', route: ROUTES.BulkRegister },
@@ -144,12 +149,14 @@ export default function PeopleHubScreen({ navigation }: { navigation: { navigate
     }
     if (role === 'school') {
       return [
+        { key: 'pf', title: 'Parent feedback', meta: 'Family messages & status', route: ROUTES.ParentFeedback },
         { key: 'app', title: 'Approvals', meta: 'Review queue', route: ROUTES.Approvals },
         { key: 'imp', title: 'Import students', meta: 'CSV intake', route: ROUTES.StudentImport },
         { key: 'en', title: 'Enrol students', meta: 'Place in classes', route: ROUTES.EnrolStudents },
       ];
     }
     return [
+      { key: 'pf', title: 'Parent feedback', meta: 'Network inbox · triage', route: ROUTES.ParentFeedback },
       { key: 'app', title: 'Approvals', meta: 'Students & schools', route: ROUTES.Approvals },
       { key: 'imp', title: 'Import students', meta: 'CSV → pending', route: ROUTES.StudentImport },
       { key: 'br', title: 'Bulk register', meta: 'Batch flow', route: ROUTES.BulkRegister },
@@ -164,7 +171,13 @@ export default function PeopleHubScreen({ navigation }: { navigation: { navigate
 
   return (
     <SafeAreaView style={styles.safe}>
-      <ScreenHeader title="People hub" subtitle="One entry for rosters, parents, and bulk ops" onBack={() => navigation.goBack()} />
+      <ScreenHeader
+        title="People hub"
+        subtitle="Directory, parent feedback, register / enrol / wipe, and approvals. Invoices, Paystack, and ledger: use the Payments tab."
+        onBack={() =>
+          navigation.canGoBack?.() ? navigation.goBack() : navigation.navigate(TAB_ROUTES.Dashboard)
+        }
+      />
       {loading ? (
         <View style={styles.center}>
           <ActivityIndicator color={colors.primary} size="large" />
@@ -198,7 +211,7 @@ export default function PeopleHubScreen({ navigation }: { navigation: { navigate
             ))}
           </View>
 
-          <Text style={[styles.sectionLabel, { color: colors.textMuted }]}>Bulk & pipelines</Text>
+          <Text style={[styles.sectionLabel, { color: colors.textMuted }]}>Bulk, pipelines & parent feedback</Text>
           <View style={styles.grid}>
             {bulkTiles.map((tile) => (
               <TouchableOpacity

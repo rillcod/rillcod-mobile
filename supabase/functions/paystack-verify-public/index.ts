@@ -1,15 +1,8 @@
 // @ts-nocheck
-// Supabase Edge (Deno). VS Code uses Node typings; use `supabase functions serve` for real checks.
-/**
- * Authenticated client calls after Paystack redirect / app resume to sync DB if webhook was delayed.
- * Verifies transaction with Paystack API, then runs same fulfillment as webhook (idempotent).
- */
+// Unauthenticated: used after public registration Paystack checkout (no logged-in user).
+// Verifies with Paystack API then runs the same fulfillment as the webhook.
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.49.1';
-import {
-  fulfillPaystackSuccessfulPayment,
-  mergePaystackChargeMetadata,
-  resolveInvoiceIdForFulfillment,
-} from '../paystackFulfillShared.ts';
+import { fulfillPaystackSuccessfulPayment, mergePaystackChargeMetadata } from '../paystackFulfillShared.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -33,25 +26,12 @@ Deno.serve(async (req) => {
   }
 
   try {
-    const authHeader = req.headers.get('Authorization');
-    if (!authHeader?.startsWith('Bearer ')) {
-      return json({ error: 'Missing authorization' }, 401);
-    }
-
     const supabaseUrl = Deno.env.get('SUPABASE_URL');
     const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
     const paystackSecret = Deno.env.get('PAYSTACK_SECRET_KEY');
     if (!supabaseUrl || !serviceKey || !paystackSecret) {
       return json({ error: 'Server misconfigured' }, 500);
     }
-
-    const jwt = authHeader.replace(/^Bearer\s+/i, '');
-    const admin = createClient(supabaseUrl, serviceKey);
-    const { data: userData, error: authErr } = await admin.auth.getUser(jwt);
-    if (authErr || !userData?.user) {
-      return json({ error: 'Invalid session' }, 401);
-    }
-    const userId = userData.user.id;
 
     let body: { reference?: string };
     try {
@@ -103,57 +83,7 @@ Deno.serve(async (req) => {
 
     metadata = mergePaystackChargeMetadata(d as Record<string, unknown>, metadata);
 
-    const invoiceIdResolved = await resolveInvoiceIdForFulfillment(admin, reference, metadata);
-    if (!invoiceIdResolved) {
-      return json({ fulfilled: false, reason: 'could not resolve invoice from transaction' }, 200);
-    }
-
-    const { data: profile } = await admin
-      .from('portal_users')
-      .select('role, school_id')
-      .eq('id', userId)
-      .maybeSingle();
-
-    if (!profile) {
-      return json({ error: 'Profile not found' }, 403);
-    }
-
-    const { data: invoice } = await admin
-      .from('invoices')
-      .select('id, school_id, portal_user_id')
-      .eq('id', invoiceIdResolved)
-      .maybeSingle();
-
-    if (!invoice) {
-      return json({ error: 'Invoice not found' }, 404);
-    }
-
-    const role = profile.role as string;
-    const billedId = invoice.portal_user_id;
-    if (role === 'school') {
-      if (!profile.school_id || invoice.school_id !== profile.school_id) {
-        return json({ error: 'Forbidden' }, 403);
-      }
-    } else if (role === 'admin') {
-      // ok
-    } else if (role === 'parent' && billedId) {
-      const { data: stu } = await admin
-        .from('students')
-        .select('parent_email')
-        .eq('user_id', billedId)
-        .maybeSingle();
-      const { data: selfPu } = await admin.from('portal_users').select('email').eq('id', userId).maybeSingle();
-      const pe = stu?.parent_email?.trim().toLowerCase() ?? '';
-      const ue = selfPu?.email?.trim().toLowerCase() ?? '';
-      if (!pe || !ue || pe !== ue) {
-        return json({ error: 'Forbidden' }, 403);
-      }
-    } else if (invoice.portal_user_id === userId) {
-      // ok
-    } else {
-      return json({ error: 'Forbidden' }, 403);
-    }
-
+    const admin = createClient(supabaseUrl, serviceKey);
     const result = await fulfillPaystackSuccessfulPayment(admin, {
       reference,
       amountKobo,
@@ -169,7 +99,6 @@ Deno.serve(async (req) => {
     return json({
       fulfilled: true,
       alreadyDone: result.alreadyDone,
-      invoice_id: invoiceIdResolved,
     });
   } catch (err) {
     return json({ error: (err as Error).message }, 500);

@@ -104,9 +104,19 @@ export class DashboardService {
     const { data: ownAssignmentsData } = await supabase.from('assignments').select('id').eq('created_by', teacherId);
     const ownAssignmentIds = (ownAssignmentsData ?? []).map((a: any) => a.id);
 
-    const studentsCount = ownClassIds.length > 0
-      ? (await supabase.from('enrollments').select('id', { count: 'exact', head: true }).in('class_id', ownClassIds)).count
-      : 0;
+    // Roster seats = portal student rows assigned to this teacher's classes (`portal_users.class_id`),
+    // not `enrollments` (program-level; no `class_id` on that table).
+    const studentsCount =
+      ownClassIds.length > 0
+        ? (
+            await supabase
+              .from('portal_users')
+              .select('id', { count: 'exact', head: true })
+              .eq('role', 'student')
+              .eq('is_deleted', false)
+              .in('class_id', ownClassIds)
+          ).count
+        : 0;
 
     return {
       stats: [
