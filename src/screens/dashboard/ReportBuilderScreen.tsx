@@ -6,10 +6,13 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { MotiView } from 'moti';
-import * as Print from 'expo-print';
-import * as Sharing from 'expo-sharing';
+import { generateAndShareReportPDF } from '../../lib/report-generator';
+import { buildStudentProgressReportTextSummary, sharePlainText } from '../../lib/reportShare';
 import { useAuth } from '../../contexts/AuthContext';
-import { supabase } from '../../lib/supabase';
+import {
+  reportBuilderService,
+  type StudentProgressReportInsert,
+} from '../../services/report-builder.service';
 import { ScreenHeader } from '../../components/ui/ScreenHeader';
 import { COLORS } from '../../constants/colors';
 import { FONT_FAMILY, FONT_SIZE } from '../../constants/typography';
@@ -47,6 +50,7 @@ interface StudentForm {
   proficiency_level: string;
   key_strengths: string;
   areas_for_growth: string;
+  instructor_assessment: string;
   is_published: boolean;
 }
 
@@ -57,6 +61,7 @@ const TERM_OPTIONS = ['First Term', 'Second Term', 'Third Term', 'Mid-Term', 'An
 const PERIOD_PRESETS = [
   '2024/2025 First Term', '2024/2025 Second Term', '2024/2025 Third Term',
   '2025/2026 First Term', '2025/2026 Second Term', '2025/2026 Third Term',
+  '2026/2027 First Term', '2026/2027 Second Term', '2026/2027 Third Term',
 ];
 const DURATION_OPTIONS = ['Termly', '4 weeks', '6 weeks', '8 weeks', '10 weeks', '12 weeks', '3 months', '6 months', 'Full Year'];
 const GRADE_OPTIONS = ['Excellent', 'Very Good', 'Good', 'Fair', 'Poor'];
@@ -137,6 +142,35 @@ function calcGrade(score: number | null): string {
   if (score >= 60) return 'C';
   if (score >= 50) return 'D';
   return 'F';
+}
+
+/** Academic year label (Sept–Aug) + term — aligns with period presets. */
+function buildDefaultReportPeriod(reportDate: string, reportTerm: string): string {
+  const d = new Date(`${reportDate}T12:00:00`);
+  if (Number.isNaN(d.getTime())) return '';
+  const y = d.getFullYear();
+  const m = d.getMonth();
+  const startYear = m >= 8 ? y : y - 1;
+  const endYear = startYear + 1;
+  return `${startYear}/${endYear} ${reportTerm.trim()}`;
+}
+
+function pickReportForSession(
+  rows: any[] | null | undefined,
+  reportTerm: string,
+  courseName: string,
+): any | null {
+  if (!rows?.length) return null;
+  const term = reportTerm.trim();
+  const courseKey = courseName.trim().toLowerCase();
+  const termRows = rows.filter((r) => (r.report_term ?? '').trim() === term);
+  if (!termRows.length) return null;
+  if (courseKey) {
+    return termRows.find((r) => (r.course_name ?? '').trim().toLowerCase() === courseKey) ?? null;
+  }
+  // Same term, multiple courses — require course name so we don't open the wrong report.
+  if (termRows.length > 1) return null;
+  return termRows[0];
 }
 
 const GRADE_COLOR: Record<string, string> = {
@@ -252,6 +286,7 @@ export default function ReportBuilderScreen({ navigation, route }: any) {
   const [milestoneInput, setMilestoneInput] = useState('');
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [sessionCollapsed, setSessionCollapsed] = useState(false);
+  const [signalsBanner, setSignalsBanner] = useState<string | null>(null);
 
   const [form, setForm] = useState<StudentForm>({
     theory_score: '0',
@@ -264,6 +299,7 @@ export default function ReportBuilderScreen({ navigation, route }: any) {
     proficiency_level: 'intermediate',
     key_strengths: '',
     areas_for_growth: '',
+    instructor_assessment: '',
     is_published: false,
   });
 
@@ -272,58 +308,106 @@ export default function ReportBuilderScreen({ navigation, route }: any) {
   const setF = (key: keyof StudentForm) => (val: any) =>
     setForm(f => ({ ...f, [key]: val }));
 
-  // Load students
+  // Auto-fill report period when empty (clear the field to regenerate after changing date/term).
+  useEffect(() => {
+    if (sessionConfig.report_period.trim()) return;
+    const next = buildDefaultReportPeriod(sessionConfig.report_date, sessionConfig.report_term);
+    if (!next) return;
+    setSessionConfig((s) => (s.report_period.trim() ? s : { ...s, report_period: next }));
+  }, [sessionConfig.report_date, sessionConfig.report_term, sessionConfig.report_period]);
+
+  // Load students scoped by role
   useEffect(() => {
     if (step !== 'pick' && !prefStudentId) return;
     setLoadingStudents(true);
-    let q = supabase
-      .from('portal_users')
-      .select('id, full_name, email, school_name, section_class, school_id')
-      .eq('role', 'student')
-      .order('full_name')
-      .limit(200);
-    if (isSchoolScoped && profile?.school_id) {
-      q = q.eq('school_id', profile.school_id);
-    }
-    q.then(({ data }) => {
-      if (data) setStudents(data as StudentRow[]);
-      setLoadingStudents(false);
-    });
-  }, [step, profile]);
+
+    const isTeacher = profile?.role === 'teacher';
+    const isSchool = profile?.role === 'school';
+
+    (async () => {
+      try {
+        const data = await reportBuilderService.loadStudentPickerRows({
+          role: profile?.role,
+          userId: profile?.id,
+          schoolId: profile?.school_id,
+        });
+        setStudents(data as StudentRow[]);
+      } finally {
+        setLoadingStudents(false);
+      }
+    })();
+  }, [step, profile, prefStudentId]);
 
   // Prefill if navigated with studentId
   useEffect(() => {
     if (!prefStudentId) return;
-    supabase
-      .from('portal_users')
-      .select('id, full_name, email, school_name, section_class, school_id')
-      .eq('id', prefStudentId)
-      .single()
-      .then(({ data }) => {
+    reportBuilderService
+      .getStudentRowForReport(prefStudentId)
+      .then((data) => {
         const row: StudentRow = data
           ? (data as StudentRow)
           : { id: prefStudentId, full_name: prefStudentName ?? '', email: '', school_name: null, section_class: null, school_id: null };
         selectStudent(row);
+      })
+      .catch(() => {
+        const row: StudentRow = {
+          id: prefStudentId,
+          full_name: prefStudentName ?? '',
+          email: '',
+          school_name: null,
+          section_class: null,
+          school_id: null,
+        };
+        selectStudent(row);
       });
   }, [prefStudentId, prefStudentName]);
+
+  const applySmartHints = useCallback(async (portalUserId: string) => {
+    try {
+      const { submissions: subs, attendance: att } = await reportBuilderService.fetchSmartHintSignals(portalUserId);
+      const raw = (subs ?? []).map((r: any) => Number(r.grade)).filter((g) => !Number.isNaN(g));
+      let practical = 0;
+      let theory = 0;
+      if (raw.length) {
+        const max = Math.max(...raw);
+        const scaled = raw.map((g) => (max <= 10 ? g * 10 : max <= 20 ? g * 5 : g));
+        const avg = scaled.reduce((a, b) => a + b, 0) / scaled.length;
+        practical = Math.min(100, Math.max(0, Math.round(avg)));
+        theory = Math.min(100, Math.max(0, practical - 3));
+      }
+      const rows = att ?? [];
+      const present = rows.filter((r: any) => r.status === 'present').length;
+      const attPct = rows.length ? Math.round((present / rows.length) * 100) : null;
+      const partPct = attPct != null ? Math.min(100, Math.max(0, Math.round(attPct * 0.95))) : null;
+
+      setForm((f) => ({
+        ...f,
+        practical_score: raw.length ? String(practical) : f.practical_score,
+        theory_score: raw.length ? String(theory) : f.theory_score,
+        attendance_score: attPct != null ? String(attPct) : f.attendance_score,
+        participation_score: partPct != null ? String(partPct) : f.participation_score,
+      }));
+      if (raw.length || rows.length) {
+        setSignalsBanner('Scores prefilled from graded assignments and attendance (adjust as needed).');
+      }
+    } catch {
+      /* non-blocking */
+    }
+  }, []);
 
   const selectStudent = useCallback(async (student: StudentRow) => {
     setSelectedStudent(student);
     setStep('edit');
     setLoadingReport(true);
+    setSignalsBanner(null);
 
-    const { data } = await supabase
-      .from('student_progress_reports')
-      .select('*')
-      .eq('student_id', student.id)
-      .order('report_date', { ascending: false })
-      .limit(1)
-      .maybeSingle();
+    const rows = await reportBuilderService.listProgressReportsForStudent(student.id, 25);
+
+    const data = pickReportForSession(rows, sessionConfig.report_term, sessionConfig.course_name);
 
     if (data) {
       setExistingReport(data);
-      // Hydrate session config from existing report
-      setSessionConfig(s => ({
+      setSessionConfig((s) => ({
         ...s,
         instructor_name: data.instructor_name ?? s.instructor_name,
         report_date: data.report_date?.slice(0, 10) ?? s.report_date,
@@ -335,11 +419,7 @@ export default function ReportBuilderScreen({ navigation, route }: any) {
         current_module: data.current_module ?? s.current_module,
         next_module: data.next_module ?? s.next_module,
         course_duration: data.course_duration ?? s.course_duration,
-        learning_milestones: Array.isArray(data.learning_milestones)
-          ? data.learning_milestones
-          : typeof data.learning_milestones === 'string'
-            ? data.learning_milestones.split('\n').filter(Boolean)
-            : s.learning_milestones,
+        learning_milestones: Array.isArray(data.learning_milestones) ? data.learning_milestones : s.learning_milestones,
         school_section: data.school_section ?? s.school_section,
         fee_label: data.fee_label ?? s.fee_label,
         fee_amount: data.fee_amount != null ? String(data.fee_amount) : s.fee_amount,
@@ -356,11 +436,34 @@ export default function ReportBuilderScreen({ navigation, route }: any) {
         proficiency_level: data.proficiency_level ?? 'intermediate',
         key_strengths: data.key_strengths ?? '',
         areas_for_growth: data.areas_for_growth ?? '',
+        instructor_assessment: data.instructor_assessment ?? '',
         is_published: data.is_published ?? false,
       });
+    } else {
+      setExistingReport(null);
+      setSessionConfig((s) => ({
+        ...s,
+        school_name: s.school_name || student.school_name || profile?.school_name || '',
+        section_class: s.section_class || student.section_class || '',
+      }));
+      setForm({
+        theory_score: '0',
+        practical_score: '0',
+        attendance_score: '0',
+        participation_score: '0',
+        participation_grade: 'Good',
+        projects_grade: 'Good',
+        homework_grade: 'Good',
+        proficiency_level: 'intermediate',
+        key_strengths: '',
+        areas_for_growth: '',
+        instructor_assessment: '',
+        is_published: false,
+      });
+      await applySmartHints(student.id);
     }
     setLoadingReport(false);
-  }, []);
+  }, [sessionConfig.report_term, sessionConfig.course_name, profile?.school_name, applySmartHints]);
 
   const addMilestone = (text: string) => {
     const t = text.trim();
@@ -382,98 +485,70 @@ export default function ReportBuilderScreen({ navigation, route }: any) {
     if (!selectedStudent) return;
     try {
       setExporting(true);
-      const html = `
-        <html>
-          <head>
-            <meta charset="utf-8" />
-            <style>
-              body { font-family: Arial, sans-serif; padding: 28px; color: #0A0A0C; }
-              .hero { border: 1px solid #e2e8f0; border-radius: 18px; padding: 24px; margin-bottom: 18px; background: linear-gradient(180deg, rgba(244,164,98,0.14), #ffffff); }
-              .eyebrow { font-size: 11px; text-transform: uppercase; letter-spacing: 2px; color: #64748B; margin-bottom: 10px; }
-              h1 { margin: 0 0 8px 0; font-size: 28px; }
-              h2 { margin: 22px 0 10px 0; font-size: 16px; }
-              p { margin: 4px 0; line-height: 1.5; }
-              .grade { display: inline-block; padding: 10px 14px; border-radius: 999px; background: rgba(244,164,98,0.14); color: ${gradeCol}; font-weight: 700; margin-top: 10px; }
-              .card { border: 1px solid #e2e8f0; border-radius: 16px; padding: 18px; margin-top: 14px; }
-              .row { display: flex; justify-content: space-between; gap: 12px; padding: 8px 0; border-bottom: 1px solid #f1f5f9; }
-              .row:last-child { border-bottom: none; }
-              .muted { color: #64748B; font-size: 12px; }
-              ul { margin: 8px 0 0 18px; padding: 0; }
-              li { margin: 6px 0; }
-            </style>
-          </head>
-          <body>
-            <div class="hero">
-              <div class="eyebrow">Rillcod Academy Progress Report</div>
-              <h1>${selectedStudent.full_name}</h1>
-              <p>${sessionConfig.course_name || 'Course not set'} · ${sessionConfig.report_term}</p>
-              <p>${sessionConfig.report_period || 'Report period not set'}</p>
-              <p>${sessionConfig.school_name || 'Rillcod Academy'}${sessionConfig.section_class ? ` · ${sessionConfig.section_class}` : ''}</p>
-              <p>Instructor: ${sessionConfig.instructor_name || 'Not set'}</p>
-              <div class="grade">${overallGrade} · ${overallScore ?? '-'}%</div>
-            </div>
 
-            <div class="card">
-              <h2>Score Breakdown</h2>
-              <div class="row"><span>Theory</span><strong>${form.theory_score || '0'}%</strong></div>
-              <div class="row"><span>Practical</span><strong>${form.practical_score || '0'}%</strong></div>
-              <div class="row"><span>Attendance</span><strong>${form.attendance_score || '0'}%</strong></div>
-              <div class="row"><span>Participation</span><strong>${form.participation_score || '0'}%</strong></div>
-            </div>
+      const payload = {
+        id: existingReport?.id ?? 'PREVIEW',
+        student_name: selectedStudent.full_name,
+        instructor_name: sessionConfig.instructor_name,
+        report_date: sessionConfig.report_date,
+        report_term: sessionConfig.report_term,
+        report_period: sessionConfig.report_period,
+        course_name: sessionConfig.course_name,
+        school_name: sessionConfig.school_name,
+        section_class: sessionConfig.section_class,
+        current_module: sessionConfig.current_module,
+        next_module: sessionConfig.next_module,
+        course_duration: sessionConfig.course_duration,
+        learning_milestones: sessionConfig.learning_milestones,
+        school_section: sessionConfig.school_section,
+        fee_label: sessionConfig.fee_label,
+        fee_amount: sessionConfig.fee_amount,
+        show_payment_notice: sessionConfig.show_payment_notice,
+        theory_score: parseFloat(form.theory_score) || 0,
+        practical_score: parseFloat(form.practical_score) || 0,
+        attendance_score: parseFloat(form.attendance_score) || 0,
+        participation_score: parseFloat(form.participation_score) || 0,
+        participation_grade: form.participation_grade,
+        projects_grade: form.projects_grade,
+        homework_grade: form.homework_grade,
+        proficiency_level: form.proficiency_level,
+        key_strengths: form.key_strengths,
+        areas_for_growth: form.areas_for_growth,
+        instructor_assessment: form.instructor_assessment,
+        overall_score: overallScore,
+        overall_grade: overallGrade,
+        template_id: 'industrial'
+      };
 
-            <div class="card">
-              <h2>Ratings</h2>
-              <div class="row"><span>Participation</span><strong>${form.participation_grade}</strong></div>
-              <div class="row"><span>Projects</span><strong>${form.projects_grade}</strong></div>
-              <div class="row"><span>Homework</span><strong>${form.homework_grade}</strong></div>
-              <div class="row"><span>Proficiency</span><strong>${form.proficiency_level}</strong></div>
-            </div>
+      const orgSettings = {
+        org_name: 'Rillcod Technologies',
+        org_tagline: 'Excellence in Educational Technology',
+        logo_url: 'https://rillcod.com/logo.png',
+      };
 
-            ${sessionConfig.learning_milestones.length ? `
-              <div class="card">
-                <h2>Learning Milestones</h2>
-                <ul>${sessionConfig.learning_milestones.map((item) => `<li>${item}</li>`).join('')}</ul>
-              </div>
-            ` : ''}
-
-            ${form.key_strengths ? `
-              <div class="card">
-                <h2>Key Strengths</h2>
-                <p>${form.key_strengths.replace(/\n/g, '<br/>')}</p>
-              </div>
-            ` : ''}
-
-            ${form.areas_for_growth ? `
-              <div class="card">
-                <h2>Areas for Growth</h2>
-                <p>${form.areas_for_growth.replace(/\n/g, '<br/>')}</p>
-              </div>
-            ` : ''}
-
-            ${(sessionConfig.current_module || sessionConfig.next_module || sessionConfig.fee_label) ? `
-              <div class="card">
-                <h2>Session Notes</h2>
-                ${sessionConfig.current_module ? `<p><strong>Current Module:</strong> ${sessionConfig.current_module}</p>` : ''}
-                ${sessionConfig.next_module ? `<p><strong>Next Module:</strong> ${sessionConfig.next_module}</p>` : ''}
-                ${sessionConfig.show_payment_notice && sessionConfig.fee_label ? `<p><strong>${sessionConfig.fee_label}:</strong> ${sessionConfig.fee_amount || '-'}</p>` : ''}
-              </div>
-            ` : ''}
-
-            <p class="muted">Generated on ${new Date().toLocaleDateString('en-GB')}</p>
-          </body>
-        </html>
-      `;
-      const { uri } = await Print.printToFileAsync({ html });
-      if (await Sharing.isAvailableAsync()) {
-        await Sharing.shareAsync(uri, { UTI: '.pdf', mimeType: 'application/pdf' });
-      } else {
-        Alert.alert('Export Ready', uri);
-      }
+      await generateAndShareReportPDF(payload, orgSettings, true); // True defaults to ModernReportCard
     } catch (err: any) {
       Alert.alert('Export Failed', err.message ?? 'Unable to export report PDF.');
     } finally {
       setExporting(false);
     }
+  };
+
+  const shareReportAsText = async () => {
+    if (!selectedStudent) return;
+    const safeScore = overallScore != null && Number.isFinite(overallScore) ? overallScore : 0;
+    const message = buildStudentProgressReportTextSummary({
+      studentName: selectedStudent.full_name,
+      courseName: sessionConfig.course_name,
+      term: sessionConfig.report_term,
+      period: sessionConfig.report_period,
+      overallGrade,
+      overallScore: safeScore,
+      strengths: form.key_strengths,
+      growth: form.areas_for_growth,
+      assessment: form.instructor_assessment,
+    });
+    await sharePlainText(`Report — ${selectedStudent.full_name}`, message);
   };
 
   const save = async (publish: boolean) => {
@@ -482,26 +557,40 @@ export default function ReportBuilderScreen({ navigation, route }: any) {
       Alert.alert('Access denied', 'You do not have permission to build reports.');
       return;
     }
+    if (publish) {
+      if (!sessionConfig.course_name?.trim()) {
+        Alert.alert('Missing course', 'Add a course / subject name before publishing.');
+        return;
+      }
+      if (!sessionConfig.report_date?.trim()) {
+        Alert.alert('Missing date', 'Set a report date before publishing.');
+        return;
+      }
+      if (!sessionConfig.report_term?.trim()) {
+        Alert.alert('Missing term', 'Select a term before publishing.');
+        return;
+      }
+    }
     setSaving(true);
-    const payload: Record<string, any> = {
-      student_id: selectedStudent.id,
-      student_name: selectedStudent.full_name,
-      teacher_id: profile?.id,
-      instructor_name: sessionConfig.instructor_name,
-      report_date: sessionConfig.report_date,
-      report_term: sessionConfig.report_term,
+      const payload: StudentProgressReportInsert = {
+        student_id: selectedStudent.id,
+        student_name: selectedStudent.full_name,
+        teacher_id: profile?.id ?? null,
+        instructor_name: sessionConfig.instructor_name,
+        report_date: sessionConfig.report_date,
+        report_term: sessionConfig.report_term,
       report_period: sessionConfig.report_period,
       course_name: sessionConfig.course_name,
       school_id: selectedStudent.school_id ?? profile?.school_id ?? null,
       school_name: sessionConfig.school_name,
-      section_class: sessionConfig.section_class || selectedStudent.section_class,
+        section_class: sessionConfig.section_class || selectedStudent.section_class || null,
       current_module: sessionConfig.current_module,
       next_module: sessionConfig.next_module,
       course_duration: sessionConfig.course_duration,
       learning_milestones: sessionConfig.learning_milestones,
       school_section: sessionConfig.school_section,
       fee_label: sessionConfig.fee_label || null,
-      fee_amount: sessionConfig.fee_amount ? parseFloat(sessionConfig.fee_amount) || null : null,
+        fee_amount: sessionConfig.fee_amount ? String(parseFloat(sessionConfig.fee_amount) || 0) : null,
       show_payment_notice: sessionConfig.show_payment_notice,
       theory_score: parseFloat(form.theory_score) || 0,
       practical_score: parseFloat(form.practical_score) || 0,
@@ -513,21 +602,26 @@ export default function ReportBuilderScreen({ navigation, route }: any) {
       proficiency_level: form.proficiency_level,
       key_strengths: form.key_strengths,
       areas_for_growth: form.areas_for_growth,
+      instructor_assessment: form.instructor_assessment.trim() || null,
       overall_score: overallScore,
       overall_grade: overallGrade === '—' ? null : overallGrade,
       is_published: publish,
     };
 
-    let error;
-    if (existingReport?.id) {
-      ({ error } = await supabase.from('student_progress_reports').update(payload).eq('id', existingReport.id));
-    } else {
-      ({ error } = await supabase.from('student_progress_reports').insert(payload));
-    }
+      let errMsg: string | null = null;
+      try {
+        if (existingReport?.id) {
+          await reportBuilderService.updateProgressReport(existingReport.id, payload);
+        } else {
+          await reportBuilderService.insertProgressReport(payload);
+        }
+      } catch (e: any) {
+        errMsg = e?.message ?? 'Save failed';
+      }
 
     setSaving(false);
-    if (error) {
-      Alert.alert('Error', error.message);
+    if (errMsg) {
+      Alert.alert('Error', errMsg);
     } else {
       Alert.alert(
         publish ? 'Report Published!' : 'Saved as Draft',
@@ -587,11 +681,13 @@ export default function ReportBuilderScreen({ navigation, route }: any) {
                   ))}
                 </ScrollView>
                 <TextInput style={f.input} value={sessionConfig.report_period} onChangeText={setSession('report_period')} placeholder="Or type custom period…" placeholderTextColor={COLORS.textMuted} />
+                <Text style={styles.hintText}>Tip: clear this field to auto-fill from report date + term above.</Text>
               </View>
             </SectionBox>
 
             <SectionBox icon="📚" title="Course">
               <Field label="Course / Subject Name" value={sessionConfig.course_name} onChangeText={setSession('course_name')} placeholder="e.g. Python Programming, Web Design…" />
+              <Text style={styles.hintText}>If a learner has more than one report in the same term, set this exactly before picking them so the right record opens (or a new one is created).</Text>
               <Picker label="Duration" options={DURATION_OPTIONS} value={sessionConfig.course_duration} onChange={setSession('course_duration')} />
               <Field label="School" value={sessionConfig.school_name} onChangeText={setSession('school_name')} placeholder="Partner school name" />
               <Field label="Class / Section" value={sessionConfig.section_class} onChangeText={setSession('section_class')} placeholder="e.g. JSS 2A, Basic 5" />
@@ -762,7 +858,13 @@ export default function ReportBuilderScreen({ navigation, route }: any) {
       />
 
       <ScrollView contentContainerStyle={styles.scroll} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
-        <MotiView from={{ opacity: 0 }} animate={{ opacity: 1 }}>
+          <MotiView from={{ opacity: 0 }} animate={{ opacity: 1 }}>
+
+          {!!signalsBanner && (
+            <View style={styles.signalsBanner}>
+              <Text style={styles.signalsBannerText}>💡 {signalsBanner}</Text>
+            </View>
+          )}
 
           {/* Live grade preview */}
           <MotiView
@@ -831,6 +933,7 @@ export default function ReportBuilderScreen({ navigation, route }: any) {
           <SectionBox icon="📝" title="Teacher's Notes">
             <Field label="Key Strengths" value={form.key_strengths} onChangeText={setF('key_strengths')} placeholder="What the student did well…" multiline />
             <Field label="Areas for Growth" value={form.areas_for_growth} onChangeText={setF('areas_for_growth')} placeholder="What can be improved next term…" multiline />
+            <Field label="Instructor Assessment" value={form.instructor_assessment} onChangeText={setF('instructor_assessment')} placeholder="Formal assessment summary for the report card…" multiline />
           </SectionBox>
 
           {/* Publish toggle */}
@@ -875,6 +978,10 @@ export default function ReportBuilderScreen({ navigation, route }: any) {
               style={[styles.exportBtn, exporting && styles.btnDisabled]}
             >
               <Text style={styles.exportBtnText}>{exporting ? 'Preparing PDF...' : 'Export Report PDF'}</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity onPress={shareReportAsText} style={styles.exportBtnSecondary}>
+              <Text style={styles.exportBtnSecondaryText}>Share report (text)</Text>
             </TouchableOpacity>
 
             {/* Report Card Preview */}
@@ -931,6 +1038,12 @@ export default function ReportBuilderScreen({ navigation, route }: any) {
               <View style={styles.previewNotes}>
                 <Text style={styles.previewNotesLabel}>🎯 Areas for Growth</Text>
                 <Text style={styles.previewNotesText}>{form.areas_for_growth}</Text>
+              </View>
+            ) : null}
+            {form.instructor_assessment ? (
+              <View style={styles.previewNotes}>
+                <Text style={styles.previewNotesLabel}>📋 Instructor Assessment</Text>
+                <Text style={styles.previewNotesText}>{form.instructor_assessment}</Text>
               </View>
             ) : null}
             {/* Milestones */}
@@ -1008,6 +1121,15 @@ const si = StyleSheet.create({
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: COLORS.bg },
   scroll: { paddingHorizontal: SPACING.xl, paddingTop: SPACING.sm },
+  signalsBanner: {
+    backgroundColor: COLORS.info + '18',
+    borderWidth: 1,
+    borderColor: COLORS.info + '40',
+    borderRadius: RADIUS.md,
+    padding: SPACING.md,
+    marginBottom: SPACING.md,
+  },
+  signalsBannerText: { fontFamily: FONT_FAMILY.body, fontSize: FONT_SIZE.xs, color: COLORS.textSecondary, lineHeight: 18 },
   loadWrap: { flex: 1, backgroundColor: COLORS.bg, alignItems: 'center', justifyContent: 'center', gap: 12 },
   loadText: { fontFamily: FONT_FAMILY.body, fontSize: FONT_SIZE.sm, color: COLORS.textMuted },
   list: { paddingHorizontal: SPACING.xl },
@@ -1097,6 +1219,16 @@ const styles = StyleSheet.create({
   btnDisabled: { opacity: 0.5 },
   exportBtn: { marginTop: SPACING.md, borderWidth: 1, borderColor: COLORS.accent + '45', borderRadius: RADIUS.lg, paddingVertical: 13, alignItems: 'center', backgroundColor: COLORS.accent + '10' },
   exportBtnText: { fontFamily: FONT_FAMILY.bodySemi, fontSize: FONT_SIZE.sm, color: COLORS.accent },
+  exportBtnSecondary: {
+    marginTop: SPACING.sm,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    borderRadius: RADIUS.lg,
+    paddingVertical: 12,
+    alignItems: 'center',
+    backgroundColor: COLORS.bgCard,
+  },
+  exportBtnSecondaryText: { fontFamily: FONT_FAMILY.bodySemi, fontSize: FONT_SIZE.sm, color: COLORS.textSecondary },
 
   emptyWrap: { alignItems: 'center', paddingVertical: 60, gap: 12 },
   emptyEmoji: { fontSize: 40 },

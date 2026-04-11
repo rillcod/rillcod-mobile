@@ -5,10 +5,13 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { MotiView } from 'moti';
-import { supabase } from '../../lib/supabase';
+import { useAuth } from '../../contexts/AuthContext';
+import { gradeService } from '../../services/grade.service';
+import { studentService } from '../../services/student.service';
 import { COLORS } from '../../constants/colors';
 import { FONT_FAMILY, FONT_SIZE } from '../../constants/typography';
 import { SPACING, RADIUS } from '../../constants/spacing';
+import { IconBackButton } from '../../components/ui/IconBackButton';
 
 interface Report {
   id: string;
@@ -25,6 +28,7 @@ interface Report {
   learning_milestones: string[] | null;
   key_strengths: string | null;
   areas_for_growth: string | null;
+  instructor_assessment: string | null;
 }
 
 function gradeColor(g: string | null): string {
@@ -43,8 +47,9 @@ function scoreColor(score: number | null): string {
 }
 
 export default function ParentResultsScreen({ navigation, route }: any) {
+  const { profile } = useAuth();
   // studentId = students.id; userId = portal_users.id (student_progress_reports.student_id → portal_users)
-  const { studentId, studentName, userId } = route.params ?? {};
+  const { studentId: paramStudentId, studentName, userId } = route.params ?? {};
   const [reports, setReports] = useState<Report[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -53,12 +58,14 @@ export default function ParentResultsScreen({ navigation, route }: any) {
 
   const load = async () => {
     try {
-      // Resolve the portal_users.id: prefer passed userId, otherwise fetch from students table
+      let studentId = paramStudentId as string | undefined;
+      if (!studentId && profile?.email) {
+        studentId = (await studentService.getFirstStudentRegistrationIdForParentEmail(profile.email)) ?? undefined;
+      }
+
       let portalUserId: string | null = userId ?? null;
-      if (!portalUserId) {
-        const { data: student } = await supabase
-          .from('students').select('user_id').eq('id', studentId).maybeSingle();
-        portalUserId = student?.user_id ?? null;
+      if (!portalUserId && studentId) {
+        portalUserId = await studentService.getPortalUserIdForStudentRegistration(studentId);
       }
 
       if (!portalUserId) {
@@ -68,20 +75,15 @@ export default function ParentResultsScreen({ navigation, route }: any) {
       }
 
       setNoPortalAccount(false);
-      const { data } = await supabase
-        .from('student_progress_reports')
-        .select('id, course_name, report_term, theory_score, practical_score, attendance_score, overall_score, overall_grade, is_published, report_date, instructor_name, learning_milestones, key_strengths, areas_for_growth')
-        .eq('student_id', portalUserId)
-        .eq('is_published', true)
-        .order('report_date', { ascending: false });
-      setReports((data ?? []) as Report[]);
+      const data = await gradeService.listProgressReports(portalUserId);
+      setReports(data as Report[]);
     } finally {
       setLoading(false);
       setRefreshing(false);
     }
   };
 
-  useEffect(() => { load(); }, [studentId, userId]);
+  useEffect(() => { load(); }, [paramStudentId, userId, profile?.email]);
 
   const avgScore = reports.length > 0
     ? Math.round(reports.reduce((s, r) => s + (r.overall_score ?? 0), 0) / reports.length)
@@ -91,9 +93,7 @@ export default function ParentResultsScreen({ navigation, route }: any) {
     <SafeAreaView style={styles.safe}>
       {/* Header */}
       <View style={styles.header}>
-        <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}>
-          <Text style={styles.backIcon}>←</Text>
-        </TouchableOpacity>
+        <IconBackButton onPress={() => navigation.goBack()} color={COLORS.textPrimary} style={styles.backBtn} />
         <View style={{ flex: 1 }}>
           <Text style={styles.title}>Report Cards</Text>
           {studentName && <Text style={styles.subtitle}>{studentName}</Text>}
@@ -207,6 +207,13 @@ export default function ParentResultsScreen({ navigation, route }: any) {
                           </View>
                         ) : null}
 
+                        {report.instructor_assessment ? (
+                          <View style={styles.infoBox}>
+                            <Text style={[styles.infoBoxLabel, { color: COLORS.info }]}>Instructor Assessment</Text>
+                            <Text style={styles.infoBoxText}>{report.instructor_assessment}</Text>
+                          </View>
+                        ) : null}
+
                         {/* Milestones */}
                         {report.learning_milestones && report.learning_milestones.length > 0 && (
                           <View style={styles.milestonesBox}>
@@ -248,7 +255,6 @@ const styles = StyleSheet.create({
     gap: SPACING.md,
   },
   backBtn: { padding: SPACING.xs },
-  backIcon: { fontSize: 22, color: COLORS.textPrimary },
   title: { fontFamily: FONT_FAMILY.display, fontSize: FONT_SIZE['2xl'], color: COLORS.textPrimary },
   subtitle: { fontFamily: FONT_FAMILY.body, fontSize: FONT_SIZE.sm, color: COLORS.textMuted, marginTop: 2 },
   avgBadge: { alignItems: 'center', paddingHorizontal: SPACING.md, paddingVertical: SPACING.xs, borderWidth: 1, borderColor: COLORS.border, borderRadius: RADIUS.sm },

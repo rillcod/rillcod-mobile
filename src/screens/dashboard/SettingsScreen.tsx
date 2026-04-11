@@ -1,15 +1,17 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity,
-  Switch, Alert, Linking, TextInput, ActivityIndicator,
+  Switch, Alert, Linking,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { MotiView } from 'moti';
 import { useAuth } from '../../contexts/AuthContext';
-import { supabase } from '../../lib/supabase';
+import { authService } from '../../services/auth.service';
 import { COLORS } from '../../constants/colors';
 import { FONT_FAMILY, FONT_SIZE } from '../../constants/typography';
 import { SPACING, RADIUS } from '../../constants/spacing';
+import { IconBackButton } from '../../components/ui/IconBackButton';
+import { notificationPreferencesService } from '../../services/notification-preferences.service';
 
 interface SettingItem {
   icon: string;
@@ -26,43 +28,109 @@ interface SettingSection {
   items: SettingItem[];
 }
 
-export default function SettingsScreen({ navigation }: any) {
-  const { profile, signOut } = useAuth();
-  const [pushEnabled, setPushEnabled] = useState(true);
-  const [emailEnabled, setEmailEnabled] = useState(true);
-  const [darkMode, setDarkMode] = useState(true);
+type NotifPrefs = {
+  push_enabled: boolean;
+  email_enabled: boolean;
+  sms_enabled: boolean;
+  assignment_reminders: boolean;
+  grade_notifications: boolean;
+  announcement_notifications: boolean;
+  discussion_replies: boolean;
+  marketing_emails: boolean;
+};
 
-  // AI config (admin only)
-  const [aiKey, setAiKey] = useState('');
-  const [aiKeyMasked, setAiKeyMasked] = useState(true);
-  const [aiKeySaving, setAiKeySaving] = useState(false);
-  const [aiKeyLoaded, setAiKeyLoaded] = useState(false);
-  const isStaff = profile?.role === 'admin' || profile?.role === 'teacher';
+const NOTIF_DEFAULTS: NotifPrefs = {
+  push_enabled: true,
+  email_enabled: true,
+  sms_enabled: false,
+  assignment_reminders: true,
+  grade_notifications: true,
+  announcement_notifications: true,
+  discussion_replies: true,
+  marketing_emails: false,
+};
+
+export default function SettingsScreen({ navigation }: any) {
+  const { profile, signOut, loading: authLoading } = useAuth();
+  const [notif, setNotif] = useState<NotifPrefs>(NOTIF_DEFAULTS);
+  const prefsHydrating = useRef(true);
+  const [darkMode, setDarkMode] = useState(true);
+  const [resettingPassword, setResettingPassword] = useState(false);
 
   useEffect(() => {
-    if (!isStaff) return;
-    supabase
-      .from('app_settings')
-      .select('value')
-      .eq('key', 'openrouter_api_key')
-      .single()
-      .then(({ data }) => {
-        setAiKey(data?.value ?? '');
-        setAiKeyLoaded(true);
-      });
-  }, [isStaff]);
+    let cancelled = false;
+    prefsHydrating.current = true;
+    (async () => {
+      if (!profile?.id) {
+        prefsHydrating.current = false;
+        return;
+      }
+      try {
+        const row = await notificationPreferencesService.getForUser(profile.id);
+        if (cancelled) return;
+        if (row) {
+          setNotif({
+            push_enabled: row.push_enabled ?? NOTIF_DEFAULTS.push_enabled,
+            email_enabled: row.email_enabled ?? NOTIF_DEFAULTS.email_enabled,
+            sms_enabled: row.sms_enabled ?? NOTIF_DEFAULTS.sms_enabled,
+            assignment_reminders: row.assignment_reminders ?? NOTIF_DEFAULTS.assignment_reminders,
+            grade_notifications: row.grade_notifications ?? NOTIF_DEFAULTS.grade_notifications,
+            announcement_notifications: row.announcement_notifications ?? NOTIF_DEFAULTS.announcement_notifications,
+            discussion_replies: row.discussion_replies ?? NOTIF_DEFAULTS.discussion_replies,
+            marketing_emails: row.marketing_emails ?? NOTIF_DEFAULTS.marketing_emails,
+          });
+        } else {
+          setNotif(NOTIF_DEFAULTS);
+        }
+      } catch {
+        if (!cancelled) setNotif(NOTIF_DEFAULTS);
+      } finally {
+        if (!cancelled) prefsHydrating.current = false;
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [profile?.id]);
 
-  const saveAiKey = async () => {
-    const key = aiKey.trim();
-    if (!key) { Alert.alert('Empty key', 'Please enter your OpenRouter API key.'); return; }
-    setAiKeySaving(true);
-    const { error } = await supabase
-      .from('app_settings')
-      .upsert({ key: 'openrouter_api_key', value: key }, { onConflict: 'key' });
-    setAiKeySaving(false);
-    if (error) Alert.alert('Error', error.message);
-    else Alert.alert('Saved', 'AI API key updated successfully.');
+  useEffect(() => {
+    if (prefsHydrating.current || !profile?.id) return;
+    const t = setTimeout(() => {
+      notificationPreferencesService.upsertForUser(profile.id, notif).catch(() => {});
+    }, 400);
+    return () => clearTimeout(t);
+  }, [notif, profile?.id]);
+
+  const sendPasswordReset = async () => {
+    const email = profile?.email?.trim().toLowerCase();
+    if (!email) {
+      Alert.alert('Missing email', 'This account does not have a valid email address.');
+      return;
+    }
+
+    setResettingPassword(true);
+    const { error } = await authService.resetPasswordForEmail(email);
+    setResettingPassword(false);
+
+    if (error) {
+      Alert.alert('Reset failed', error.message);
+      return;
+    }
+
+    Alert.alert('Reset link sent', `A password reset link has been sent to ${email}.`);
   };
+
+  const confirmSignOut = () =>
+    Alert.alert('Sign Out', 'Are you sure you want to sign out?', [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Sign Out',
+        style: 'destructive',
+        onPress: async () => {
+          await signOut();
+        },
+      },
+    ]);
 
   const sections: SettingSection[] = [
     {
@@ -73,16 +141,64 @@ export default function SettingsScreen({ navigation }: any) {
           label: 'Push Notifications',
           description: 'Receive alerts on your device',
           type: 'toggle',
-          value: pushEnabled,
-          onToggle: setPushEnabled,
+          value: notif.push_enabled,
+          onToggle: (v: boolean) => setNotif((p) => ({ ...p, push_enabled: v })),
         },
         {
           icon: '📧',
           label: 'Email Notifications',
           description: 'Get updates via email',
           type: 'toggle',
-          value: emailEnabled,
-          onToggle: setEmailEnabled,
+          value: notif.email_enabled,
+          onToggle: (v: boolean) => setNotif((p) => ({ ...p, email_enabled: v })),
+        },
+        {
+          icon: '💬',
+          label: 'SMS (optional)',
+          description: 'Text messages when enabled by your school',
+          type: 'toggle',
+          value: notif.sms_enabled,
+          onToggle: (v: boolean) => setNotif((p) => ({ ...p, sms_enabled: v })),
+        },
+        {
+          icon: '📋',
+          label: 'Assignment reminders',
+          description: 'Due dates and submission nudges',
+          type: 'toggle',
+          value: notif.assignment_reminders,
+          onToggle: (v: boolean) => setNotif((p) => ({ ...p, assignment_reminders: v })),
+        },
+        {
+          icon: '📊',
+          label: 'Grade notifications',
+          description: 'When work is graded',
+          type: 'toggle',
+          value: notif.grade_notifications,
+          onToggle: (v: boolean) => setNotif((p) => ({ ...p, grade_notifications: v })),
+        },
+        {
+          icon: '📣',
+          label: 'Announcements',
+          description: 'School-wide and role notices',
+          type: 'toggle',
+          value: notif.announcement_notifications,
+          onToggle: (v: boolean) => setNotif((p) => ({ ...p, announcement_notifications: v })),
+        },
+        {
+          icon: '💭',
+          label: 'Discussion replies',
+          description: 'Replies on course discussions',
+          type: 'toggle',
+          value: notif.discussion_replies,
+          onToggle: (v: boolean) => setNotif((p) => ({ ...p, discussion_replies: v })),
+        },
+        {
+          icon: '✨',
+          label: 'Product updates',
+          description: 'Tips and occasional marketing',
+          type: 'toggle',
+          value: notif.marketing_emails,
+          onToggle: (v: boolean) => setNotif((p) => ({ ...p, marketing_emails: v })),
         },
       ],
     },
@@ -105,10 +221,11 @@ export default function SettingsScreen({ navigation }: any) {
         {
           icon: '🔑',
           label: 'Change Password',
+          description: resettingPassword ? 'Sending reset link...' : profile?.email ?? 'Uses your account email',
           type: 'link',
           onPress: () => Alert.alert('Change Password', 'A password reset link will be sent to ' + profile?.email, [
             { text: 'Cancel', style: 'cancel' },
-            { text: 'Send Link', onPress: () => {} },
+            { text: 'Send Link', onPress: sendPasswordReset },
           ]),
         },
         {
@@ -161,12 +278,9 @@ export default function SettingsScreen({ navigation }: any) {
         {
           icon: '🚪',
           label: 'Sign Out',
+          description: authLoading ? 'Signing out...' : 'End this session on this device',
           type: 'destructive',
-          onPress: () =>
-            Alert.alert('Sign Out', 'Are you sure you want to sign out?', [
-              { text: 'Cancel', style: 'cancel' },
-              { text: 'Sign Out', style: 'destructive', onPress: signOut },
-            ]),
+          onPress: confirmSignOut,
         },
       ],
     },
@@ -181,9 +295,7 @@ export default function SettingsScreen({ navigation }: any) {
           animate={{ opacity: 1, translateY: 0 }}
           style={styles.header}
         >
-          <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}>
-            <Text style={styles.backIcon}>←</Text>
-          </TouchableOpacity>
+          <IconBackButton onPress={() => navigation.goBack()} color={COLORS.textPrimary} style={styles.backBtn} />
           <Text style={styles.title}>Settings</Text>
         </MotiView>
 
@@ -258,58 +370,6 @@ export default function SettingsScreen({ navigation }: any) {
           </MotiView>
         ))}
 
-        {/* AI Configuration — admin & teacher */}
-        {isStaff && (
-          <MotiView
-            from={{ opacity: 0, translateY: 10 }}
-            animate={{ opacity: 1, translateY: 0 }}
-            transition={{ delay: 400 }}
-            style={styles.section}
-          >
-            <Text style={styles.sectionTitle}>AI Configuration</Text>
-            <View style={styles.sectionCard}>
-              <View style={{ padding: SPACING.md, gap: SPACING.sm }}>
-                <Text style={styles.rowLabel}>OpenRouter API Key</Text>
-                <Text style={[styles.rowDesc, { marginBottom: 4 }]}>
-                  Required to power the AI Tutor, Content Creator, and Code Assistant.{'\n'}
-                  Get your free key at openrouter.ai
-                </Text>
-                {!aiKeyLoaded ? (
-                  <ActivityIndicator color={COLORS.primaryLight} size="small" />
-                ) : (
-                  <>
-                    <View style={styles.aiKeyRow}>
-                      <TextInput
-                        style={styles.aiKeyInput}
-                        value={aiKey}
-                        onChangeText={setAiKey}
-                        placeholder="sk-or-v1-..."
-                        placeholderTextColor={COLORS.textMuted}
-                        secureTextEntry={aiKeyMasked}
-                        autoCapitalize="none"
-                        autoCorrect={false}
-                      />
-                      <TouchableOpacity onPress={() => setAiKeyMasked(v => !v)} style={styles.aiKeyToggle}>
-                        <Text style={{ color: COLORS.textMuted, fontSize: 18 }}>{aiKeyMasked ? '👁' : '🙈'}</Text>
-                      </TouchableOpacity>
-                    </View>
-                    <TouchableOpacity
-                      style={[styles.saveKeyBtn, aiKeySaving && { opacity: 0.6 }]}
-                      onPress={saveAiKey}
-                      disabled={aiKeySaving}
-                    >
-                      {aiKeySaving
-                        ? <ActivityIndicator color="#fff" size="small" />
-                        : <Text style={styles.saveKeyText}>Save API Key</Text>
-                      }
-                    </TouchableOpacity>
-                  </>
-                )}
-              </View>
-            </View>
-          </MotiView>
-        )}
-
         <Text style={styles.version}>Rillcod Academy v1.0.0 · © 2025 Rillcod</Text>
       </ScrollView>
     </SafeAreaView>
@@ -328,7 +388,6 @@ const styles = StyleSheet.create({
     gap: SPACING.md,
   },
   backBtn: { padding: SPACING.xs },
-  backIcon: { fontSize: 22, color: COLORS.textPrimary },
   title: {
     fontFamily: FONT_FAMILY.display,
     fontSize: FONT_SIZE['2xl'],
@@ -437,37 +496,5 @@ const styles = StyleSheet.create({
     color: COLORS.textMuted,
     marginTop: SPACING.lg,
     paddingBottom: SPACING.xl,
-  },
-  aiKeyRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: 'rgba(255,255,255,0.05)',
-    borderWidth: 1,
-    borderColor: COLORS.border,
-    borderRadius: RADIUS.md,
-    overflow: 'hidden',
-  },
-  aiKeyInput: {
-    flex: 1,
-    paddingHorizontal: SPACING.md,
-    paddingVertical: 10,
-    fontFamily: FONT_FAMILY.body,
-    fontSize: FONT_SIZE.sm,
-    color: COLORS.textPrimary,
-  },
-  aiKeyToggle: {
-    paddingHorizontal: SPACING.sm,
-    paddingVertical: 10,
-  },
-  saveKeyBtn: {
-    backgroundColor: COLORS.primary,
-    borderRadius: RADIUS.md,
-    paddingVertical: 11,
-    alignItems: 'center',
-  },
-  saveKeyText: {
-    fontFamily: FONT_FAMILY.bodySemi,
-    fontSize: FONT_SIZE.sm,
-    color: '#fff',
   },
 });

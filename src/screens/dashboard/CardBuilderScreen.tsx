@@ -9,10 +9,11 @@ import { LinearGradient } from 'expo-linear-gradient';
 import * as Print from 'expo-print';
 import * as Sharing from 'expo-sharing';
 import { useAuth } from '../../contexts/AuthContext';
-import { supabase } from '../../lib/supabase';
+import { cardService } from '../../services/card.service';
 import { COLORS } from '../../constants/colors';
 import { FONT_FAMILY, FONT_SIZE } from '../../constants/typography';
 import { SPACING, RADIUS } from '../../constants/spacing';
+import { IconBackButton } from '../../components/ui/IconBackButton';
 
 interface StudentRecord {
   id: string;
@@ -138,7 +139,9 @@ function IDCard({ student }: { student: StudentRecord }) {
 
       {/* Bottom red bar */}
       <LinearGradient colors={COLORS.gradPrimary as [string, string, ...string[]]} style={styles.idCardBottomBar}>
-        <Text style={styles.validText}>✦  Valid 2025 – 2026  ✦</Text>
+        <Text style={styles.validText}>
+          ✦ Valid {enrollYear(student.created_at)}–{Number(enrollYear(student.created_at)) + 1} ✦
+        </Text>
         <Text style={styles.websiteText}>rillcod.com</Text>
       </LinearGradient>
     </View>
@@ -159,13 +162,7 @@ export default function CardBuilderScreen({ navigation }: any) {
     if (text.trim().length < 2) { setResults([]); return; }
     setSearching(true);
     try {
-      const { data, error } = await supabase
-        .from('portal_users')
-        .select('id, full_name, email, school_name, section_class, created_at')
-        .eq('role', 'student')
-        .ilike('full_name', `%${text.trim()}%`)
-        .limit(20);
-      if (error) throw error;
+      const data = await cardService.searchStudentsForIdCardByName(text, 20);
       setResults((data ?? []) as StudentRecord[]);
     } catch (e: any) {
       Alert.alert('Error', e.message);
@@ -261,9 +258,7 @@ export default function CardBuilderScreen({ navigation }: any) {
     return (
       <SafeAreaView style={styles.safe}>
         <View style={styles.header}>
-          <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}>
-            <Text style={styles.backArrow}>←</Text>
-          </TouchableOpacity>
+          <IconBackButton onPress={() => navigation.goBack()} color={COLORS.textPrimary} style={styles.backBtn} />
           <Text style={styles.headerTitle}>ID Card Builder</Text>
         </View>
 
@@ -340,9 +335,7 @@ export default function CardBuilderScreen({ navigation }: any) {
   return (
     <SafeAreaView style={styles.safe}>
       <View style={styles.header}>
-        <TouchableOpacity onPress={() => setStep('search')} style={styles.backBtn}>
-          <Text style={styles.backArrow}>←</Text>
-        </TouchableOpacity>
+        <IconBackButton onPress={() => setStep('search')} color={COLORS.textPrimary} style={styles.backBtn} />
         <Text style={styles.headerTitle}>ID Card Preview</Text>
       </View>
 
@@ -389,7 +382,6 @@ const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: COLORS.bg },
   header: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: SPACING.base, paddingVertical: SPACING.md, gap: SPACING.sm },
   backBtn: { width: 36, height: 36, borderRadius: RADIUS.md, borderWidth: 1, borderColor: COLORS.border, alignItems: 'center', justifyContent: 'center' },
-  backArrow: { fontSize: 18, color: COLORS.textPrimary },
   headerTitle: { flex: 1, fontSize: FONT_SIZE.lg, fontFamily: FONT_FAMILY.heading, color: COLORS.textPrimary },
 
   // Step 1

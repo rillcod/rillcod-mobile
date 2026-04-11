@@ -1,32 +1,36 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, useMemo } from 'react';
 import {
   View, Text, StyleSheet, FlatList, TouchableOpacity,
   RefreshControl, ActivityIndicator, Modal, TextInput,
-  KeyboardAvoidingView, Platform, Alert, ScrollView,
+  KeyboardAvoidingView, Platform, Alert, ScrollView, Linking,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { MotiView } from 'moti';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useAuth } from '../../contexts/AuthContext';
-import { supabase } from '../../lib/supabase';
+import { certificateService } from '../../services/certificate.service';
 import { COLORS } from '../../constants/colors';
 import { FONT_FAMILY, FONT_SIZE } from '../../constants/typography';
 import { SPACING, RADIUS } from '../../constants/spacing';
+import { IconBackButton } from '../../components/ui/IconBackButton';
+import { Ionicons } from '@expo/vector-icons';
 
 interface Certificate {
   id: string;
-  user_id: string;
+  portal_user_id: string | null;
+  certificate_number: string;
+  verification_code: string;
   title: string;
   description: string | null;
-  issued_at: string;
+  issued_date: string;
   issued_by: string | null;
-  is_revoked: boolean;
+  pdf_url: string | null;
   portal_users?: { full_name: string; email: string } | null;
 }
 
 interface StudentOption { id: string; full_name: string; email: string; }
 
-type FilterTab = 'all' | 'active' | 'revoked';
+type FilterTab = 'all' | 'pdf';
 
 function formatDate(d: string): string {
   return new Date(d).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
@@ -42,7 +46,6 @@ export default function ManageCertificatesScreen({ navigation }: any) {
   const [search, setSearch] = useState('');
   const [showModal, setShowModal] = useState(false);
 
-  // Form
   const [formStudentId, setFormStudentId] = useState('');
   const [formTitle, setFormTitle] = useState('');
   const [formDesc, setFormDesc] = useState('');
@@ -52,20 +55,12 @@ export default function ManageCertificatesScreen({ navigation }: any) {
 
   const load = useCallback(async () => {
     try {
-      const { data, error } = await supabase
-        .from('certificates')
-        .select('id, user_id, title, description, issued_at, issued_by, is_revoked, portal_users!certificates_user_id_fkey(full_name, email)')
-        .order('issued_at', { ascending: false });
-      if (error) throw error;
-      setCerts((data ?? []) as unknown as Certificate[]);
+      const mapped = await certificateService.listCertificatesForManageScreen();
+      setCerts(mapped as Certificate[]);
 
       if (isAdmin) {
-        const { data: studs } = await supabase
-          .from('portal_users')
-          .select('id, full_name, email')
-          .eq('role', 'student')
-          .order('full_name');
-        setStudents((studs ?? []) as StudentOption[]);
+        const studs = await certificateService.listStudentsForCertificatePicker();
+        setStudents(studs as StudentOption[]);
       }
     } catch (e: any) {
       Alert.alert('Error', e.message);
@@ -79,40 +74,28 @@ export default function ManageCertificatesScreen({ navigation }: any) {
 
   const onRefresh = () => { setRefreshing(true); load(); };
 
-  const handleRevoke = (cert: Certificate) => {
-    Alert.alert(
-      'Revoke Certificate',
-      `Revoke "${cert.title}" for ${(cert.portal_users as any)?.full_name ?? 'this student'}?`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Revoke', style: 'destructive',
-          onPress: async () => {
-            const { error } = await supabase.from('certificates').update({ is_revoked: true }).eq('id', cert.id);
-            if (error) { Alert.alert('Error', error.message); return; }
-            setCerts(prev => prev.map(c => c.id === cert.id ? { ...c, is_revoked: true } : c));
-          },
-        },
-      ]
-    );
-  };
-
   const handleIssue = async () => {
     if (!formStudentId) { Alert.alert('Validation', 'Please select a student'); return; }
     if (!formTitle.trim()) { Alert.alert('Validation', 'Title is required'); return; }
     setSaving(true);
+    const certNo = `RC-${Date.now().toString(36).toUpperCase()}`;
+    const verificationCode = Math.random().toString(36).slice(2, 10).toUpperCase();
     try {
-      const { error } = await supabase.from('certificates').insert({
-        user_id: formStudentId,
-        title: formTitle.trim(),
-        description: formDesc.trim() || null,
-        issued_by: profile?.id,
-        issued_at: new Date().toISOString(),
-        is_revoked: false,
+      await certificateService.insertManualCertificate({
+        portal_user_id: formStudentId,
+        certificate_number: certNo,
+        verification_code: verificationCode,
+        issued_date: new Date().toISOString().slice(0, 10),
+        metadata: {
+          title: formTitle.trim(),
+          description: formDesc.trim() || null,
+          issued_by: profile?.full_name ?? 'Rillcod Academy',
+        },
       });
-      if (error) throw error;
       setShowModal(false);
-      setFormStudentId(''); setFormTitle(''); setFormDesc('');
+      setFormStudentId('');
+      setFormTitle('');
+      setFormDesc('');
       load();
     } catch (e: any) {
       Alert.alert('Error', e.message);
@@ -121,19 +104,29 @@ export default function ManageCertificatesScreen({ navigation }: any) {
     }
   };
 
-  const filtered = certs.filter(c => {
-    const matchFilter = filter === 'all' || (filter === 'active' && !c.is_revoked) || (filter === 'revoked' && c.is_revoked);
-    const studentName = (c.portal_users as any)?.full_name ?? '';
-    const matchSearch = !search || studentName.toLowerCase().includes(search.toLowerCase());
-    return matchFilter && matchSearch;
-  });
+  const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    return certs.filter((c) => {
+      const studentName = (c.portal_users?.full_name ?? '').toLowerCase();
+      const title = c.title.toLowerCase();
+      const matchesSearch = !q || studentName.includes(q) || title.includes(q) || c.certificate_number.toLowerCase().includes(q);
+      const matchesFilter = filter === 'all' || (filter === 'pdf' && !!c.pdf_url);
+      return matchesSearch && matchesFilter;
+    });
+  }, [certs, filter, search]);
 
   const totalIssued = certs.length;
-  const activeCount = certs.filter(c => !c.is_revoked).length;
-  const revokedCount = certs.filter(c => c.is_revoked).length;
+  const pdfCount = certs.filter(c => !!c.pdf_url).length;
+  const readyCount = certs.filter(c => !!c.verification_code).length;
+
+  const openPdf = async (cert: Certificate) => {
+    if (!cert.pdf_url) return;
+    const supported = await Linking.canOpenURL(cert.pdf_url);
+    if (supported) await Linking.openURL(cert.pdf_url);
+  };
 
   const renderItem = ({ item, index }: { item: Certificate; index: number }) => {
-    const student = item.portal_users as any;
+    const student = item.portal_users;
     return (
       <MotiView
         from={{ opacity: 0, translateY: 8 }}
@@ -141,34 +134,33 @@ export default function ManageCertificatesScreen({ navigation }: any) {
         transition={{ delay: index * 35, type: 'timing', duration: 260 }}
       >
         <TouchableOpacity
-          style={[styles.card, item.is_revoked && styles.cardRevoked]}
-          onLongPress={() => !item.is_revoked && isAdmin && handleRevoke(item)}
+          style={styles.card}
+          onPress={() => item.pdf_url ? openPdf(item) : undefined}
           activeOpacity={0.85}
         >
           <View style={styles.cardLeft}>
             <LinearGradient
-              colors={item.is_revoked ? ['rgba(239,68,68,0.1)', 'rgba(239,68,68,0.05)'] : COLORS.gradGold}
+              colors={item.pdf_url ? COLORS.gradGold : ['rgba(232,116,43,0.18)', 'rgba(23,36,57,0.08)']}
               style={styles.certIcon}
             >
-              <Text style={styles.certIconText}>{item.is_revoked ? '🚫' : '🏅'}</Text>
+              <Text style={styles.certIconText}>{item.pdf_url ? 'PD' : 'CT'}</Text>
             </LinearGradient>
           </View>
           <View style={styles.cardBody}>
             <View style={styles.cardTop}>
               <Text style={styles.certTitle} numberOfLines={1}>{item.title}</Text>
-              {item.is_revoked && (
-                <View style={styles.revokedBadge}>
-                  <Text style={styles.revokedText}>Revoked</Text>
-                </View>
-              )}
+              <View style={[styles.stateBadge, item.pdf_url && styles.stateBadgeReady]}>
+                <Text style={[styles.stateText, item.pdf_url && styles.stateTextReady]}>{item.pdf_url ? 'PDF Ready' : 'Registry'}</Text>
+              </View>
             </View>
-            {student?.full_name && (
+            {student?.full_name ? (
               <Text style={styles.studentName}>{student.full_name}</Text>
-            )}
-            <Text style={styles.certDate}>Issued {formatDate(item.issued_at)}</Text>
-            {item.description && (
-              <Text style={styles.certDesc} numberOfLines={1}>{item.description}</Text>
-            )}
+            ) : null}
+            <Text style={styles.certDate}>Issued {formatDate(item.issued_date)} · {item.certificate_number}</Text>
+            <Text style={styles.certCode}>Verify: {item.verification_code}</Text>
+            {item.description ? (
+              <Text style={styles.certDesc} numberOfLines={2}>{item.description}</Text>
+            ) : null}
           </View>
         </TouchableOpacity>
       </MotiView>
@@ -178,9 +170,7 @@ export default function ManageCertificatesScreen({ navigation }: any) {
   return (
     <SafeAreaView style={styles.safe}>
       <View style={styles.header}>
-        <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}>
-          <Text style={styles.backArrow}>←</Text>
-        </TouchableOpacity>
+        <IconBackButton onPress={() => navigation.goBack()} color={COLORS.textPrimary} size={20} style={styles.backBtn} />
         <Text style={styles.headerTitle}>Certificates</Text>
         {isAdmin && (
           <TouchableOpacity style={styles.addBtn} onPress={() => setShowModal(true)}>
@@ -191,12 +181,11 @@ export default function ManageCertificatesScreen({ navigation }: any) {
         )}
       </View>
 
-      {/* Stats */}
       <View style={styles.statsRow}>
         {[
           { label: 'Total', value: totalIssued, color: COLORS.textPrimary },
-          { label: 'Active', value: activeCount, color: COLORS.success },
-          { label: 'Revoked', value: revokedCount, color: COLORS.error },
+          { label: 'Verified', value: readyCount, color: COLORS.success },
+          { label: 'PDF Ready', value: pdfCount, color: COLORS.primary },
         ].map(s => (
           <View key={s.label} style={styles.statCard}>
             <Text style={[styles.statNum, { color: s.color }]}>{s.value}</Text>
@@ -205,28 +194,26 @@ export default function ManageCertificatesScreen({ navigation }: any) {
         ))}
       </View>
 
-      {/* Search */}
       <View style={styles.searchWrap}>
-        <Text style={styles.searchIcon}>🔍</Text>
+        <Ionicons name="search-outline" size={18} color={COLORS.textMuted} style={styles.searchIcon} />
         <TextInput
           style={styles.searchInput}
-          placeholder="Search by student name..."
+          placeholder="Search by student, title or certificate number..."
           placeholderTextColor={COLORS.textMuted}
           value={search}
           onChangeText={setSearch}
         />
       </View>
 
-      {/* Filter tabs */}
       <View style={styles.filterRow}>
-        {(['all', 'active', 'revoked'] as FilterTab[]).map(f => (
+        {(['all', 'pdf'] as FilterTab[]).map(f => (
           <TouchableOpacity
             key={f}
             style={[styles.filterTab, filter === f && styles.filterTabActive]}
             onPress={() => setFilter(f)}
           >
             <Text style={[styles.filterText, filter === f && styles.filterTextActive]}>
-              {f.charAt(0).toUpperCase() + f.slice(1)}
+              {f === 'all' ? 'All' : 'PDF Ready'}
             </Text>
           </TouchableOpacity>
         ))}
@@ -238,7 +225,7 @@ export default function ManageCertificatesScreen({ navigation }: any) {
         </View>
       ) : filtered.length === 0 ? (
         <View style={styles.center}>
-          <Text style={styles.emptyEmoji}>🏅</Text>
+          <Text style={styles.emptyEmoji}>CT</Text>
           <Text style={styles.emptyTitle}>No certificates found</Text>
           <Text style={styles.emptySubtitle}>
             {isAdmin ? 'Issue a certificate to get started' : 'Certificates you receive will appear here'}
@@ -253,12 +240,11 @@ export default function ManageCertificatesScreen({ navigation }: any) {
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={COLORS.primary} />}
           showsVerticalScrollIndicator={false}
           ListFooterComponent={
-            isAdmin ? <Text style={styles.hint}>Long press a certificate to revoke it</Text> : null
+            isAdmin ? <Text style={styles.hint}>Certificates follow the live certificate registry and verification code flow.</Text> : null
           }
         />
       )}
 
-      {/* Issue Modal */}
       <Modal visible={showModal} animationType="slide" transparent>
         <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.modalOverlay}>
           <View style={styles.modalSheet}>
@@ -314,8 +300,7 @@ const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: COLORS.bg },
   header: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: SPACING.base, paddingVertical: SPACING.md, gap: SPACING.sm },
   backBtn: { width: 36, height: 36, borderRadius: RADIUS.md, borderWidth: 1, borderColor: COLORS.border, alignItems: 'center', justifyContent: 'center' },
-  backArrow: { fontSize: 18, color: COLORS.textPrimary },
-  headerTitle: { flex: 1, fontSize: FONT_SIZE.lg, fontFamily: FONT_FAMILY.heading, color: COLORS.textPrimary },
+  headerTitle: { flex: 1, fontSize: FONT_SIZE.lg, fontFamily: FONT_FAMILY.display, color: COLORS.textPrimary },
   addBtn: { borderRadius: RADIUS.md, overflow: 'hidden' },
   addBtnInner: { paddingHorizontal: SPACING.md, paddingVertical: SPACING.sm },
   addBtnText: { fontSize: FONT_SIZE.sm, fontFamily: FONT_FAMILY.bodySemi, color: '#fff' },
@@ -324,7 +309,7 @@ const styles = StyleSheet.create({
   statNum: { fontSize: FONT_SIZE.xl, fontFamily: FONT_FAMILY.display },
   statLabel: { fontSize: FONT_SIZE.xs, fontFamily: FONT_FAMILY.body, color: COLORS.textMuted, marginTop: 2 },
   searchWrap: { flexDirection: 'row', alignItems: 'center', marginHorizontal: SPACING.base, marginBottom: SPACING.sm, backgroundColor: COLORS.bgCard, borderRadius: RADIUS.lg, borderWidth: 1, borderColor: COLORS.border, paddingHorizontal: SPACING.md },
-  searchIcon: { fontSize: 14, marginRight: SPACING.sm },
+  searchIcon: { marginRight: SPACING.sm },
   searchInput: { flex: 1, paddingVertical: SPACING.sm, fontSize: FONT_SIZE.base, fontFamily: FONT_FAMILY.body, color: COLORS.textPrimary },
   filterRow: { flexDirection: 'row', paddingHorizontal: SPACING.base, gap: SPACING.sm, marginBottom: SPACING.sm },
   filterTab: { flex: 1, alignItems: 'center', paddingVertical: 8, borderRadius: RADIUS.lg, borderWidth: 1, borderColor: COLORS.border },
@@ -332,28 +317,29 @@ const styles = StyleSheet.create({
   filterText: { fontSize: FONT_SIZE.sm, fontFamily: FONT_FAMILY.bodySemi, color: COLORS.textMuted },
   filterTextActive: { color: COLORS.primaryLight },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: SPACING.xl },
-  emptyEmoji: { fontSize: 48, marginBottom: SPACING.md },
-  emptyTitle: { fontSize: FONT_SIZE.md, fontFamily: FONT_FAMILY.heading, color: COLORS.textPrimary, marginBottom: SPACING.sm },
+  emptyEmoji: { fontSize: 32, marginBottom: SPACING.md, fontFamily: FONT_FAMILY.display, color: COLORS.textMuted },
+  emptyTitle: { fontSize: FONT_SIZE.md, fontFamily: FONT_FAMILY.display, color: COLORS.textPrimary, marginBottom: SPACING.sm },
   emptySubtitle: { fontSize: FONT_SIZE.sm, fontFamily: FONT_FAMILY.body, color: COLORS.textMuted, textAlign: 'center' },
   card: { flexDirection: 'row', alignItems: 'center', backgroundColor: COLORS.bgCard, borderRadius: RADIUS.lg, borderWidth: 1, borderColor: COLORS.border, padding: SPACING.md, marginBottom: SPACING.sm, gap: SPACING.md },
-  cardRevoked: { opacity: 0.65, borderColor: COLORS.error + '40' },
   cardLeft: {},
   certIcon: { width: 48, height: 48, borderRadius: RADIUS.md, alignItems: 'center', justifyContent: 'center' },
-  certIconText: { fontSize: 24 },
+  certIconText: { fontSize: 12, fontFamily: FONT_FAMILY.bodyBold, color: COLORS.white100 },
   cardBody: { flex: 1 },
   cardTop: { flexDirection: 'row', alignItems: 'center', gap: SPACING.sm, marginBottom: 4 },
-  certTitle: { flex: 1, fontSize: FONT_SIZE.base, fontFamily: FONT_FAMILY.heading, color: COLORS.textPrimary },
-  revokedBadge: { backgroundColor: 'rgba(239,68,68,0.15)', borderRadius: RADIUS.full, paddingHorizontal: 8, paddingVertical: 3 },
-  revokedText: { fontSize: FONT_SIZE.xs, fontFamily: FONT_FAMILY.bodySemi, color: COLORS.error },
+  certTitle: { flex: 1, fontSize: FONT_SIZE.base, fontFamily: FONT_FAMILY.bodySemi, color: COLORS.textPrimary },
+  stateBadge: { backgroundColor: COLORS.primaryPale, borderRadius: RADIUS.full, paddingHorizontal: 8, paddingVertical: 3 },
+  stateBadgeReady: { backgroundColor: COLORS.success + '20' },
+  stateText: { fontSize: FONT_SIZE.xs, fontFamily: FONT_FAMILY.bodySemi, color: COLORS.primary },
+  stateTextReady: { color: COLORS.success },
   studentName: { fontSize: FONT_SIZE.sm, fontFamily: FONT_FAMILY.bodySemi, color: COLORS.textSecondary, marginBottom: 2 },
   certDate: { fontSize: FONT_SIZE.xs, fontFamily: FONT_FAMILY.body, color: COLORS.textMuted, marginBottom: 2 },
+  certCode: { fontSize: FONT_SIZE.xs, fontFamily: FONT_FAMILY.mono, color: COLORS.primary, marginBottom: 2 },
   certDesc: { fontSize: FONT_SIZE.xs, fontFamily: FONT_FAMILY.body, color: COLORS.textMuted },
   hint: { fontSize: FONT_SIZE.xs, fontFamily: FONT_FAMILY.body, color: COLORS.textMuted, textAlign: 'center', marginTop: SPACING.sm, marginBottom: SPACING.xl },
-  // Modal
   modalOverlay: { flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.6)' },
-  modalSheet: { backgroundColor: '#0f0f1a', borderTopLeftRadius: RADIUS['2xl'], borderTopRightRadius: RADIUS['2xl'], padding: SPACING.xl, maxHeight: '90%' },
+  modalSheet: { backgroundColor: COLORS.bg, borderTopLeftRadius: RADIUS['2xl'], borderTopRightRadius: RADIUS['2xl'], padding: SPACING.xl, maxHeight: '90%' },
   modalHandle: { width: 40, height: 4, backgroundColor: COLORS.border, borderRadius: 2, alignSelf: 'center', marginBottom: SPACING.lg },
-  modalTitle: { fontSize: FONT_SIZE.lg, fontFamily: FONT_FAMILY.heading, color: COLORS.textPrimary, marginBottom: SPACING.lg },
+  modalTitle: { fontSize: FONT_SIZE.lg, fontFamily: FONT_FAMILY.display, color: COLORS.textPrimary, marginBottom: SPACING.lg },
   label: { fontSize: FONT_SIZE.sm, fontFamily: FONT_FAMILY.bodySemi, color: COLORS.textSecondary, marginBottom: 6, marginTop: SPACING.sm },
   studentList: { maxHeight: 180, marginBottom: SPACING.sm, borderWidth: 1, borderColor: COLORS.border, borderRadius: RADIUS.lg, backgroundColor: COLORS.bgCard },
   studentOption: { flexDirection: 'row', alignItems: 'center', gap: SPACING.sm, padding: SPACING.md, borderBottomWidth: 1, borderBottomColor: COLORS.border },

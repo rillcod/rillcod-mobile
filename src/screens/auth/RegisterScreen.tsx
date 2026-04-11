@@ -7,7 +7,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { MotiView, AnimatePresence } from 'moti';
 import { BlurView } from 'expo-blur';
 import { StatusBar } from 'expo-status-bar';
-import { supabase } from '../../lib/supabase';
+import { authService } from '../../services/auth.service';
 import { PremiumButton } from '../../components/ui/PremiumButton';
 import { PremiumInput } from '../../components/ui/PremiumInput';
 import { OfflineBanner } from '../../components/ui/OfflineBanner';
@@ -18,6 +18,7 @@ import { t } from '../../i18n';
 import { useHaptics } from '../../hooks/useHaptics';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { RootStackParamList } from '../../navigation/types';
+import { ROUTES } from '../../navigation/routes';
 
 type Props = { navigation: NativeStackNavigationProp<RootStackParamList, 'Register'> };
 
@@ -67,56 +68,24 @@ export default function RegisterScreen({ navigation }: Props) {
   const handleRegister = async () => {
     setLoading(true);
     try {
-      const { data: authData, error: authErr } = await supabase.auth.signUp({
+      await authService.registerStudentWithPendingProfile({
         email: email.trim().toLowerCase(),
         password,
-        options: { data: { full_name: fullName.trim() } },
+        fullName: fullName.trim(),
+        phone: phone.trim() || null,
+        enrollmentType,
+        schoolName: schoolName.trim() || null,
+        gradeLevel: gradeLevel.trim() || null,
+        parentName: parentName.trim() || null,
+        parentPhone: parentPhone.trim() || null,
+        courseInterest: courseInterest.trim() || null,
       });
-
-      if (authErr || !authData.user) {
-        await hapticError();
-        Alert.alert('Registration Failed', authErr?.message || 'Could not create account.');
-        return;
-      }
-
-      const uid = authData.user.id;
-
-      await Promise.all([
-        supabase.from('portal_users').insert({
-          id: uid,
-          email: email.trim().toLowerCase(),
-          full_name: fullName.trim(),
-          role: 'student',
-          phone: phone.trim() || null,
-          enrollment_type: enrollmentType,
-          school_name: schoolName.trim() || null,
-          is_active: false,
-          is_deleted: false,
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-        }),
-        supabase.from('students').insert({
-          name: fullName.trim(),
-          full_name: fullName.trim(),
-          student_email: email.trim().toLowerCase(),
-          parent_name: parentName.trim() || null,
-          parent_phone: parentPhone.trim() || null,
-          grade_level: gradeLevel.trim() || null,
-          school_name: schoolName.trim() || null,
-          course_interest: courseInterest.trim() || null,
-          enrollment_type: enrollmentType,
-          status: 'pending',
-          user_id: uid,
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-        }),
-      ]);
 
       await hapticSuccess();
       Alert.alert(
         '🎉 Registration Complete!',
         'Your Rillcod account has been submitted. You will receive a confirmation once approved.',
-        [{ text: 'Sign In', onPress: () => navigation.replace('Login') }]
+        [{ text: 'Sign In', onPress: () => navigation.replace(ROUTES.Login) }]
       );
     } catch (err: any) {
       await hapticError();

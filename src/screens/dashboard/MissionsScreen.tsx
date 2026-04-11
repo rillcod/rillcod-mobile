@@ -6,9 +6,13 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { useAuth } from '../../contexts/AuthContext';
+import { gamificationService } from '../../services/gamification.service';
 import { COLORS } from '../../constants/colors';
 import { FONT_FAMILY, FONT_SIZE } from '../../constants/typography';
 import { SPACING, RADIUS } from '../../constants/spacing';
+import { IconBackButton } from '../../components/ui/IconBackButton';
+import { ROUTES, TAB_ROUTES } from '../../navigation/routes';
 
 const STORAGE_KEY = 'rillcod_missions_done_v2';
 const XP_PER_LEVEL = 250;
@@ -154,20 +158,26 @@ const LANG_FILTERS: { key: LangFilter; label: string }[] = [
 const FILTERS: FilterType[] = ['All', 'Beginner', 'Intermediate', 'Advanced', 'Completed'];
 
 export default function MissionsScreen({ navigation }: any) {
+  const { profile } = useAuth();
   const [doneIds, setDoneIds] = useState<string[]>([]);
   const [activeMissionId, setActiveMissionId] = useState<string | null>(null);
   const [langFilter, setLangFilter] = useState<LangFilter>('all');
   const [difficultyFilter, setDifficultyFilter] = useState<FilterType>('All');
   const [search, setSearch] = useState('');
   const [loading, setLoading] = useState(true);
+  const [userStats, setUserStats] = useState<any>(null);
 
   const loadDone = useCallback(async () => {
     try {
-      const stored = await AsyncStorage.getItem(STORAGE_KEY);
+      const [stored, stats] = await Promise.all([
+        AsyncStorage.getItem(STORAGE_KEY),
+        profile ? gamificationService.getUserStats(profile.id) : null,
+      ]);
       if (stored) setDoneIds(JSON.parse(stored));
+      if (stats) setUserStats(stats);
     } catch {}
     finally { setLoading(false); }
-  }, []);
+  }, [profile]);
 
   useEffect(() => { loadDone(); }, [loadDone]);
 
@@ -186,8 +196,8 @@ export default function MissionsScreen({ navigation }: any) {
     });
   }, [difficultyFilter, doneIds, langFilter, search]);
 
-  const totalXP = MISSIONS.filter((mission) => doneIds.includes(mission.id)).reduce((sum, mission) => sum + mission.xp, 0);
-  const level = Math.max(1, Math.floor(totalXP / XP_PER_LEVEL) + 1);
+  const totalXP = userStats?.total_points || 0;
+  const level = userStats?.achievement_level || 'Bronze';
   const progressToNext = totalXP % XP_PER_LEVEL;
 
   const saveDone = async (next: string[]) => {
@@ -202,19 +212,26 @@ export default function MissionsScreen({ navigation }: any) {
     }
     const next = [...doneIds, mission.id];
     await saveDone(next);
-    Alert.alert('Mission completed', `${mission.title} added ${mission.xp} XP to your mobile progress track.`);
+    
+    if (profile) {
+      const result = await gamificationService.awardPoints(profile.id, 'mission_complete', mission.id, `Completed mission: ${mission.title}`);
+      setUserStats((prev: any) => ({ ...prev, total_points: result.totalPoints, achievement_level: result.newLevel }));
+      Alert.alert('Mission completed', `${mission.title} added ${result.points} XP! New level: ${result.newLevel}`);
+    } else {
+      Alert.alert('Mission completed', `${mission.title} completed locally.`);
+    }
   };
 
   const openMissionTool = (mission: Mission) => {
     if (mission.language === 'robotics') {
-      navigation.navigate('Projects');
+      navigation.navigate(ROUTES.Projects);
       return;
     }
     if (mission.language === 'html') {
-      navigation.navigate('Learn');
+      navigation.navigate(TAB_ROUTES.Learn);
       return;
     }
-    navigation.navigate('AI');
+    navigation.navigate(ROUTES.AI);
   };
 
   if (loading) {
@@ -230,9 +247,7 @@ export default function MissionsScreen({ navigation }: any) {
   return (
     <SafeAreaView style={styles.safe}>
       <View style={styles.header}>
-        <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}>
-          <Text style={styles.backArrow}>?</Text>
-        </TouchableOpacity>
+          <IconBackButton onPress={() => navigation.goBack()} color={COLORS.textPrimary} style={styles.backBtn} />
         <Text style={styles.headerTitle}>Missions</Text>
         <View style={styles.levelBadge}>
           <Text style={styles.levelText}>L{level}</Text>
@@ -350,7 +365,6 @@ const styles = StyleSheet.create({
   center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
   header: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: SPACING.base, paddingVertical: SPACING.md, gap: SPACING.sm },
   backBtn: { width: 36, height: 36, borderRadius: RADIUS.md, borderWidth: 1, borderColor: COLORS.border, alignItems: 'center', justifyContent: 'center' },
-  backArrow: { fontSize: 18, color: COLORS.textPrimary },
   headerTitle: { flex: 1, fontSize: FONT_SIZE.lg, fontFamily: FONT_FAMILY.bodySemi, color: COLORS.textPrimary },
   levelBadge: { borderRadius: RADIUS.full, borderWidth: 1, borderColor: COLORS.warning + '55', paddingHorizontal: 12, paddingVertical: 5, backgroundColor: COLORS.warning + '22' },
   levelText: { fontFamily: FONT_FAMILY.bodySemi, fontSize: FONT_SIZE.xs, color: COLORS.warning },

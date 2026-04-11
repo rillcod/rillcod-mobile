@@ -6,40 +6,53 @@ export type RootStackParamList = {
   PublicStudentRegistration: undefined;
   PublicSchoolRegistration: undefined;
   Main: undefined;
+  /** Stack-only entry points (e.g. admin without Alerts/Profile tabs). */
+  NotificationInbox: undefined;
+  UserProfile: undefined;
   // Detail screens (accessible from tabs)
-  CourseDetail: { programId: string; title: string };
+  CourseDetail: { courseId?: string; programId?: string; title?: string };
   AssignmentDetail: { assignmentId: string; title: string };
   MessageThread: { userId: string; name: string };
   ChildDetail: { studentId: string; name: string };
   // Parent portal detail screens
-  ParentResults: { studentId: string; studentName?: string };
+  ParentResults: { studentId: string; studentName?: string; userId?: string | null };
   ParentAttendance: { studentId: string; studentName?: string };
   ParentGrades: { studentId: string; studentName?: string };
   ParentInvoices: { studentId: string; studentName?: string };
   ParentCertificates: { studentId: string; studentName?: string };
+  ParentFeedback: undefined;
   // Admin / staff screens
   Students: undefined;
+  StudentImport: undefined;
   Teachers: undefined;
   Schools: undefined;
   Parents: undefined;
+  ParentDetail: { parentId: string };
   Approvals: undefined;
   Attendance: undefined;
   Payments: undefined;
+  BulkPayments: undefined;
+  Transactions: undefined;
+  Progress: undefined;
+  IoT: undefined;
   Timetable: undefined;
   Classes: undefined;
   CBT: undefined;
   CBTExamination: { examId: string };
+  CBTExamEditor: { examId?: string } | undefined;
+  CBTGrading: { sessionId: string };
   Reports: undefined;
   StudentDetail: { studentId: string };
   TeacherDetail: { teacherId: string };
   AddStudent: undefined;
-  AddSchool: undefined;
-  AddTeacher: undefined;
-  AddClass: undefined;
+  AddSchool: { schoolId?: string } | undefined;
+  AddTeacher: { teacherId?: string } | undefined;
+  AddClass: { classId?: string } | undefined;
   SchoolDetail: { schoolId: string };
   BulkRegister: undefined;
   ClassDetail: { classId: string };
-  CreateAssignment: { classId?: string; className?: string };
+  CreateAssignment: { classId?: string; className?: string; assignmentId?: string };
+  EnrolStudents: { classId?: string; className?: string; programId?: string } | undefined;
   ReportBuilder: { studentId?: string; studentName?: string };
   StudentReport: { studentId: string; studentName?: string };
   AI: undefined;
@@ -52,25 +65,33 @@ export type RootStackParamList = {
   MyChildren: undefined;
   Analytics: undefined;
   // New screens
-  Courses: undefined;
+  Courses: { programId?: string; programName?: string } | undefined;
+  CourseEditor: { courseId?: string; programId?: string } | undefined;
   Projects: undefined;
+  ProjectDetail: { projectId: string; projectTitle?: string };
   Library: undefined;
   Leaderboard: undefined;
   LiveSessions: undefined;
   Engage: undefined;
   Vault: undefined;
+  Playground: undefined;
+  Portfolio: undefined;
   Missions: undefined;
   Protocol: undefined;
   ManageCertificates: undefined;
   Newsletters: undefined;
   CardBuilder: undefined;
   Users: undefined;
-  EnrolStudents: undefined;
   WipeStudents: undefined;
   Programs: undefined;
   Lessons: undefined;
   LessonDetail: { lessonId: string };
+  CourseDiscussion: { courseId: string; courseTitle?: string };
+  DiscussionTopic: { topicId: string; topicTitle?: string };
+  LessonEditor: { lessonId?: string; courseId?: string; programId?: string } | undefined;
   SchoolOverview: undefined;
+  SchoolBilling: undefined;
+  MarkAttendance: { classId: string; className?: string };
 };
 
 export type TabParamList = {
@@ -78,5 +99,8 @@ export type TabParamList = {
   Learn: undefined;
   Notifications: undefined;
   Profile: undefined;
-  Portal: undefined;
+  /** Admin tab shell — distinct names so routing stays unambiguous vs stack routes. */
+  AdminApprovals: undefined;
+  AdminUsers: undefined;
+  AdminSignOut: undefined;
 };

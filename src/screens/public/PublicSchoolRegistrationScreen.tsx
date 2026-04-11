@@ -7,10 +7,12 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { MotiView } from 'moti';
 import { StatusBar } from 'expo-status-bar';
-import { supabase } from '../../lib/supabase';
+import { Ionicons } from '@expo/vector-icons';
+import { schoolService } from '../../services/school.service';
 import { COLORS } from '../../constants/colors';
 import { FONT_FAMILY, FONT_SIZE } from '../../constants/typography';
 import { SPACING, RADIUS } from '../../constants/spacing';
+import { ROUTES } from '../../navigation/routes';
 
 // ── Data ─────────────────────────────────────────────────────────────────────
 
@@ -171,15 +173,9 @@ function StatusChecker() {
     setChecking(true);
     setResult(null);
     try {
-      const { data, error } = await supabase
-        .from('schools')
-        .select('name, status, created_at')
-        .eq('email', email.trim().toLowerCase())
-        .order('created_at', { ascending: false })
-        .limit(1)
-        .single();
+      const data = await schoolService.getLatestSchoolApplicationByEmail(email);
 
-      if (error || !data) {
+      if (!data) {
         setResult({ found: false });
       } else {
         setResult({ found: true, ...data });
@@ -294,11 +290,16 @@ export default function PublicSchoolRegistrationScreen({ navigation }: any) {
 
     setSubmitting(true);
     try {
-      const { error } = await supabase.from('schools').insert({
+      // `schools` has no `notes` column — keep extra context in `address` for staff review.
+      const addressBlock = [address.trim(), notes.trim() ? `Additional information:\n${notes.trim()}` : null]
+        .filter(Boolean)
+        .join('\n\n') || null;
+
+      await schoolService.registerSchool({
         name: schoolName.trim(),
         school_type: schoolType || null,
         contact_person: principalName.trim(),
-        address: address.trim() || null,
+        address: addressBlock,
         lga: lga.trim() || null,
         city: city.trim() || null,
         state: state || null,
@@ -306,12 +307,7 @@ export default function PublicSchoolRegistrationScreen({ navigation }: any) {
         email: email.trim().toLowerCase(),
         student_count: studentCount === '500+' ? 500 : parseInt(studentCount.split('–')[0], 10) || null,
         program_interest: selectedProgrammes.length ? selectedProgrammes : null,
-        notes: notes.trim() || null,
-        status: 'pending',
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
       });
-      if (error) throw error;
       setSuccessVisible(true);
     } catch (err: any) {
       Alert.alert('Submission Failed', err.message || 'Please try again.');
@@ -335,12 +331,13 @@ export default function PublicSchoolRegistrationScreen({ navigation }: any) {
           >
             {/* Header */}
             <MotiView from={{ opacity: 0, translateY: -10 }} animate={{ opacity: 1, translateY: 0 }}>
-              <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}>
-                <Text style={styles.backText}>← Back to Login</Text>
+              <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn} activeOpacity={0.7}>
+                <Ionicons name="chevron-back" size={20} color={COLORS.primaryLight} />
+                <Text style={styles.backText}>Back to Login</Text>
               </TouchableOpacity>
 
               <View style={styles.brandRow}>
-                <Image source={require('../../../assets/rillcod-icon.png')} style={styles.brandLogo} resizeMode="cover" />
+                <Image source={require('../../../assets/rillcod-icon.png')} style={styles.brandLogo} resizeMode="contain" />
                 <View>
                   <Text style={styles.brandName}>Rillcod Academy</Text>
                   <Text style={styles.brandSub}>School Partnership Programme</Text>
@@ -555,7 +552,7 @@ export default function PublicSchoolRegistrationScreen({ navigation }: any) {
             </View>
             <TouchableOpacity
               style={styles.primaryBtn}
-              onPress={() => { setSuccessVisible(false); navigation.navigate('Login'); }}
+              onPress={() => { setSuccessVisible(false); navigation.navigate(ROUTES.Login); }}
             >
               <LinearGradient colors={COLORS.gradPrimary as any} style={styles.primaryBtnGrad}>
                 <Text style={styles.primaryBtnText}>Back to Login</Text>
@@ -576,7 +573,7 @@ const styles = StyleSheet.create({
   glow2: { position: 'absolute', bottom: 100, right: -80, width: 200, height: 200, borderRadius: 100, backgroundColor: 'rgba(91,33,182,0.08)' },
   scroll: { padding: SPACING.xl, paddingBottom: 60 },
 
-  backBtn: { marginBottom: SPACING.md },
+  backBtn: { flexDirection: 'row', alignItems: 'center', gap: 4, marginBottom: SPACING.md },
   backText: { fontFamily: FONT_FAMILY.bodySemi, fontSize: FONT_SIZE.sm, color: COLORS.primaryLight },
   brandRow: { flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: SPACING.lg },
   brandLogo: { width: 48, height: 48, borderRadius: 14, overflow: 'hidden' },

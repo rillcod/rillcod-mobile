@@ -1,4 +1,4 @@
-﻿import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity,
   ActivityIndicator, RefreshControl, Alert,
@@ -7,11 +7,13 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { MotiView } from 'moti';
 import { useAuth } from '../../contexts/AuthContext';
-import { supabase } from '../../lib/supabase';
+import { schoolService } from '../../services/school.service';
+import { teacherService } from '../../services/teacher.service';
 import { ScreenHeader } from '../../components/ui/ScreenHeader';
 import { COLORS } from '../../constants/colors';
 import { FONT_FAMILY, FONT_SIZE } from '../../constants/typography';
 import { SPACING, RADIUS } from '../../constants/spacing';
+import { ROUTES } from '../../navigation/routes';
 
 interface School {
   id: string;
@@ -91,35 +93,27 @@ export default function SchoolDetailScreen({ navigation, route }: any) {
   const isAdmin = profile?.role === 'admin';
 
   const load = useCallback(async () => {
-    const [schoolRes, assignmentsRes, studentsRes, availableTeachersRes] = await Promise.all([
-      supabase.from('schools').select('*').eq('id', schoolId).single(),
-      supabase
-        .from('teacher_schools')
-        .select('id, teacher_id, portal_users!teacher_schools_teacher_id_fkey(id, full_name, email)')
-        .eq('school_id', schoolId)
-        .limit(50),
-      supabase.from('portal_users').select('id, full_name, email, section_class').eq('role', 'student').eq('school_id', schoolId).limit(100),
-      isAdmin
-        ? supabase.from('portal_users').select('id, full_name, email').eq('role', 'teacher').eq('is_active', true).limit(100)
-        : Promise.resolve({ data: [] }),
-    ]);
+    try {
+      const { school: schoolRow, assignmentRows, students: studentRows, teacherPickerPool } =
+        await schoolService.loadSchoolDetailScreenData(schoolId, { includeTeacherPicker: isAdmin });
 
-    if (schoolRes.data) setSchool(schoolRes.data as School);
+      if (schoolRow) setSchool(schoolRow as School);
 
-    const normalizedAssignments = (assignmentsRes.data ?? []).map(normalizeAssignment);
-    setTeacherAssignments(normalizedAssignments);
-    setTeachers(normalizedAssignments.map((assignment) => assignment.portal_users).filter(Boolean) as Teacher[]);
+      const normalizedAssignments = (assignmentRows ?? []).map(normalizeAssignment);
+      setTeacherAssignments(normalizedAssignments);
+      setTeachers(normalizedAssignments.map((assignment) => assignment.portal_users).filter(Boolean) as Teacher[]);
 
-    if (studentsRes.data) setStudents(studentsRes.data as Student[]);
+      setStudents((studentRows ?? []) as Student[]);
 
-    if (availableTeachersRes.data) {
       const assignedTeacherIds = new Set(normalizedAssignments.map((assignment) => assignment.teacher_id));
-      setAvailableTeachers((availableTeachersRes.data as Teacher[]).filter((teacher) => !assignedTeacherIds.has(teacher.id)));
-    } else {
-      setAvailableTeachers([]);
+      setAvailableTeachers(
+        ((teacherPickerPool ?? []) as Teacher[]).filter((teacher) => !assignedTeacherIds.has(teacher.id)),
+      );
+    } catch (e: any) {
+      Alert.alert('Load failed', e?.message ?? 'Could not load school');
+    } finally {
+      setLoading(false);
     }
-
-    setLoading(false);
   }, [isAdmin, schoolId]);
 
   useEffect(() => { load(); }, [load]);
@@ -141,8 +135,12 @@ export default function SchoolDetailScreen({ navigation, route }: any) {
           text: 'Confirm',
           style: status === 'rejected' ? 'destructive' : 'default',
           onPress: async () => {
-            await supabase.from('schools').update({ status }).eq('id', schoolId);
-            setSchool((current) => current ? { ...current, status } : current);
+            try {
+              await schoolService.updateSchool(schoolId, { status });
+              setSchool((current) => (current ? { ...current, status } : current));
+            } catch (e: any) {
+              Alert.alert('Update failed', e?.message ?? 'Could not update status');
+            }
           },
         },
       ]
@@ -151,18 +149,15 @@ export default function SchoolDetailScreen({ navigation, route }: any) {
 
   const assignTeacher = async (teacher: Teacher) => {
     setAssigningTeacherId(teacher.id);
-    const { data, error } = await supabase
-      .from('teacher_schools')
-      .insert({
-        school_id: schoolId,
-        teacher_id: teacher.id,
-        assigned_by: profile?.id ?? null,
-      })
-      .select('id, teacher_id, portal_users!teacher_schools_teacher_id_fkey(id, full_name, email)')
-      .single();
-
-    if (error) {
-      Alert.alert('Assignment failed', error.message);
+    let data: any;
+    try {
+      data = await teacherService.insertTeacherSchoolAssignmentReturningRow({
+        schoolId,
+        teacherId: teacher.id,
+        assignedBy: profile?.id ?? null,
+      });
+    } catch (error: any) {
+      Alert.alert('Assignment failed', error?.message ?? 'Unknown error');
       setAssigningTeacherId(null);
       return;
     }
@@ -176,9 +171,10 @@ export default function SchoolDetailScreen({ navigation, route }: any) {
 
   const removeTeacher = async (assignment: TeacherAssignment) => {
     setAssigningTeacherId(assignment.id);
-    const { error } = await supabase.from('teacher_schools').delete().eq('id', assignment.id);
-    if (error) {
-      Alert.alert('Remove failed', error.message);
+    try {
+      await teacherService.deleteTeacherSchoolAssignmentById(assignment.id);
+    } catch (error: any) {
+      Alert.alert('Remove failed', error?.message ?? 'Unknown error');
       setAssigningTeacherId(null);
       return;
     }
@@ -245,6 +241,25 @@ export default function SchoolDetailScreen({ navigation, route }: any) {
           </View>
         </MotiView>
 
+        <View style={styles.quickActions}>
+          <TouchableOpacity style={styles.quickActionCard} onPress={() => navigation.navigate(ROUTES.SchoolOverview)}>
+            <Text style={styles.quickActionCode}>OV</Text>
+            <Text style={styles.quickActionText}>Overview</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.quickActionCard} onPress={() => navigation.navigate(ROUTES.Students)}>
+            <Text style={styles.quickActionCode}>ST</Text>
+            <Text style={styles.quickActionText}>Students</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.quickActionCard} onPress={() => navigation.navigate(ROUTES.Teachers)}>
+            <Text style={styles.quickActionCode}>TC</Text>
+            <Text style={styles.quickActionText}>Teachers</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.quickActionCard} onPress={() => navigation.navigate(ROUTES.Reports)}>
+            <Text style={styles.quickActionCode}>RP</Text>
+            <Text style={styles.quickActionText}>Reports</Text>
+          </TouchableOpacity>
+        </View>
+
         {isAdmin ? (
           <View style={styles.actionRow}>
             {school.status !== 'approved' ? (
@@ -257,7 +272,7 @@ export default function SchoolDetailScreen({ navigation, route }: any) {
                 <Text style={styles.actionBtnText}>Reject</Text>
               </TouchableOpacity>
             ) : null}
-            <TouchableOpacity style={[styles.actionBtn, { backgroundColor: COLORS.info }]} onPress={() => navigation.navigate('AddSchool', { schoolId })}>
+            <TouchableOpacity style={[styles.actionBtn, { backgroundColor: COLORS.info }]} onPress={() => navigation.navigate(ROUTES.AddSchool, { schoolId })}>
               <Text style={styles.actionBtnText}>Edit Details</Text>
             </TouchableOpacity>
           </View>
@@ -309,7 +324,7 @@ export default function SchoolDetailScreen({ navigation, route }: any) {
                     <TouchableOpacity
                       key={assignment.id}
                       style={styles.personCard}
-                      onPress={() => navigation.navigate('TeacherDetail', { teacherId: teacher.id })}
+                      onPress={() => navigation.navigate(ROUTES.TeacherDetail, { teacherId: teacher.id })}
                       activeOpacity={0.8}
                     >
                       <LinearGradient colors={[COLORS.info + '18', 'transparent']} style={StyleSheet.absoluteFill} />
@@ -367,7 +382,7 @@ export default function SchoolDetailScreen({ navigation, route }: any) {
                   <TouchableOpacity
                     key={student.id}
                     style={styles.personCard}
-                    onPress={() => navigation.navigate('StudentDetail', { studentId: student.id })}
+                    onPress={() => navigation.navigate(ROUTES.StudentDetail, { studentId: student.id })}
                     activeOpacity={0.8}
                   >
                     <LinearGradient colors={[COLORS.admin + '18', 'transparent']} style={StyleSheet.absoluteFill} />
@@ -420,6 +435,10 @@ const styles = StyleSheet.create({
   actionRow: { flexDirection: 'row', gap: SPACING.md, paddingHorizontal: SPACING.xl, marginBottom: SPACING.md },
   actionBtn: { flex: 1, paddingVertical: 12, borderRadius: RADIUS.md, alignItems: 'center' },
   actionBtnText: { fontFamily: FONT_FAMILY.bodySemi, fontSize: FONT_SIZE.sm, color: COLORS.white100 },
+  quickActions: { flexDirection: 'row', flexWrap: 'wrap', gap: SPACING.sm, paddingHorizontal: SPACING.xl, marginBottom: SPACING.md },
+  quickActionCard: { width: '48%', borderWidth: 1, borderColor: COLORS.border, borderRadius: RADIUS.lg, padding: SPACING.md, backgroundColor: COLORS.bgCard },
+  quickActionCode: { fontFamily: FONT_FAMILY.display, fontSize: FONT_SIZE.base, color: COLORS.info },
+  quickActionText: { marginTop: 6, fontFamily: FONT_FAMILY.bodySemi, fontSize: FONT_SIZE.xs, color: COLORS.textPrimary, textTransform: 'uppercase', letterSpacing: 0.8 },
   tabs: { flexDirection: 'row', borderBottomWidth: 1, borderBottomColor: COLORS.border, marginHorizontal: SPACING.xl },
   tab: { flex: 1, paddingVertical: 10, alignItems: 'center', borderBottomWidth: 2, borderBottomColor: 'transparent' },
   tabActive: { borderBottomColor: COLORS.info },

@@ -7,8 +7,10 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { MotiView } from 'moti';
 import { useAuth } from '../../contexts/AuthContext';
-import { supabase } from '../../lib/supabase';
 import { ScreenHeader } from '../../components/ui/ScreenHeader';
+import { registrationService } from '../../services/registration.service';
+import { schoolService } from '../../services/school.service';
+import type { Database } from '../../types/supabase';
 import { COLORS } from '../../constants/colors';
 import { FONT_FAMILY, FONT_SIZE } from '../../constants/typography';
 import { SPACING, RADIUS } from '../../constants/spacing';
@@ -22,11 +24,6 @@ const GRADE_LEVELS = [
 
 interface School { id: string; name: string }
 interface Credentials { email: string; password: string; name: string }
-
-function genPassword() {
-  const chars = 'abcdefghjkmnpqrstuvwxyzABCDEFGHJKMNPQRSTUVWXYZ23456789@#!';
-  return Array.from({ length: 10 }, () => chars[Math.floor(Math.random() * chars.length)]).join('');
-}
 
 function Field({
   label, value, onChangeText, placeholder, keyboardType = 'default',
@@ -74,8 +71,10 @@ export default function AddStudentScreen({ navigation }: any) {
 
   useEffect(() => {
     if (isAdmin) {
-      supabase.from('schools').select('id, name').eq('status', 'approved').limit(100)
-        .then(({ data }) => { if (data) setSchools(data as School[]); });
+      schoolService
+        .listApprovedSchoolOptions(100)
+        .then((data) => setSchools(data as School[]))
+        .catch(() => setSchools([]));
     }
   }, [isAdmin]);
 
@@ -94,16 +93,16 @@ export default function AddStudentScreen({ navigation }: any) {
     setSaving(true);
     const email = form.student_email.trim().toLowerCase() ||
       `${form.full_name.trim().toLowerCase().replace(/\s+/g, '.')}@rillcod.school`;
-    const password = genPassword();
     const resolvedSchoolId = isAdmin ? selectedSchoolId || null : profile?.school_id || null;
+    const resolvedSchoolName = isAdmin ? form.school_name.trim() || null : profile?.school_name || null;
 
-    const { error } = await supabase.from('students').insert({
+    const row: Database['public']['Tables']['students']['Insert'] = {
       name: form.full_name.trim(),
       full_name: form.full_name.trim(),
       student_email: email,
       parent_name: form.parent_name.trim() || null,
       parent_phone: form.parent_phone.trim() || null,
-      school_name: form.school_name.trim() || null,
+      school_name: resolvedSchoolName,
       school_id: resolvedSchoolId,
       grade_level: form.grade_level || null,
       current_class: form.section_class.trim() || null,
@@ -112,17 +111,22 @@ export default function AddStudentScreen({ navigation }: any) {
       state: form.state.trim() || null,
       enrollment_type: 'school',
       status: 'pending',
-      created_by: profile?.id,
-    });
+      created_by: profile?.id ?? null,
+    };
 
-    if (error) {
-      Alert.alert('Error', error.message);
+    try {
+      await registrationService.insertProspectiveStudent(row);
+    } catch (e: any) {
+      Alert.alert('Error', e?.message ?? 'Could not save student');
       setSaving(false);
       return;
     }
 
     setSaving(false);
-    setCredentials({ email, password, name: form.full_name.trim() });
+    // Credentials shown here are for admin reference only.
+    // The actual auth account + login password is created when admin approves
+    // the student in the Approvals screen.
+    setCredentials({ email, password: '(set on approval)', name: form.full_name.trim() });
   };
 
   if (credentials) {
@@ -133,18 +137,20 @@ export default function AddStudentScreen({ navigation }: any) {
           <MotiView from={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} style={styles.credCard}>
             <LinearGradient colors={[COLORS.success + '15', 'transparent']} style={StyleSheet.absoluteFill} />
             <Text style={styles.credEmoji}>✅</Text>
-            <Text style={styles.credTitle}>Student Registered!</Text>
+            <Text style={styles.credTitle}>Student Added to Queue</Text>
             <Text style={styles.credName}>{credentials.name}</Text>
-            <Text style={styles.credNote}>Pending approval. Share login credentials when approved:</Text>
+            <Text style={styles.credNote}>
+              Student is pending approval. Go to Approvals to activate their account and generate login credentials.
+            </Text>
             <View style={styles.credRow}>
-              <Text style={styles.credLabel}>Email</Text>
+              <Text style={styles.credLabel}>Registered Email</Text>
               <Text style={styles.credValue} selectable>{credentials.email}</Text>
             </View>
-            <View style={[styles.credRow, { borderColor: COLORS.success + '40' }]}>
-              <Text style={styles.credLabel}>Temp Password</Text>
-              <Text style={[styles.credValue, { color: COLORS.success }]} selectable>{credentials.password}</Text>
+            <View style={[styles.credRow, { borderColor: COLORS.warning + '40' }]}>
+              <Text style={styles.credLabel}>Password</Text>
+              <Text style={[styles.credValue, { color: COLORS.warning }]}>Generated on approval</Text>
             </View>
-            <Text style={styles.credWarn}>⚠ Note these credentials before closing.</Text>
+            <Text style={styles.credWarn}>Credentials will be created when you approve this student.</Text>
             <TouchableOpacity onPress={() => { setCredentials(null); navigation.goBack(); }} style={styles.doneBtn}>
               <Text style={styles.doneBtnText}>Done</Text>
             </TouchableOpacity>

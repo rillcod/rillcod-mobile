@@ -7,10 +7,12 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { MotiView } from 'moti';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useAuth } from '../../contexts/AuthContext';
-import { supabase } from '../../lib/supabase';
+import { schoolService } from '../../services/school.service';
 import { COLORS } from '../../constants/colors';
 import { FONT_FAMILY, FONT_SIZE } from '../../constants/typography';
 import { SPACING, RADIUS } from '../../constants/spacing';
+import { IconBackButton } from '../../components/ui/IconBackButton';
+import { ROUTES } from '../../navigation/routes';
 
 interface Stats {
   students: number;
@@ -35,58 +37,26 @@ export default function SchoolOverviewScreen({ navigation }: any) {
 
   const load = useCallback(async () => {
     try {
-      const [stuRes, teachRes, classRes, approvalRes] = await Promise.all([
-        supabase.from('portal_users').select('id, is_active', { count: 'exact', head: false }).eq('role', 'student').eq('school_id', schoolId || ''),
-        supabase.from('portal_users').select('id', { count: 'exact', head: true }).eq('role', 'teacher').eq('school_id', schoolId || ''),
-        supabase.from('classes').select('id', { count: 'exact', head: true }).eq('school_id', schoolId || ''),
-        supabase.from('portal_users').select('id', { count: 'exact', head: true }).eq('role', 'student').eq('school_id', schoolId || '').eq('is_active', false),
-      ]);
-
-      const allStudents = stuRes.data || [];
-      const activeCount = allStudents.filter((s: any) => s.is_active).length;
-
-      // Get today's attendance
-      const today = new Date().toISOString().split('T')[0];
-      const { count: attCount } = await supabase
-        .from('attendance_records')
-        .select('id', { count: 'exact', head: true })
-        .eq('date', today)
-        .eq('status', 'present');
-
-      setStats({
-        students: stuRes.count ?? allStudents.length,
-        teachers: teachRes.count ?? 0,
-        classes: classRes.count ?? 0,
-        attendance_today: attCount ?? 0,
-        active_students: activeCount,
-        pending_approvals: approvalRes.count ?? 0,
-      });
-
-      // Top students by grades
-      const { data: subData } = await supabase
-        .from('assignment_submissions')
-        .select('portal_user_id, grade, portal_users!assignment_submissions_portal_user_id_fkey(full_name, school_id)')
-        .eq('status', 'graded')
-        .not('grade', 'is', null)
-        .limit(200);
-
-      if (subData) {
-        const grouped: Record<string, { name: string; total: number; count: number }> = {};
-        (subData as any[]).forEach(s => {
-          const u = s.portal_users;
-          if (!u || u.school_id !== schoolId) return;
-          if (!grouped[s.portal_user_id]) grouped[s.portal_user_id] = { name: u.full_name, total: 0, count: 0 };
-          grouped[s.portal_user_id].total += s.grade;
-          grouped[s.portal_user_id].count += 1;
+      if (!schoolId) {
+        setStats({
+          students: 0,
+          teachers: 0,
+          classes: 0,
+          attendance_today: 0,
+          active_students: 0,
+          pending_approvals: 0,
         });
-        const ranked = Object.entries(grouped)
-          .map(([id, v]) => ({ id, full_name: v.name, total_grade: Math.round(v.total / v.count) }))
-          .sort((a, b) => b.total_grade - a.total_grade)
-          .slice(0, 5);
-        setTopStudents(ranked);
+        setTopStudents([]);
+        return;
       }
-    } catch (e) { console.warn(e); }
-    finally { setLoading(false); }
+      const { stats, topStudents } = await schoolService.fetchSchoolOverviewDashboard(schoolId);
+      setStats(stats);
+      setTopStudents(topStudents);
+    } catch (e) {
+      console.warn(e);
+    } finally {
+      setLoading(false);
+    }
   }, [schoolId]);
 
   useEffect(() => { load(); }, [load]);
@@ -106,9 +76,7 @@ export default function SchoolOverviewScreen({ navigation }: any) {
     <SafeAreaView style={styles.safe}>
       {/* Header */}
       <View style={styles.header}>
-        <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}>
-          <Text style={styles.backArrow}>←</Text>
-        </TouchableOpacity>
+        <IconBackButton onPress={() => navigation.goBack()} color={COLORS.textPrimary} style={styles.backBtn} />
         <View style={{ flex: 1 }}>
           <Text style={styles.title}>School Overview</Text>
           <Text style={styles.subtitle} numberOfLines={1}>{profile?.school_name || 'Your School'}</Text>
@@ -151,12 +119,13 @@ export default function SchoolOverviewScreen({ navigation }: any) {
         <Text style={styles.sectionTitle}>Quick Actions</Text>
         <View style={styles.actionRow}>
           {[
-            { emoji: '👥', label: 'My Students', screen: 'Students' },
-            { emoji: '📚', label: 'Classes', screen: 'Classes' },
-            { emoji: '📋', label: 'Attendance', screen: 'Attendance' },
-            { emoji: '📅', label: 'Timetable', screen: 'Timetable' },
-            { emoji: '💳', label: 'Payments', screen: 'Payments' },
-            { emoji: '📈', label: 'Reports', screen: 'Reports' },
+            { emoji: '👥', label: 'My Students', screen: ROUTES.Students },
+            { emoji: '📚', label: 'Classes', screen: ROUTES.Classes },
+            { emoji: '📋', label: 'Attendance', screen: ROUTES.Attendance },
+            { emoji: '📅', label: 'Timetable', screen: ROUTES.Timetable },
+            { emoji: '🧾', label: 'Billing', screen: ROUTES.SchoolBilling },
+            { emoji: '💳', label: 'Payments', screen: ROUTES.Payments },
+            { emoji: '📈', label: 'Reports', screen: ROUTES.Reports },
           ].map(a => (
             <TouchableOpacity key={a.label} style={styles.actionCard} onPress={() => navigation.navigate(a.screen)} activeOpacity={0.8}>
               <Text style={{ fontSize: 24 }}>{a.emoji}</Text>
@@ -171,7 +140,7 @@ export default function SchoolOverviewScreen({ navigation }: any) {
             <Text style={styles.sectionTitle}>Top Performers</Text>
             {topStudents.map((s, i) => (
               <MotiView key={s.id} from={{ opacity: 0, translateX: -10 }} animate={{ opacity: 1, translateX: 0 }} transition={{ delay: i * 60 }}>
-                <TouchableOpacity style={styles.studentRow} onPress={() => navigation.navigate('StudentDetail', { studentId: s.id })} activeOpacity={0.85}>
+                <TouchableOpacity style={styles.studentRow} onPress={() => navigation.navigate(ROUTES.StudentDetail, { studentId: s.id })} activeOpacity={0.85}>
                   <View style={[styles.rankBadge, { backgroundColor: i === 0 ? COLORS.gold + '33' : i === 1 ? '#94a3b8' + '33' : '#cd7f32' + '33' }]}>
                     <Text style={styles.rankText}>{i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `#${i + 1}`}</Text>
                   </View>
@@ -200,7 +169,6 @@ const styles = StyleSheet.create({
   loadWrap: { flex: 1, backgroundColor: COLORS.bg, alignItems: 'center', justifyContent: 'center' },
   header: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: SPACING.xl, paddingTop: SPACING.md, paddingBottom: SPACING.sm, gap: SPACING.md },
   backBtn: { width: 36, height: 36, borderRadius: RADIUS.md, borderWidth: 1, borderColor: COLORS.border, alignItems: 'center', justifyContent: 'center' },
-  backArrow: { fontSize: 18, color: COLORS.textPrimary },
   title: { fontFamily: FONT_FAMILY.display, fontSize: FONT_SIZE['2xl'], color: COLORS.textPrimary },
   subtitle: { fontFamily: FONT_FAMILY.body, fontSize: FONT_SIZE.xs, color: COLORS.textMuted, marginTop: 2 },
   scroll: { paddingHorizontal: SPACING.xl, paddingBottom: 40 },

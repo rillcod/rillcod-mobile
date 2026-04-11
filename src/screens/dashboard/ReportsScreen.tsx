@@ -7,10 +7,14 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { MotiView } from 'moti';
 import { useAuth } from '../../contexts/AuthContext';
-import { supabase } from '../../lib/supabase';
+import { schoolService } from '../../services/school.service';
+import { gradeService } from '../../services/grade.service';
+import { teacherService } from '../../services/teacher.service';
 import { COLORS } from '../../constants/colors';
 import { FONT_FAMILY, FONT_SIZE } from '../../constants/typography';
 import { SPACING, RADIUS } from '../../constants/spacing';
+import { IconBackButton } from '../../components/ui/IconBackButton';
+import { ROUTES } from '../../navigation/routes';
 
 interface StudentRow {
   id: string;
@@ -89,21 +93,15 @@ export default function ReportsScreen({ navigation }: any) {
 
   const load = useCallback(async () => {
     if (isStudent) {
-      const { data } = await supabase
-        .from('student_progress_reports')
-        .select('*')
-        .eq('student_id', profile!.id)
-        .eq('is_published', true)
-        .order('report_date', { ascending: false })
-        .limit(5);
-      setOwnReport(data?.[0] ?? null);
+      const latest = await gradeService.getLatestPublishedReportForStudent(profile!.id);
+      setOwnReport(latest);
       setLoading(false);
       return;
     }
 
     if (isParent) {
-      const { data: childIds } = await supabase.rpc('get_parent_student_ids');
-      const ids = (childIds ?? []).filter(Boolean);
+      const childIds = await schoolService.getParentStudentIds();
+      const ids = ((childIds ?? []) as string[]).filter(Boolean);
       if (!ids.length) {
         setChildReports([]);
         setFiltered([]);
@@ -111,19 +109,9 @@ export default function ReportsScreen({ navigation }: any) {
         return;
       }
 
-      const [{ data: children }, { data: reports }] = await Promise.all([
-        supabase
-          .from('portal_users')
-          .select('id, full_name, email, school_name, section_class')
-          .in('id', ids)
-          .eq('role', 'student')
-          .order('full_name'),
-        supabase
-          .from('student_progress_reports')
-          .select('id, student_id, overall_grade, overall_score, is_published, course_name, report_term, report_date')
-          .in('student_id', ids)
-          .eq('is_published', true)
-          .order('report_date', { ascending: false }),
+      const [children, reports] = await Promise.all([
+        gradeService.listPortalStudentsByIds(ids),
+        gradeService.listPublishedReportSummariesForStudentIds(ids),
       ]);
 
       const repMap: Record<string, ReportSummary> = {};
@@ -141,30 +129,38 @@ export default function ReportsScreen({ navigation }: any) {
       return;
     }
 
-    // Staff: load students + latest report per student
-    let sq = supabase
-      .from('portal_users')
-      .select('id, full_name, email, school_name, section_class')
-      .eq('role', 'student')
-      .order('full_name')
-      .limit(200);
+    // Staff: load students + latest report per student (scope aligned with AnalyticsScreen)
+    const isTeacherRole = profile?.role === 'teacher';
+    const isSchoolRole = profile?.role === 'school';
 
-    if (profile?.role === 'school' && profile?.school_id) {
-      sq = sq.eq('school_id', profile.school_id);
-    } else if (profile?.role === 'teacher' && profile?.school_id) {
-      sq = sq.eq('school_id', profile.school_id);
+    let teacherSchoolIds: string[] = [];
+    if (isTeacherRole && profile) {
+      teacherSchoolIds = await teacherService.listSchoolIdsForTeacher(profile.id, profile.school_id);
     }
 
-    const { data: stuData } = await sq;
-    if (!stuData) { setLoading(false); return; }
+    const stuData = await gradeService.listStudentsForReportDirectory({
+      schoolId: isSchoolRole ? profile?.school_id ?? undefined : undefined,
+      teacherSchoolIds: isTeacherRole && teacherSchoolIds.length > 0 ? teacherSchoolIds : undefined,
+      limit: 200,
+    });
+    if (!stuData?.length) {
+      setStudents([]);
+      setFiltered([]);
+      setGradeCounts({});
+      setLoading(false);
+      return;
+    }
 
-    // Load latest report per student
     const studentIds = stuData.map(s => s.id);
-    const { data: repData } = await supabase
-      .from('student_progress_reports')
-      .select('id, student_id, overall_grade, overall_score, is_published, course_name, report_term, report_date')
-      .in('student_id', studentIds)
-      .order('report_date', { ascending: false });
+
+    const repData = await gradeService.listPublishedReportSummariesForStudentsScoped(
+      studentIds,
+      isTeacherRole && teacherSchoolIds.length > 0
+        ? { schoolIds: teacherSchoolIds }
+        : isSchoolRole && profile?.school_id
+          ? { schoolId: profile.school_id }
+          : undefined,
+    );
 
     // Map: student_id → latest report
     const repMap: Record<string, ReportSummary> = {};
@@ -227,9 +223,7 @@ export default function ReportsScreen({ navigation }: any) {
     return (
       <SafeAreaView style={styles.safe}>
         <View style={styles.header}>
-          <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}>
-            <Text style={styles.backArrow}>←</Text>
-          </TouchableOpacity>
+          <IconBackButton onPress={() => navigation.goBack()} color={COLORS.textPrimary} style={styles.backBtn} />
           <Text style={styles.title}>My Report Card</Text>
         </View>
         <ScrollView contentContainerStyle={styles.list} showsVerticalScrollIndicator={false}>
@@ -253,9 +247,7 @@ export default function ReportsScreen({ navigation }: any) {
     return (
       <SafeAreaView style={styles.safe}>
         <View style={styles.header}>
-          <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}>
-            <Text style={styles.backArrow}>←</Text>
-          </TouchableOpacity>
+          <IconBackButton onPress={() => navigation.goBack()} color={COLORS.textPrimary} style={styles.backBtn} />
           <View style={{ flex: 1 }}>
             <Text style={styles.title}>Children's Reports</Text>
             <Text style={styles.subtitle}>{filtered.length} linked learners</Text>
@@ -293,7 +285,7 @@ export default function ReportsScreen({ navigation }: any) {
                   <TouchableOpacity
                     style={styles.card}
                     activeOpacity={0.85}
-                    onPress={() => navigation.navigate('StudentReport', { studentId: student.id, studentName: student.full_name })}
+                    onPress={() => navigation.navigate(ROUTES.StudentReport, { studentId: student.id, studentName: student.full_name })}
                   >
                     <LinearGradient colors={[gc + '08', 'transparent']} style={StyleSheet.absoluteFill} />
                     <View style={[styles.avatar, { backgroundColor: gc + '22' }]}>
@@ -337,9 +329,7 @@ export default function ReportsScreen({ navigation }: any) {
     <SafeAreaView style={styles.safe}>
       {/* Header */}
       <View style={styles.header}>
-        <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}>
-          <Text style={styles.backArrow}>←</Text>
-        </TouchableOpacity>
+        <IconBackButton onPress={() => navigation.goBack()} color={COLORS.textPrimary} style={styles.backBtn} />
         <View style={{ flex: 1 }}>
           <Text style={styles.title}>Progress Reports</Text>
           <Text style={styles.subtitle}>{published} published · {withReport} total reports</Text>
@@ -347,7 +337,7 @@ export default function ReportsScreen({ navigation }: any) {
         {isEditor && (
           <TouchableOpacity
             style={styles.buildBtn}
-            onPress={() => navigation.navigate('ReportBuilder')}
+            onPress={() => navigation.navigate(ROUTES.ReportBuilder)}
           >
             <Text style={styles.buildBtnText}>+ Build</Text>
           </TouchableOpacity>
@@ -413,7 +403,7 @@ export default function ReportsScreen({ navigation }: any) {
                 <TouchableOpacity
                   style={styles.card}
                   activeOpacity={0.8}
-                  onPress={() => navigation.navigate('ReportBuilder', { studentId: s.id, studentName: s.full_name })}
+                  onPress={() => navigation.navigate(ROUTES.ReportBuilder, { studentId: s.id, studentName: s.full_name })}
                 >
                   <LinearGradient colors={[gc + '08', 'transparent']} style={StyleSheet.absoluteFill} />
 
@@ -549,8 +539,8 @@ function ReportDetailCard({ report, studentName }: { report: any; studentName: s
         </View>
       )}
 
-      {/* Key strengths / areas for growth */}
-      {(report.key_strengths || report.areas_for_growth) && (
+      {/* Key strengths / areas for growth / assessment */}
+      {(report.key_strengths || report.areas_for_growth || report.instructor_assessment) && (
         <View style={rdc.section}>
           <Text style={rdc.sectionTitle}>Teacher's Notes</Text>
           {report.key_strengths ? (
@@ -563,6 +553,12 @@ function ReportDetailCard({ report, studentName }: { report: any; studentName: s
             <View style={[rdc.notesCard, { borderLeftColor: COLORS.warning, marginTop: SPACING.sm }]}>
               <Text style={rdc.notesHeading}>🌱 Areas for Growth</Text>
               <Text style={rdc.notesText}>{report.areas_for_growth}</Text>
+            </View>
+          ) : null}
+          {report.instructor_assessment ? (
+            <View style={[rdc.notesCard, { borderLeftColor: COLORS.info, marginTop: SPACING.sm }]}>
+              <Text style={rdc.notesHeading}>📋 Instructor Assessment</Text>
+              <Text style={rdc.notesText}>{report.instructor_assessment}</Text>
             </View>
           ) : null}
         </View>
@@ -626,7 +622,6 @@ const styles = StyleSheet.create({
 
   header: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: SPACING.xl, paddingTop: SPACING.md, paddingBottom: SPACING.sm, gap: SPACING.md },
   backBtn: { width: 36, height: 36, borderRadius: RADIUS.md, borderWidth: 1, borderColor: COLORS.border, alignItems: 'center', justifyContent: 'center' },
-  backArrow: { fontSize: 18, color: COLORS.textPrimary },
   title: { fontFamily: FONT_FAMILY.display, fontSize: FONT_SIZE['2xl'], color: COLORS.textPrimary },
   subtitle: { fontFamily: FONT_FAMILY.body, fontSize: FONT_SIZE.xs, color: COLORS.textMuted, marginTop: 2 },
   buildBtn: { paddingHorizontal: 14, paddingVertical: 7, borderRadius: RADIUS.full, backgroundColor: COLORS.accent, alignItems: 'center' },
@@ -666,6 +661,9 @@ const styles = StyleSheet.create({
   gradeText: { fontFamily: FONT_FAMILY.display, fontSize: FONT_SIZE['2xl'] },
   scoreText: { fontFamily: FONT_FAMILY.bodySemi, fontSize: FONT_SIZE.xs },
   noReportIcon: { fontSize: 20, color: COLORS.textMuted },
+  gradeMain: { fontFamily: FONT_FAMILY.display, fontSize: FONT_SIZE['2xl'] },
+  gradeSub: { fontFamily: FONT_FAMILY.bodySemi, fontSize: FONT_SIZE.xs, color: COLORS.textMuted },
+  chevron: { fontSize: 20, color: COLORS.textMuted },
 
   emptyWrap: { alignItems: 'center', paddingVertical: 60, gap: 12 },
   emptyEmoji: { fontSize: 40 },

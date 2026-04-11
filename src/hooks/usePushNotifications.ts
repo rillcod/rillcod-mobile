@@ -58,14 +58,7 @@ async function registerForPushNotifications(userId: string) {
 
   // Get the Expo push token
   try {
-    const tokenData = await Notifications.getExpoPushTokenAsync();
-    const token = tokenData.data;
-
-    // Upsert the push token into portal_users
-    await supabase
-      .from('portal_users')
-      .update({ push_token: token })
-      .eq('id', userId);
+    await Notifications.getExpoPushTokenAsync();
   } catch {
     // Expo push tokens require a physical device or valid project ID — silently skip in dev
   }
@@ -73,7 +66,7 @@ async function registerForPushNotifications(userId: string) {
   // Android notification channel
   if (Platform.OS === 'android') {
     await Notifications.setNotificationChannelAsync('default', {
-      name: 'Rillcod Academy',
+      name: 'Rillcod',
       importance: Notifications.AndroidImportance.MAX,
       vibrationPattern: [0, 250, 250, 250],
       lightColor: '#7a0606',

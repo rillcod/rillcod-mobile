@@ -14,6 +14,7 @@ import { t } from '../../i18n';
 import { useHaptics } from '../../hooks/useHaptics';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { RootStackParamList } from '../../navigation/types';
+import { ROUTES } from '../../navigation/routes';
 
 const { width, height } = Dimensions.get('window');
 
@@ -68,13 +69,13 @@ export default function OnboardingScreen({ navigation }: Props) {
     if (activeIdx < SLIDES.length - 1) {
       listRef.current?.scrollToIndex({ index: activeIdx + 1, animated: true });
     } else {
-      navigation.replace('Login');
+      navigation.replace(ROUTES.Login);
     }
   };
 
   const skip = async () => {
     await select();
-    navigation.replace('Login');
+    navigation.replace(ROUTES.Login);
   };
 
   const slide = SLIDES[activeIdx];
@@ -193,8 +194,10 @@ export default function OnboardingScreen({ navigation }: Props) {
       <View style={styles.actions}>
         {/* Brand mark */}
         <View style={styles.brandRow}>
-          <Image source={require('../../../assets/rillcod-icon.png')} style={styles.brandMark} resizeMode="cover" />
-          <Text style={styles.brandLabel}>Rillcod Academy</Text>
+          <View style={styles.brandMarkWrap}>
+            <Image source={require('../../../assets/rillcod-icon.png')} style={styles.brandMark} resizeMode="contain" />
+          </View>
+          <Text style={styles.brandLabel}>{t('app.name')}</Text>
         </View>
         <PremiumButton
           label={activeIdx === SLIDES.length - 1 ? t('onboarding.getStarted') : t('onboarding.next')}
@@ -328,8 +331,19 @@ const styles = StyleSheet.create({
     gap: SPACING.base,
     zIndex: 1,
   },
-  brandRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8 },
-  brandMark: { width: 28, height: 28, borderRadius: 8 },
+  brandRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10 },
+  brandMarkWrap: {
+    width: 40,
+    height: 40,
+    borderRadius: 12,
+    overflow: 'hidden',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: COLORS.white08,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+  },
+  brandMark: { width: 34, height: 34 },
   brandLabel: {
     fontFamily: FONT_FAMILY.display,
     fontSize: FONT_SIZE.sm,

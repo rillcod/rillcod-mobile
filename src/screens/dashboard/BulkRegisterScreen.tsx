@@ -1,4 +1,4 @@
-﻿
+
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   View,
@@ -17,8 +17,9 @@ import { MotiView } from 'moti';
 import * as Print from 'expo-print';
 import * as Sharing from 'expo-sharing';
 import { useAuth } from '../../contexts/AuthContext';
-import { supabase } from '../../lib/supabase';
 import { ScreenHeader } from '../../components/ui/ScreenHeader';
+import { registrationService } from '../../services/registration.service';
+import type { Database } from '../../types/supabase';
 import { COLORS } from '../../constants/colors';
 import { FONT_FAMILY, FONT_SIZE, LETTER_SPACING } from '../../constants/typography';
 import { SPACING, RADIUS } from '../../constants/spacing';
@@ -128,43 +129,37 @@ export default function BulkRegisterScreen({ navigation }: any) {
 
   const loadHistory = useCallback(async () => {
     setLoadingHistory(true);
-    let query = supabase
-      .from('registration_batches')
-      .select('id, school_name, class_name, student_count, created_at')
-      .order('created_at', { ascending: false })
-      .limit(20);
-
-    if (!isAdmin && profile?.school_id) {
-      query = query.eq('school_id', profile.school_id);
+    try {
+      const rows = await registrationService.listRecentBatches({
+        isAdmin,
+        schoolId: profile?.school_id,
+        role: profile?.role,
+        createdByUserId: profile?.role === 'teacher' ? profile.id : null,
+        limit: 20,
+      });
+      setHistory(rows as BatchHistory[]);
+    } finally {
+      setLoadingHistory(false);
     }
-
-    const { data } = await query;
-    setHistory((data ?? []) as BatchHistory[]);
-    setLoadingHistory(false);
-  }, [isAdmin, profile?.school_id]);
+  }, [isAdmin, profile?.school_id, profile?.role, profile?.id]);
 
   const loadBatchResults = useCallback(async (targetBatchId: string) => {
     setSelectedBatchId(targetBatchId);
     setLoadingBatchResults(true);
-    const { data } = await supabase
-      .from('registration_results')
-      .select('id, batch_id, full_name, email, password, class_name, status, error, created_at')
-      .eq('batch_id', targetBatchId)
-      .order('created_at', { ascending: true });
-    setBatchResults((data ?? []) as BatchResult[]);
-    setLoadingBatchResults(false);
+    try {
+      const rows = await registrationService.listResultsForBatch(targetBatchId);
+      setBatchResults(rows as BatchResult[]);
+    } finally {
+      setLoadingBatchResults(false);
+    }
   }, []);
 
   useEffect(() => {
     if (isAdmin) {
-      supabase
-        .from('schools')
-        .select('id, name')
-        .eq('status', 'approved')
-        .limit(100)
-        .then(({ data }) => {
-          if (data) setSchools(data as School[]);
-        });
+      registrationService
+        .listApprovedSchoolSummaries(100)
+        .then((data) => setSchools(data as School[]))
+        .catch(() => setSchools([]));
     }
     loadHistory();
   }, [isAdmin, loadHistory]);
@@ -309,25 +304,21 @@ export default function BulkRegisterScreen({ navigation }: any) {
     const updated = [...parsed];
 
     const classLabel = gradeLevel || parsed.find((entry) => entry.className)?.className || null;
-    const batchInsert = await supabase
-      .from('registration_batches')
-      .insert({
+
+    let currentBatchId: string;
+    try {
+      currentBatchId = await registrationService.createBatch({
         school_id: selectedSchool.id || null,
         school_name: selectedSchool.name || null,
         class_name: classLabel,
         student_count: parsed.length,
         created_by: profile?.id ?? null,
-      })
-      .select('id')
-      .single();
-
-    if (batchInsert.error || !batchInsert.data) {
+      });
+    } catch (e: any) {
       setSaving(false);
-      Alert.alert('Batch setup failed', batchInsert.error?.message ?? 'Could not create registration batch');
+      Alert.alert('Batch setup failed', e?.message ?? 'Could not create registration batch');
       return;
     }
-
-    const currentBatchId = batchInsert.data.id;
     setBatchId(currentBatchId);
 
     for (let i = 0; i < updated.length; i++) {
@@ -336,7 +327,7 @@ export default function BulkRegisterScreen({ navigation }: any) {
 
       try {
         if (type === 'teacher') {
-          const { error } = await supabase.from('portal_users').insert({
+          const row: Database['public']['Tables']['portal_users']['Insert'] = {
             full_name: user.name.trim(),
             email: user.email.trim(),
             role: 'teacher',
@@ -345,10 +336,10 @@ export default function BulkRegisterScreen({ navigation }: any) {
             is_active: false,
             is_deleted: false,
             section_class: user.className ?? null,
-          });
-          if (error) throw error;
+          };
+          await registrationService.insertPendingTeacher(row);
         } else {
-          const { error } = await supabase.from('students').insert({
+          const row: Database['public']['Tables']['students']['Insert'] = {
             name: user.name.trim(),
             full_name: user.name.trim(),
             student_email: user.email.trim(),
@@ -358,8 +349,8 @@ export default function BulkRegisterScreen({ navigation }: any) {
             created_by: profile?.id ?? null,
             grade_level: gradeLevel || null,
             current_class: user.className ?? (gradeLevel || null),
-          } as any);
-          if (error) throw error;
+          };
+          await registrationService.insertProspectiveStudent(row);
         }
 
         updated[i] = { ...user, status: 'done', error: undefined };
@@ -370,7 +361,7 @@ export default function BulkRegisterScreen({ navigation }: any) {
         failed++;
       }
 
-      await supabase.from('registration_results').insert({
+      await registrationService.recordBatchResult({
         batch_id: currentBatchId,
         full_name: user.name.trim(),
         email: user.email.trim(),

@@ -1,17 +1,29 @@
-﻿import React, { useEffect, useState, useCallback, useMemo } from 'react';
+import React, { useEffect, useState, useCallback, useMemo } from 'react';
 import {
-  View, Text, StyleSheet, ScrollView, TouchableOpacity,
-  ActivityIndicator, TextInput, Alert,
+  View,
+  Text,
+  StyleSheet,
+  ScrollView,
+  TouchableOpacity,
+  ActivityIndicator,
+  TextInput,
+  Alert,
+  Image,
+  Linking,
 } from 'react-native';
+import * as ImagePicker from 'expo-image-picker';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { MotiView } from 'moti';
 import { useAuth } from '../../contexts/AuthContext';
-import { supabase } from '../../lib/supabase';
+import { assignmentService } from '../../services/assignment.service';
 import { ScreenHeader } from '../../components/ui/ScreenHeader';
 import { COLORS } from '../../constants/colors';
 import { FONT_FAMILY, FONT_SIZE } from '../../constants/typography';
 import { SPACING, RADIUS } from '../../constants/spacing';
+import { ROUTES } from '../../navigation/routes';
+import { uploadToR2, mimeFromExt } from '../../lib/r2';
+import { buildAssignmentWhatsAppShareMessage } from '../../lib/assignmentShare';
 
 interface AssignmentQuestion {
   question_text: string;
@@ -29,9 +41,14 @@ interface Assignment {
   assignment_type: string | null;
   instructions: string | null;
   is_active: boolean | null;
+  class_id: string | null;
+  course_id: string | null;
+  lesson_id: string | null;
+  created_by: string | null;
   questions: AssignmentQuestion[];
   metadata: any;
   courses?: { title: string | null; programs?: { name: string | null } | null } | null;
+  classes?: { name: string | null } | null;
 }
 
 interface Submission {
@@ -43,6 +60,7 @@ interface Submission {
   feedback: string | null;
   submitted_at: string | null;
   submission_text: string | null;
+  file_url?: string | null;
   answers: any;
 }
 
@@ -56,6 +74,24 @@ const TYPE_COLOR: Record<string, string> = {
 };
 
 const GRADE_PRESETS = [100, 90, 80, 70, 60, 40];
+
+function isLikelyImageUrl(url: string | null | undefined): boolean {
+  if (!url) return false;
+  const path = url.split('?')[0].toLowerCase();
+  return /\.(png|jpe?g|gif|webp|bmp|heic)$/i.test(path);
+}
+
+async function openWhatsAppWithMessage(message: string) {
+  const enc = encodeURIComponent(message);
+  const app = `whatsapp://send?text=${enc}`;
+  const web = `https://wa.me/?text=${enc}`;
+  try {
+    if (await Linking.canOpenURL(app)) await Linking.openURL(app);
+    else await Linking.openURL(web);
+  } catch {
+    Alert.alert('WhatsApp', 'Unable to open WhatsApp on this device.');
+  }
+}
 
 function normalizeQuestions(raw: any): AssignmentQuestion[] {
   if (!Array.isArray(raw)) return [];
@@ -77,21 +113,29 @@ export default function AssignmentDetailScreen({ route, navigation }: any) {
   const [submitting, setSubmitting] = useState(false);
   const [saving, setSaving] = useState(false);
   const [submissionText, setSubmissionText] = useState('');
+  const [filePublicUrl, setFilePublicUrl] = useState<string | null>(null);
+  const [filePreviewUri, setFilePreviewUri] = useState<string | null>(null);
+  const [uploadingFile, setUploadingFile] = useState(false);
   const [gradingId, setGradingId] = useState<string | null>(null);
   const [gradeInput, setGradeInput] = useState('');
   const [feedbackInput, setFeedbackInput] = useState('');
 
   const canGrade = profile?.role === 'admin' || profile?.role === 'teacher' || profile?.role === 'school';
 
+  const canEditAssignment =
+    !!assignment &&
+    canGrade &&
+    !!assignment.class_id &&
+    (profile?.role === 'admin' ||
+      profile?.role === 'school' ||
+      (profile?.role === 'teacher' &&
+        (assignment.created_by === profile.id || !assignment.created_by)));
+
   const load = useCallback(async () => {
     if (!assignmentId || !profile) return;
     try {
-      const { data: asgn } = await supabase
-        .from('assignments')
-        .select('id, title, description, due_date, max_points, assignment_type, instructions, is_active, questions, metadata, courses(title, programs(name))')
-        .eq('id', assignmentId)
-        .single();
-
+      const { assignment: asgn, submissions: subs } = await assignmentService.getAssignmentDetail(assignmentId, profile.id, canGrade);
+      
       if (asgn) {
         setAssignment({
           ...(asgn as any),
@@ -99,31 +143,21 @@ export default function AssignmentDetailScreen({ route, navigation }: any) {
         });
       }
 
-      const { data: subs } = await supabase
-        .from('assignment_submissions')
-        .select('id, portal_user_id, status, grade, feedback, submitted_at, submission_text, answers, portal_users:portal_user_id(full_name)')
-        .eq('assignment_id', assignmentId)
-        .order('submitted_at', { ascending: false });
-
-      const mapped = ((subs ?? []) as any[]).map((submission) => ({
-        id: submission.id,
-        portal_user_id: submission.portal_user_id ?? null,
-        student_name: submission.portal_users?.full_name ?? 'Student',
-        status: submission.status ?? 'pending',
-        grade: submission.grade ?? null,
-        feedback: submission.feedback ?? null,
-        submitted_at: submission.submitted_at ?? null,
-        submission_text: submission.submission_text ?? null,
-        answers: submission.answers ?? null,
-      })) as Submission[];
-
-      setSubmissions(mapped);
+      setSubmissions(subs as any[]);
 
       if (!canGrade) {
-        const mine = mapped.find((submission) => submission.portal_user_id === profile.id) ?? null;
+        const mine = (subs as any[]).find((s) => s.portal_user_id === profile.id) ?? null;
         setMySubmission(mine);
         setSubmissionText(mine?.submission_text ?? '');
+        const fu = mine?.file_url ?? null;
+        setFilePublicUrl(fu);
+        setFilePreviewUri(null);
+      } else {
+        setFilePublicUrl(null);
+        setFilePreviewUri(null);
       }
+    } catch (error: any) {
+      Alert.alert('Error', error.message);
     } finally {
       setLoading(false);
     }
@@ -143,17 +177,12 @@ export default function AssignmentDetailScreen({ route, navigation }: any) {
 
     setSaving(true);
     try {
-      const { error } = await supabase
-        .from('assignment_submissions')
-        .update({
-          grade,
-          feedback: feedbackInput || null,
-          status: 'graded',
-          graded_by: profile?.id ?? null,
-          graded_at: new Date().toISOString(),
-        })
-        .eq('id', submissionId);
-      if (error) throw error;
+      await assignmentService.gradeSubmission({
+        submissionId: submissionId,
+        graderId: profile?.id ?? '',
+        grade,
+        feedback: feedbackInput
+      });
       await load();
       setGradingId(null);
       setGradeInput('');
@@ -165,37 +194,109 @@ export default function AssignmentDetailScreen({ route, navigation }: any) {
     }
   };
 
+  const uploadPickedAsset = async (uri: string, mimeHint?: string | null): Promise<string> => {
+    if (!profile?.id) throw new Error('Not signed in');
+    const ext = (uri.split('.').pop() || 'jpg').split('?')[0].toLowerCase();
+    const safeExt = ext.length > 5 ? 'jpg' : ext;
+    const key = `assignment-submissions/${profile.id}/${Date.now()}.${safeExt}`;
+    const mime = mimeHint || mimeFromExt(safeExt);
+    const url = await uploadToR2(uri, key, mime);
+    if (!url) throw new Error('Upload did not return a URL');
+    return url;
+  };
+
+  const pickFromLibrary = async () => {
+    if (!profile || mySubmission?.grade != null) return;
+    const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (!perm.granted) {
+      Alert.alert('Permission', 'Photo library access is needed to attach a picture.');
+      return;
+    }
+    const res = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ['images'],
+      quality: 0.75,
+      allowsMultipleSelection: false,
+    });
+    if (res.canceled || !res.assets?.[0]?.uri) return;
+    const asset = res.assets[0];
+    const localUri = asset.uri;
+    setUploadingFile(true);
+    try {
+      const url = await uploadPickedAsset(localUri, asset.mimeType ?? null);
+      setFilePublicUrl(url);
+      setFilePreviewUri(localUri);
+    } catch (e: any) {
+      Alert.alert('Upload failed', e?.message ?? 'Could not upload file');
+    } finally {
+      setUploadingFile(false);
+    }
+  };
+
+  const pickFromCamera = async () => {
+    if (!profile || mySubmission?.grade != null) return;
+    const perm = await ImagePicker.requestCameraPermissionsAsync();
+    if (!perm.granted) {
+      Alert.alert('Permission', 'Camera access is needed to take a submission photo.');
+      return;
+    }
+    const res = await ImagePicker.launchCameraAsync({ quality: 0.75 });
+    if (res.canceled || !res.assets?.[0]?.uri) return;
+    const asset = res.assets[0];
+    const localUri = asset.uri;
+    setUploadingFile(true);
+    try {
+      const url = await uploadPickedAsset(localUri, asset.mimeType ?? 'image/jpeg');
+      setFilePublicUrl(url);
+      setFilePreviewUri(localUri);
+    } catch (e: any) {
+      Alert.alert('Upload failed', e?.message ?? 'Could not upload photo');
+    } finally {
+      setUploadingFile(false);
+    }
+  };
+
+  const clearAttachment = () => {
+    setFilePublicUrl(null);
+    setFilePreviewUri(null);
+  };
+
+  const shareToParentsWhatsApp = () => {
+    if (!assignment) return;
+    const msg = buildAssignmentWhatsAppShareMessage(
+      {
+        title: assignment.title,
+        due_date: assignment.due_date,
+        max_points: assignment.max_points,
+        assignment_type: assignment.assignment_type,
+        instructions: assignment.instructions,
+        courses: assignment.courses,
+      },
+      {
+        assignmentId: assignment.id,
+        portalBaseUrl: process.env.EXPO_PUBLIC_PORTAL_WEB_ORIGIN || 'https://rillcod.com',
+      },
+    );
+    void openWhatsAppWithMessage(msg);
+  };
+
   const submitAssignment = async () => {
     if (!assignment || !profile) return;
-    if (!submissionText.trim()) {
-      Alert.alert('Submission required', 'Enter your answer before submitting.');
+    const textOk = submissionText.trim().length > 0;
+    const fileOk = !!filePublicUrl;
+    if (!textOk && !fileOk) {
+      Alert.alert('Submission required', 'Write an answer or attach a photo before submitting.');
       return;
     }
 
     setSubmitting(true);
     try {
-      if (mySubmission) {
-        const { error } = await supabase
-          .from('assignment_submissions')
-          .update({
-            submission_text: submissionText.trim(),
-            status: 'submitted',
-            submitted_at: new Date().toISOString(),
-          })
-          .eq('id', mySubmission.id);
-        if (error) throw error;
-      } else {
-        const { error } = await supabase
-          .from('assignment_submissions')
-          .insert({
-            assignment_id: assignment.id,
-            portal_user_id: profile.id,
-            status: 'submitted',
-            submission_text: submissionText.trim(),
-            submitted_at: new Date().toISOString(),
-          });
-        if (error) throw error;
-      }
+      await assignmentService.submitAssignment({
+        assignmentId: assignment.id,
+        userId: profile.id,
+        submissionText: submissionText,
+        existingSubmissionId: mySubmission?.id,
+        fileUrl: filePublicUrl,
+      });
       await load();
       Alert.alert('Submitted', 'Your assignment has been submitted.');
     } catch (error: any) {
@@ -229,7 +330,25 @@ export default function AssignmentDetailScreen({ route, navigation }: any) {
 
   return (
     <SafeAreaView style={styles.safe}>
-      <ScreenHeader title="Assignment" onBack={() => navigation.goBack()} accentColor={typeColor} />
+      <ScreenHeader
+        title="Assignment"
+        onBack={() => navigation.goBack()}
+        accentColor={typeColor}
+        rightAction={
+          canEditAssignment
+            ? {
+                label: 'Edit',
+                color: typeColor,
+                onPress: () =>
+                  navigation.navigate(ROUTES.CreateAssignment, {
+                    assignmentId: assignment.id,
+                    classId: assignment.class_id ?? undefined,
+                    className: assignment.classes?.name ?? 'Class',
+                  }),
+              }
+            : undefined
+        }
+      />
 
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scroll}>
         <MotiView from={{ opacity: 0, translateY: 10 }} animate={{ opacity: 1, translateY: 0 }}>
@@ -261,6 +380,14 @@ export default function AssignmentDetailScreen({ route, navigation }: any) {
             </View>
           </View>
         </MotiView>
+
+        {canGrade && assignment ? (
+          <View style={styles.shareRow}>
+            <TouchableOpacity style={styles.waBtn} onPress={shareToParentsWhatsApp} activeOpacity={0.85}>
+              <Text style={styles.waBtnText}>Share to parents (WhatsApp)</Text>
+            </TouchableOpacity>
+          </View>
+        ) : null}
 
         {assignment.questions.length > 0 && (
           <View style={styles.sectionCard}>
@@ -308,6 +435,15 @@ export default function AssignmentDetailScreen({ route, navigation }: any) {
                       </View>
 
                       {submission.submission_text ? <Text style={styles.submissionText}>{submission.submission_text}</Text> : null}
+                      {submission.file_url && isLikelyImageUrl(submission.file_url) ? (
+                        <TouchableOpacity onPress={() => Linking.openURL(submission.file_url!)} activeOpacity={0.9}>
+                          <Image source={{ uri: submission.file_url }} style={styles.subPhoto} resizeMode="contain" />
+                        </TouchableOpacity>
+                      ) : submission.file_url ? (
+                        <TouchableOpacity onPress={() => Linking.openURL(submission.file_url!)}>
+                          <Text style={styles.linkText}>Open attachment</Text>
+                        </TouchableOpacity>
+                      ) : null}
                       {submission.feedback ? <Text style={styles.feedback}>Feedback: {submission.feedback}</Text> : null}
                       {pct != null ? <Text style={[styles.scoreText, { color: gradeColor }]}>{submission.grade}/{assignment.max_points ?? 100} · {pct}%</Text> : null}
 
@@ -361,6 +497,28 @@ export default function AssignmentDetailScreen({ route, navigation }: any) {
 
             <View style={styles.sectionCard}>
               <Text style={styles.sectionTitle}>{mySubmission ? 'Update Submission' : 'Submit Assignment'}</Text>
+              <Text style={styles.attachHint}>Add a photo from your camera or library (optional). You can submit text only, photo only, or both.</Text>
+              <View style={styles.attachRow}>
+                <TouchableOpacity style={styles.attachChip} onPress={pickFromCamera} disabled={uploadingFile || submitting || !!mySubmission?.grade}>
+                  <Text style={styles.attachChipText}>Take photo</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={styles.attachChip} onPress={pickFromLibrary} disabled={uploadingFile || submitting || !!mySubmission?.grade}>
+                  <Text style={styles.attachChipText}>Choose photo</Text>
+                </TouchableOpacity>
+                {(filePreviewUri || filePublicUrl) && !mySubmission?.grade ? (
+                  <TouchableOpacity style={styles.attachChipClear} onPress={clearAttachment}>
+                    <Text style={styles.attachChipClearText}>Remove</Text>
+                  </TouchableOpacity>
+                ) : null}
+              </View>
+              {uploadingFile ? <ActivityIndicator style={{ marginVertical: 8 }} color={COLORS.primary} /> : null}
+              {(filePreviewUri || filePublicUrl) && isLikelyImageUrl(filePreviewUri || filePublicUrl || '') ? (
+                <Image source={{ uri: filePreviewUri || filePublicUrl || '' }} style={styles.previewPhoto} resizeMode="contain" />
+              ) : filePublicUrl ? (
+                <TouchableOpacity onPress={() => Linking.openURL(filePublicUrl)}>
+                  <Text style={styles.linkText}>View uploaded file</Text>
+                </TouchableOpacity>
+              ) : null}
               <TextInput
                 style={styles.submissionInput}
                 multiline
@@ -369,7 +527,11 @@ export default function AssignmentDetailScreen({ route, navigation }: any) {
                 value={submissionText}
                 onChangeText={setSubmissionText}
               />
-              <TouchableOpacity style={styles.submitBtn} onPress={submitAssignment} disabled={submitting || !!mySubmission?.grade}>
+              <TouchableOpacity
+                style={styles.submitBtn}
+                onPress={submitAssignment}
+                disabled={submitting || uploadingFile || !!mySubmission?.grade}
+              >
                 {submitting ? <ActivityIndicator color={COLORS.white100} size="small" /> : <Text style={styles.submitBtnText}>{mySubmission ? 'Save Submission' : 'Submit Work'}</Text>}
               </TouchableOpacity>
               {mySubmission?.submitted_at ? <Text style={styles.submitMeta}>Last submitted {new Date(mySubmission.submitted_at).toLocaleString('en-GB')}</Text> : null}
@@ -446,4 +608,30 @@ const styles = StyleSheet.create({
   emptyWrap: { flex: 1, alignItems: 'center', justifyContent: 'center' },
   emptySubmit: { alignItems: 'center', paddingVertical: 40 },
   emptyText: { fontFamily: FONT_FAMILY.body, fontSize: FONT_SIZE.sm, color: COLORS.textMuted },
+  shareRow: { marginBottom: SPACING.md },
+  waBtn: {
+    backgroundColor: '#25D36622',
+    borderWidth: 1,
+    borderColor: '#25D36655',
+    borderRadius: RADIUS.md,
+    paddingVertical: 12,
+    alignItems: 'center',
+  },
+  waBtnText: { fontFamily: FONT_FAMILY.bodySemi, fontSize: FONT_SIZE.sm, color: '#25D366' },
+  attachHint: { fontFamily: FONT_FAMILY.body, fontSize: FONT_SIZE.xs, color: COLORS.textMuted, marginBottom: SPACING.sm, lineHeight: 18 },
+  attachRow: { flexDirection: 'row', flexWrap: 'wrap', gap: SPACING.sm, marginBottom: SPACING.sm },
+  attachChip: {
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: RADIUS.md,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    backgroundColor: COLORS.bg,
+  },
+  attachChipText: { fontFamily: FONT_FAMILY.bodySemi, fontSize: FONT_SIZE.xs, color: COLORS.primaryLight },
+  attachChipClear: { paddingHorizontal: 12, paddingVertical: 8, borderRadius: RADIUS.md, borderWidth: 1, borderColor: COLORS.error + '44' },
+  attachChipClearText: { fontFamily: FONT_FAMILY.bodySemi, fontSize: FONT_SIZE.xs, color: COLORS.error },
+  previewPhoto: { width: '100%', height: 200, borderRadius: RADIUS.md, marginBottom: SPACING.sm, backgroundColor: COLORS.bg },
+  subPhoto: { width: '100%', height: 220, borderRadius: RADIUS.md, marginTop: SPACING.sm, backgroundColor: COLORS.bg },
+  linkText: { fontFamily: FONT_FAMILY.bodySemi, fontSize: FONT_SIZE.sm, color: COLORS.info, marginTop: 4 },
 });

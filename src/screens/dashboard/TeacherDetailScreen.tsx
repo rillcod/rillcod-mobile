@@ -1,4 +1,4 @@
-﻿import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, ActivityIndicator,
   TouchableOpacity,
@@ -6,12 +6,15 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { MotiView } from 'moti';
-import { supabase } from '../../lib/supabase';
+import { assignmentService } from '../../services/assignment.service';
+import { classService } from '../../services/class.service';
+import { teacherService } from '../../services/teacher.service';
 import { ScreenHeader } from '../../components/ui/ScreenHeader';
 import { COLORS } from '../../constants/colors';
 import { FONT_FAMILY, FONT_SIZE } from '../../constants/typography';
 import { SPACING, RADIUS } from '../../constants/spacing';
 import { useAuth } from '../../contexts/AuthContext';
+import { ROUTES } from '../../navigation/routes';
 
 interface TeacherProfile {
   id: string;
@@ -62,37 +65,57 @@ export default function TeacherDetailScreen({ route, navigation }: any) {
 
   useEffect(() => {
     const load = async () => {
-      const { data } = await supabase
-        .from('portal_users')
-        .select('id, full_name, email, phone, school_name, bio, is_active, created_at')
-        .eq('id', teacherId)
-        .single();
-      if (data) setTeacher(data as TeacherProfile);
+      try {
+        const row = await teacherService.getTeacherDetail(teacherId);
+        setTeacher({
+          id: row.id,
+          full_name: row.full_name,
+          email: row.email,
+          phone: row.phone,
+          school_name: row.school_name,
+          bio: row.bio,
+          is_active: row.is_active ?? false,
+          created_at: row.created_at ?? '',
+        });
+      } catch {
+        setTeacher(null);
+      }
 
-      const [cls, asgn, schoolAssignmentsRes] = await Promise.all([
-        supabase.from('classes').select('id, name').eq('teacher_id', teacherId).limit(20),
-        supabase.from('assignments').select('id', { count: 'exact', head: true }).eq('created_by', teacherId),
-        supabase
-          .from('teacher_schools')
-          .select('id, school_id, is_primary, schools!teacher_schools_school_id_fkey(id, name, state, status)')
-          .eq('teacher_id', teacherId)
-          .limit(20),
-      ]);
+      let enrichedClasses: ClassItem[] = [];
+      let assignmentCount = 0;
+      let schoolAssignmentsRaw: any[] = [];
+      try {
+        const [cls, asgnCount, sar] = await Promise.all([
+          classService.listClassSummariesForTeacher(teacherId),
+          assignmentService.countAssignmentsByCreator(teacherId),
+          teacherService.listTeacherSchoolLinksForDetail(teacherId),
+        ]);
+        enrichedClasses = cls as ClassItem[];
+        assignmentCount = asgnCount;
+        schoolAssignmentsRaw = sar as any[];
+      } catch {
+        enrichedClasses = [];
+        assignmentCount = 0;
+        schoolAssignmentsRaw = [];
+      }
 
-      let enrichedClasses: ClassItem[] = cls.data ?? [];
       if (enrichedClasses.length > 0) {
         const enrollCounts = await Promise.all(
-          enrichedClasses.map((item) =>
-            supabase.from('portal_users').select('id', { count: 'exact', head: true }).eq('class_id', item.id).eq('role', 'student')
-          )
+          enrichedClasses.map(async (item) => {
+            try {
+              return await classService.countStudentsInClass(item.id);
+            } catch {
+              return 0;
+            }
+          }),
         );
         enrichedClasses = enrichedClasses.map((item, index) => ({
           ...item,
-          student_count: enrollCounts[index].count ?? 0,
+          student_count: enrollCounts[index] ?? 0,
         }));
       }
 
-      const normalizedAssignments = (schoolAssignmentsRes.data ?? []).map(normalizeAssignment);
+      const normalizedAssignments = schoolAssignmentsRaw.map(normalizeAssignment);
       setAssignments(normalizedAssignments);
 
       const totalStudents = enrichedClasses.reduce((sum, item) => sum + (item.student_count ?? 0), 0);
@@ -100,7 +123,7 @@ export default function TeacherDetailScreen({ route, navigation }: any) {
       setStats({
         classes: enrichedClasses.length,
         students: totalStudents,
-        assignments: asgn.count ?? 0,
+        assignments: assignmentCount,
         schools: normalizedAssignments.length,
       });
       setLoading(false);
@@ -131,7 +154,7 @@ export default function TeacherDetailScreen({ route, navigation }: any) {
         title="Teacher Profile"
         onBack={() => navigation.goBack()}
         accentColor={COLORS.info}
-        rightAction={profile?.role === 'admin' ? { label: 'Edit', onPress: () => navigation.navigate('AddTeacher', { teacherId }) } : undefined}
+        rightAction={profile?.role === 'admin' ? { label: 'Edit', onPress: () => navigation.navigate(ROUTES.AddTeacher, { teacherId }) } : undefined}
       />
 
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scroll}>
@@ -169,6 +192,25 @@ export default function TeacherDetailScreen({ route, navigation }: any) {
           ))}
         </View>
 
+        <View style={styles.quickActions}>
+          <TouchableOpacity style={styles.quickActionCard} onPress={() => navigation.navigate(ROUTES.Teachers)}>
+            <Text style={styles.quickActionCode}>TC</Text>
+            <Text style={styles.quickActionText}>Directory</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.quickActionCard} onPress={() => navigation.navigate(ROUTES.Classes)}>
+            <Text style={styles.quickActionCode}>CL</Text>
+            <Text style={styles.quickActionText}>Classes</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.quickActionCard} onPress={() => navigation.navigate(ROUTES.Assignments)}>
+            <Text style={styles.quickActionCode}>AS</Text>
+            <Text style={styles.quickActionText}>Assignments</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.quickActionCard} onPress={() => navigation.navigate(ROUTES.Reports)}>
+            <Text style={styles.quickActionCode}>RP</Text>
+            <Text style={styles.quickActionText}>Reports</Text>
+          </TouchableOpacity>
+        </View>
+
         {teacher.bio ? (
           <View style={styles.bioCard}>
             <Text style={styles.sectionLabel}>Bio</Text>
@@ -198,7 +240,7 @@ export default function TeacherDetailScreen({ route, navigation }: any) {
               <TouchableOpacity
                 key={assignment.id}
                 style={[styles.schoolRow, index > 0 && styles.classRowBorder]}
-                onPress={() => assignment.schools ? navigation.navigate('SchoolDetail', { schoolId: assignment.schools.id }) : null}
+                onPress={() => assignment.schools ? navigation.navigate(ROUTES.SchoolDetail, { schoolId: assignment.schools.id }) : null}
                 activeOpacity={0.8}
               >
                 <Text style={styles.classIcon}>SC</Text>
@@ -220,7 +262,7 @@ export default function TeacherDetailScreen({ route, navigation }: any) {
               <TouchableOpacity
                 key={item.id}
                 style={[styles.classRow, index > 0 && styles.classRowBorder]}
-                onPress={() => navigation.navigate('ClassDetail', { classId: item.id })}
+                onPress={() => navigation.navigate(ROUTES.ClassDetail, { classId: item.id })}
                 activeOpacity={0.8}
               >
                 <Text style={styles.classIcon}>CL</Text>
@@ -258,6 +300,10 @@ const styles = StyleSheet.create({
   statCode: { fontFamily: FONT_FAMILY.bodyBold, fontSize: FONT_SIZE.xs },
   statValue: { fontFamily: FONT_FAMILY.display, fontSize: FONT_SIZE['2xl'] },
   statLabel: { fontFamily: FONT_FAMILY.body, fontSize: 9, color: COLORS.textMuted, textTransform: 'uppercase', letterSpacing: 0.8 },
+  quickActions: { flexDirection: 'row', flexWrap: 'wrap', gap: SPACING.sm, marginBottom: SPACING.md },
+  quickActionCard: { width: '48%', borderWidth: 1, borderColor: COLORS.border, borderRadius: RADIUS.lg, padding: SPACING.md, backgroundColor: COLORS.bgCard },
+  quickActionCode: { fontFamily: FONT_FAMILY.display, fontSize: FONT_SIZE.base, color: COLORS.info },
+  quickActionText: { marginTop: 6, fontFamily: FONT_FAMILY.bodySemi, fontSize: FONT_SIZE.xs, color: COLORS.textPrimary, textTransform: 'uppercase', letterSpacing: 0.8 },
   bioCard: { borderWidth: 1, borderColor: COLORS.border, borderRadius: RADIUS.xl, padding: SPACING.md, marginBottom: SPACING.md },
   bioText: { fontFamily: FONT_FAMILY.body, fontSize: FONT_SIZE.sm, color: COLORS.textSecondary, lineHeight: 20 },
   infoCard: { borderWidth: 1, borderColor: COLORS.border, borderRadius: RADIUS.xl, overflow: 'hidden', marginBottom: SPACING.md },

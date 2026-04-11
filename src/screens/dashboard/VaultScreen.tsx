@@ -8,10 +8,11 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { MotiView } from 'moti';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useAuth } from '../../contexts/AuthContext';
-import { supabase } from '../../lib/supabase';
+import { vaultService } from '../../services/vault.service';
 import { COLORS } from '../../constants/colors';
 import { FONT_FAMILY, FONT_SIZE } from '../../constants/typography';
 import { SPACING, RADIUS } from '../../constants/spacing';
+import { IconBackButton } from '../../components/ui/IconBackButton';
 
 const LANG_COLORS: Record<string, string> = {
   python: '#3b82f6',
@@ -71,12 +72,7 @@ export default function VaultScreen({ navigation }: any) {
   const load = useCallback(async () => {
     if (!profile) return;
     try {
-      const { data, error } = await supabase
-        .from('vault_items')
-        .select('id, user_id, title, language, code, description, tags, created_at')
-        .eq('user_id', profile.id)
-        .order('created_at', { ascending: false });
-      if (error) throw error;
+      const data = await vaultService.listVaultItemsForUser(profile.id);
       setItems(((data ?? []) as VaultItem[]).map((item) => ({ ...item, expanded: false })));
     } catch (e: any) {
       Alert.alert('Error', e.message || 'Could not load vault items.');
@@ -140,9 +136,10 @@ export default function VaultScreen({ navigation }: any) {
           text: 'Delete',
           style: 'destructive',
           onPress: async () => {
-            const { error } = await supabase.from('vault_items').delete().eq('id', item.id);
-            if (error) {
-              Alert.alert('Error', error.message);
+            try {
+              await vaultService.deleteVaultItem(item.id);
+            } catch (err: any) {
+              Alert.alert('Error', err?.message ?? 'Delete failed');
               return;
             }
             setItems((prev) => prev.filter((entry) => entry.id !== item.id));
@@ -153,6 +150,10 @@ export default function VaultScreen({ navigation }: any) {
   };
 
   const handleSave = async () => {
+    if (!profile?.id) {
+      Alert.alert('Profile required', 'Your account profile is not ready yet.');
+      return;
+    }
     if (!formTitle.trim()) {
       Alert.alert('Validation', 'Title is required');
       return;
@@ -164,17 +165,14 @@ export default function VaultScreen({ navigation }: any) {
     setSaving(true);
     try {
       const payload = {
-        user_id: profile?.id,
+        user_id: profile.id,
         title: formTitle.trim(),
         description: formDesc.trim() || null,
         language: formLang.toLowerCase(),
         tags: formTags.trim() ? formTags.split(',').map((tag) => tag.trim()).filter(Boolean) : null,
         code: formCode.trim(),
       };
-      const result = editingId
-        ? await supabase.from('vault_items').update(payload).eq('id', editingId)
-        : await supabase.from('vault_items').insert(payload);
-      if (result.error) throw result.error;
+      await vaultService.upsertVaultItem({ editingId, payload });
       setShowModal(false);
       resetForm();
       load();
@@ -206,7 +204,7 @@ export default function VaultScreen({ navigation }: any) {
             </View>
             <View style={{ flex: 1 }}>
               <Text style={styles.itemTitle}>{item.title}</Text>
-              <Text style={styles.itemMeta}>{item.language} · {new Date(item.created_at).toLocaleDateString()}</Text>
+              <Text style={styles.itemMeta}>{item.language} Â· {new Date(item.created_at).toLocaleDateString()}</Text>
             </View>
             <TouchableOpacity onPress={() => toggleExpand(item.id)} style={styles.iconBtn}>
               <Text style={styles.iconBtnText}>{item.expanded ? '?' : '?'}</Text>
@@ -249,9 +247,7 @@ export default function VaultScreen({ navigation }: any) {
   return (
     <SafeAreaView style={styles.safe}>
       <View style={styles.header}>
-        <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}>
-          <Text style={styles.backArrow}>?</Text>
-        </TouchableOpacity>
+        <IconBackButton onPress={() => navigation.goBack()} color={COLORS.textPrimary} style={styles.backBtn} />
         <Text style={styles.headerTitle}>Vault</Text>
         <TouchableOpacity style={styles.headerAction} onPress={openCreate}>
           <Text style={styles.headerActionText}>NEW</Text>
@@ -382,7 +378,6 @@ const styles = StyleSheet.create({
   list: { paddingHorizontal: SPACING.base, paddingBottom: 110 },
   header: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: SPACING.base, paddingVertical: SPACING.md, gap: SPACING.sm },
   backBtn: { width: 36, height: 36, borderRadius: RADIUS.md, borderWidth: 1, borderColor: COLORS.border, alignItems: 'center', justifyContent: 'center' },
-  backArrow: { fontSize: 18, color: COLORS.textPrimary },
   headerTitle: { flex: 1, fontSize: FONT_SIZE.lg, fontFamily: FONT_FAMILY.bodySemi, color: COLORS.textPrimary },
   headerAction: { borderRadius: RADIUS.full, borderWidth: 1, borderColor: COLORS.primary, paddingHorizontal: 12, paddingVertical: 6, backgroundColor: COLORS.primaryPale },
   headerActionText: { fontSize: FONT_SIZE.xs, fontFamily: FONT_FAMILY.bodySemi, color: COLORS.primaryLight },
@@ -449,4 +444,5 @@ const styles = StyleSheet.create({
   saveBtnInner: { padding: SPACING.md, alignItems: 'center' },
   saveBtnText: { fontSize: FONT_SIZE.base, fontFamily: FONT_FAMILY.bodySemi, color: '#fff' },
 });
+
 

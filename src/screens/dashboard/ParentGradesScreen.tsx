@@ -5,10 +5,13 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { MotiView } from 'moti';
-import { supabase } from '../../lib/supabase';
+import { useAuth } from '../../contexts/AuthContext';
+import { gradeService } from '../../services/grade.service';
+import { studentService } from '../../services/student.service';
 import { COLORS } from '../../constants/colors';
 import { FONT_FAMILY, FONT_SIZE } from '../../constants/typography';
 import { SPACING, RADIUS } from '../../constants/spacing';
+import { IconBackButton } from '../../components/ui/IconBackButton';
 
 interface GradeItem {
   id: string;
@@ -30,7 +33,8 @@ function gradeColor(grade: number | string | null, max: number | null): string {
 }
 
 export default function ParentGradesScreen({ navigation, route }: any) {
-  const { studentId, studentName } = route.params ?? {};
+  const { profile } = useAuth();
+  const { studentId: paramStudentId, studentName } = route.params ?? {};
   const [grades, setGrades] = useState<GradeItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -38,13 +42,18 @@ export default function ParentGradesScreen({ navigation, route }: any) {
 
   const load = async () => {
     try {
-      const { data: student } = await supabase
-        .from('students')
-        .select('user_id')
-        .eq('id', studentId)
-        .maybeSingle();
+      let studentId = paramStudentId as string | undefined;
+      if (!studentId && profile?.email) {
+        studentId = (await studentService.getFirstStudentRegistrationIdForParentEmail(profile.email)) ?? undefined;
+      }
+      if (!studentId) {
+        setNoPortalAccount(true);
+        setGrades([]);
+        return;
+      }
 
-      if (!student?.user_id) {
+      const portalUserId = await studentService.getPortalUserIdForStudentRegistration(studentId);
+      if (!portalUserId) {
         setNoPortalAccount(true);
         setGrades([]);
         return;
@@ -52,25 +61,13 @@ export default function ParentGradesScreen({ navigation, route }: any) {
 
       setNoPortalAccount(false);
 
-      const [asgnRes, cbtRes] = await Promise.all([
-        supabase
-          .from('assignment_submissions')
-          .select('id, status, grade, feedback, submitted_at, assignments(title, max_points)')
-          .eq('portal_user_id', student.user_id)
-          .not('grade', 'is', null)
-          .order('submitted_at', { ascending: false })
-          .limit(30),
-        supabase
-          .from('cbt_sessions')
-          .select('id, status, score, end_time, cbt_exams(title, total_marks)')
-          .eq('user_id', student.user_id)
-          .not('score', 'is', null)
-          .order('end_time', { ascending: false })
-          .limit(30),
+      const [asgnRows, cbtRows] = await Promise.all([
+        gradeService.listGradedAssignmentSubmissionsForParentGrades(portalUserId),
+        gradeService.listCbtSessionsWithScoresForParentGrades(portalUserId),
       ]);
 
       const items: GradeItem[] = [
-        ...(asgnRes.data ?? []).map((r: any) => ({
+        ...asgnRows.map((r: any) => ({
           id: r.id,
           type: 'assignment' as const,
           title: r.assignments?.title ?? 'Assignment',
@@ -80,7 +77,7 @@ export default function ParentGradesScreen({ navigation, route }: any) {
           submitted_at: r.submitted_at,
           feedback: r.feedback,
         })),
-        ...(cbtRes.data ?? []).map((r: any) => ({
+        ...cbtRows.map((r: any) => ({
           id: r.id,
           type: 'exam' as const,
           title: r.cbt_exams?.title ?? 'CBT Exam',
@@ -99,14 +96,12 @@ export default function ParentGradesScreen({ navigation, route }: any) {
     }
   };
 
-  useEffect(() => { load(); }, [studentId]);
+  useEffect(() => { load(); }, [paramStudentId, profile?.email]);
 
   return (
     <SafeAreaView style={styles.safe}>
       <View style={styles.header}>
-        <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}>
-          <Text style={styles.backIcon}>←</Text>
-        </TouchableOpacity>
+        <IconBackButton onPress={() => navigation.goBack()} color={COLORS.textPrimary} style={styles.backBtn} />
         <View>
           <Text style={styles.title}>Grades</Text>
           {studentName && <Text style={styles.subtitle}>{studentName}</Text>}
@@ -194,7 +189,6 @@ const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: COLORS.bg },
   header: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: SPACING.base, paddingTop: SPACING.md, paddingBottom: SPACING.base, gap: SPACING.md },
   backBtn: { padding: SPACING.xs },
-  backIcon: { fontSize: 22, color: COLORS.textPrimary },
   title: { fontFamily: FONT_FAMILY.display, fontSize: FONT_SIZE['2xl'], color: COLORS.textPrimary },
   subtitle: { fontFamily: FONT_FAMILY.body, fontSize: FONT_SIZE.sm, color: COLORS.textMuted, marginTop: 2 },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingTop: 80 },

@@ -1,4 +1,4 @@
-﻿
+
 import React, { useEffect, useState } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity,
@@ -9,7 +9,8 @@ import { MotiView } from 'moti';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useAuth } from '../../contexts/AuthContext';
 import { useTheme } from '../../contexts/ThemeContext';
-import { supabase } from '../../lib/supabase';
+import { attendanceService } from '../../services/attendance.service';
+import { classService } from '../../services/class.service';
 import { COLORS } from '../../constants/colors';
 import { FONT_FAMILY, FONT_SIZE } from '../../constants/typography';
 import { SPACING, RADIUS } from '../../constants/spacing';
@@ -37,24 +38,24 @@ export default function MarkAttendanceScreen({ navigation, route }: any) {
 
   useEffect(() => {
     const fetchStudents = async () => {
-      const { data } = await supabase
-        .from('portal_users')
-        .select('id, full_name')
-        .eq('role', 'student')
-        .eq('class_id', classId)
-        .eq('is_active', true)
-        .order('full_name', { ascending: true });
-
-      setStudents(((data ?? []) as any[]).map((student) => ({
-        id: student.id,
-        full_name: student.full_name || 'Unknown Student',
-        status: 'present',
-        notes: '',
-      })));
-      setLoading(false);
+      try {
+        const rows = await classService.listActiveStudentsInClass(classId);
+        setStudents(
+          rows.map((student) => ({
+            id: student.id,
+            full_name: student.full_name || 'Unknown Student',
+            status: 'present' as const,
+            notes: '',
+          })),
+        );
+      } catch {
+        setStudents([]);
+      } finally {
+        setLoading(false);
+      }
     };
 
-    fetchStudents();
+    void fetchStudents();
   }, [classId]);
 
   const toggleStatus = (id: string) => {
@@ -81,47 +82,30 @@ export default function MarkAttendanceScreen({ navigation, route }: any) {
       const today = new Date().toISOString().split('T')[0];
       const sessionTopic = topic.trim() || `Attendance - ${today}`;
 
-      let sessionId: string | null = null;
-      const existingSession = await supabase
-        .from('class_sessions')
-        .select('id')
-        .eq('class_id', classId)
-        .eq('session_date', today)
-        .maybeSingle();
-
-      if (existingSession.data?.id) {
-        sessionId = existingSession.data.id;
-      } else {
-        const createdSession = await supabase
-          .from('class_sessions')
-          .insert({
-            class_id: classId,
-            session_date: today,
-            topic: sessionTopic,
-            title: sessionTopic,
-            description: topic.trim() || null,
-            status: 'completed',
-            is_active: true,
-            start_time: null,
-          })
-          .select('id')
-          .single();
-
-        if (createdSession.error || !createdSession.data) throw createdSession.error;
-        sessionId = createdSession.data.id;
+      let sessionId = await classService.getClassSessionIdForDate(classId, today);
+      if (!sessionId) {
+        sessionId = await classService.insertClassSessionReturningId({
+          class_id: classId,
+          session_date: today,
+          topic: sessionTopic,
+          title: sessionTopic,
+          description: topic.trim() || null,
+          status: 'completed',
+          is_active: true,
+          start_time: null,
+        });
       }
 
       const records = students.map((student) => ({
-        session_id: sessionId,
+        session_id: sessionId!,
         user_id: student.id,
-        student_id: null,
         status: student.status,
-        notes: student.notes.trim() || null,
-        recorded_by: profile?.id,
+        notes: student.notes.trim() || undefined,
       }));
 
-      const { error } = await supabase.from('attendance').upsert(records, { onConflict: 'session_id,user_id' });
-      if (error) throw error;
+      for (const record of records) {
+        await attendanceService.createAttendance(record, profile?.school_id);
+      }
 
       success();
       Alert.alert('Success', 'Attendance records have been finalized.');

@@ -6,11 +6,12 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { MotiView } from 'moti';
 import { LinearGradient } from 'expo-linear-gradient';
-import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../contexts/AuthContext';
+import { studentService } from '../../services/student.service';
 import { COLORS } from '../../constants/colors';
 import { FONT_FAMILY, FONT_SIZE } from '../../constants/typography';
 import { SPACING, RADIUS } from '../../constants/spacing';
+import { IconBackButton } from '../../components/ui/IconBackButton';
 
 interface Student {
   id: string;
@@ -33,17 +34,12 @@ export default function WipeStudentsScreen({ navigation }: any) {
   const [processing, setProcessing] = useState(false);
 
   const load = useCallback(async () => {
-    let query = supabase
-      .from('portal_users')
-      .select('id, full_name, email, school_name, is_active, created_at')
-      .eq('role', 'student')
-      .order('full_name')
-      .limit(500);
-    if ((profile?.role === 'teacher' || profile?.role === 'school') && profile?.school_id) {
-      query = query.eq('school_id', profile.school_id);
-    }
-    const { data } = await query;
-    if (data) setStudents(data as Student[]);
+    const restrictToSchoolId =
+      (profile?.role === 'teacher' || profile?.role === 'school') && profile?.school_id
+        ? profile.school_id
+        : null;
+    const data = await studentService.listStudentsForWipeScreen({ restrictToSchoolId });
+    setStudents(data as Student[]);
     setLoading(false);
   }, [profile?.role, profile?.school_id]);
 
@@ -86,10 +82,10 @@ export default function WipeStudentsScreen({ navigation }: any) {
     const ids = Array.from(selected);
     try {
       if (action === 'deactivate') {
-        await supabase.from('portal_users').update({ is_active: false }).in('id', ids);
+        await studentService.bulkSetPortalStudentsActive(ids, false);
         setStudents(prev => prev.map(s => ids.includes(s.id) ? { ...s, is_active: false } : s));
       } else {
-        await supabase.from('portal_users').delete().in('id', ids);
+        await studentService.bulkHardDeletePortalStudents(ids);
         setStudents(prev => prev.filter(s => !ids.includes(s.id)));
       }
       setSelected(new Set());
@@ -107,9 +103,7 @@ export default function WipeStudentsScreen({ navigation }: any) {
     return (
       <SafeAreaView style={styles.safe}>
         <View style={styles.header}>
-          <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}>
-            <Text style={styles.backArrow}>←</Text>
-          </TouchableOpacity>
+          <IconBackButton onPress={() => navigation.goBack()} color={COLORS.textPrimary} style={styles.backBtn} />
           <View style={{ flex: 1 }}>
             <Text style={styles.title}>Wipe Students</Text>
             <Text style={styles.subtitle}>Restricted access</Text>
@@ -125,9 +119,7 @@ export default function WipeStudentsScreen({ navigation }: any) {
   return (
     <SafeAreaView style={styles.safe}>
       <View style={styles.header}>
-        <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}>
-          <Text style={styles.backArrow}>←</Text>
-        </TouchableOpacity>
+        <IconBackButton onPress={() => navigation.goBack()} color={COLORS.textPrimary} style={styles.backBtn} />
         <View style={{ flex: 1 }}>
           <Text style={styles.title}>Wipe Students</Text>
           <Text style={styles.subtitle}>Archive or remove student accounts</Text>
@@ -213,7 +205,6 @@ const styles = StyleSheet.create({
   loadWrap: { flex: 1, backgroundColor: COLORS.bg, alignItems: 'center', justifyContent: 'center' },
   header: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: SPACING.xl, paddingTop: SPACING.md, paddingBottom: SPACING.sm, gap: SPACING.md },
   backBtn: { width: 36, height: 36, borderRadius: RADIUS.md, borderWidth: 1, borderColor: COLORS.border, alignItems: 'center', justifyContent: 'center' },
-  backArrow: { fontSize: 18, color: COLORS.textPrimary },
   title: { fontFamily: FONT_FAMILY.display, fontSize: FONT_SIZE['2xl'], color: COLORS.textPrimary },
   subtitle: { fontFamily: FONT_FAMILY.body, fontSize: FONT_SIZE.xs, color: COLORS.textMuted },
   warningBanner: { marginHorizontal: SPACING.xl, marginBottom: SPACING.sm, backgroundColor: COLORS.error + '15', borderWidth: 1, borderColor: COLORS.error + '40', borderRadius: RADIUS.md, padding: SPACING.sm },

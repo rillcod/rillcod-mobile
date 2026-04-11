@@ -1,4 +1,4 @@
-﻿import React, { useEffect, useState, useCallback, useMemo } from 'react';
+import React, { useEffect, useState, useCallback, useMemo } from 'react';
 import {
   View, Text, StyleSheet, FlatList, TouchableOpacity, RefreshControl,
   ActivityIndicator, Alert, ScrollView, TextInput, Modal, Linking,
@@ -9,7 +9,10 @@ import * as Print from 'expo-print';
 import * as Sharing from 'expo-sharing';
 import { useAuth } from '../../contexts/AuthContext';
 import { useTheme } from '../../contexts/ThemeContext';
-import { supabase } from '../../lib/supabase';
+import { paymentService, type InvoiceInsert } from '../../services/payment.service';
+import { studentService } from '../../services/student.service';
+import { schoolService } from '../../services/school.service';
+import type { Json } from '../../types/supabase';
 import { FONT_FAMILY, FONT_SIZE, LETTER_SPACING } from '../../constants/typography';
 import { SPACING, RADIUS } from '../../constants/spacing';
 import { ScreenHeader } from '../../components/ui/ScreenHeader';
@@ -90,6 +93,29 @@ export default function InvoicesScreen({ navigation }: any) {
   const [exporting, setExporting] = useState(false);
   const [search, setSearch] = useState('');
   const [filter, setFilter] = useState<'all' | InvoiceStatus>('all');
+  const [showCreate, setShowCreate] = useState(false);
+  const [showBulkCreate, setShowBulkCreate] = useState(false);
+  const [savingInvoice, setSavingInvoice] = useState(false);
+  const [students, setStudents] = useState<{ id: string; full_name: string; email: string; school_id: string | null }[]>([]);
+  const [schools, setSchools] = useState<{ id: string; name: string }[]>([]);
+  const [createForm, setCreateForm] = useState({
+    student_id: '',
+    due_date: '',
+    notes: '',
+    status: 'sent' as InvoiceStatus,
+    items: [{ description: '', quantity: 1, unit_price: 0, total: 0 }],
+  });
+  const [bulkForm, setBulkForm] = useState({
+    school_id: '',
+    due_date: '',
+    notes: '',
+    status: 'sent' as InvoiceStatus,
+    items: [{ description: '', quantity: 1, unit_price: 0, total: 0 }],
+  });
+  const [editDue, setEditDue] = useState('');
+  const [editNotes, setEditNotes] = useState('');
+  const [editStatus, setEditStatus] = useState<InvoiceStatus>('sent');
+  const [savingInvoiceEdit, setSavingInvoiceEdit] = useState(false);
 
   const isAdmin = profile?.role === 'admin';
   const isSchool = profile?.role === 'school';
@@ -97,36 +123,35 @@ export default function InvoicesScreen({ navigation }: any) {
   const load = useCallback(async () => {
     if (!profile) return;
     try {
-      let query = supabase
-        .from('invoices')
-        .select(`
-          id, invoice_number, amount, currency, status, due_date, created_at, notes,
-          school_id, portal_user_id, payment_link, payment_transaction_id, items,
-          schools(name),
-          portal_users(full_name, email)
-        `);
-
-      if (isSchool && profile.school_id) {
-        query = query.eq('school_id', profile.school_id);
-      } else if (!isAdmin && !isSchool) {
-        query = query.eq('portal_user_id', profile.id);
-      }
-
-      const [{ data: invoiceData }, { data: accountData }] = await Promise.all([
-        query.order('created_at', { ascending: false }),
-        isAdmin
-          ? supabase
-              .from('payment_accounts')
-              .select('id, label, bank_name, account_number, account_name, account_type, owner_type, payment_note, school_id')
-              .eq('is_active', true)
-              .order('created_at', { ascending: false })
-          : supabase
-              .from('payment_accounts')
-              .select('id, label, bank_name, account_number, account_name, account_type, owner_type, payment_note, school_id')
-              .eq('is_active', true)
-              .or(profile.school_id ? `school_id.eq.${profile.school_id},owner_type.eq.global,owner_type.eq.rillcod` : 'owner_type.eq.global,owner_type.eq.rillcod')
-              .order('created_at', { ascending: false }),
+      const [invoiceData, accountData] = await Promise.all([
+        paymentService.listInvoices({
+          role: profile.role,
+          userId: profile.id,
+          schoolId: profile.school_id
+        }),
+        paymentService.listPaymentAccounts({
+          isAdmin,
+          schoolId: profile.school_id
+        })
       ]);
+
+      if (isAdmin || isSchool) {
+        const [studentData, schoolData] = await Promise.all([
+          studentService.listActiveStudentsForBilling({
+            schoolId: isSchool && profile.school_id ? profile.school_id : undefined,
+          }),
+          isAdmin
+            ? schoolService.listApprovedSchoolOptions()
+            : profile.school_id
+              ? schoolService.getSchoolOptionRow(profile.school_id)
+              : Promise.resolve([]),
+        ]);
+        setStudents(studentData as { id: string; full_name: string; email: string; school_id: string | null }[]);
+        setSchools(schoolData as { id: string; name: string }[]);
+      } else {
+        setStudents([]);
+        setSchools([]);
+      }
 
       setInvoices(
         ((invoiceData ?? []) as any[]).map((invoice) => ({
@@ -158,6 +183,13 @@ export default function InvoicesScreen({ navigation }: any) {
   useEffect(() => {
     load();
   }, [load]);
+
+  useEffect(() => {
+    if (!selectedInvoice) return;
+    setEditDue(selectedInvoice.due_date ? String(selectedInvoice.due_date).split('T')[0] : '');
+    setEditNotes(selectedInvoice.notes ?? '');
+    setEditStatus(selectedInvoice.status);
+  }, [selectedInvoice]);
 
   const filtered = useMemo(() => {
     const query = search.trim().toLowerCase();
@@ -206,19 +238,194 @@ export default function InvoicesScreen({ navigation }: any) {
     setSelectedInvoice(invoice);
   };
 
+  const updateCreateItem = (index: number, patch: Partial<InvoiceItem>) => {
+    setCreateForm((current) => {
+      const items = [...current.items];
+      const next = { ...items[index], ...patch };
+      next.total = Number(next.quantity || 0) * Number(next.unit_price || 0);
+      items[index] = next;
+      return { ...current, items };
+    });
+  };
+
+  const addCreateItem = () => {
+    setCreateForm((current) => ({
+      ...current,
+      items: [...current.items, { description: '', quantity: 1, unit_price: 0, total: 0 }],
+    }));
+  };
+
+  const removeCreateItem = (index: number) => {
+    setCreateForm((current) => ({
+      ...current,
+      items: current.items.length === 1 ? current.items : current.items.filter((_, itemIndex) => itemIndex !== index),
+    }));
+  };
+
+  const updateBulkItem = (index: number, patch: Partial<InvoiceItem>) => {
+    setBulkForm((current) => {
+      const items = [...current.items];
+      const next = { ...items[index], ...patch };
+      next.total = Number(next.quantity || 0) * Number(next.unit_price || 0);
+      items[index] = next;
+      return { ...current, items };
+    });
+  };
+
+  const addBulkItem = () => {
+    setBulkForm((current) => ({
+      ...current,
+      items: [...current.items, { description: '', quantity: 1, unit_price: 0, total: 0 }],
+    }));
+  };
+
+  const removeBulkItem = (index: number) => {
+    setBulkForm((current) => ({
+      ...current,
+      items: current.items.length === 1 ? current.items : current.items.filter((_, itemIndex) => itemIndex !== index),
+    }));
+  };
+
+  const createInvoice = async () => {
+    const validItems = createForm.items.filter((item) => item.description.trim() && item.unit_price > 0);
+    if (!createForm.student_id || validItems.length === 0) {
+      Alert.alert('Invoice builder', 'Choose a student and add at least one valid line item.');
+      return;
+    }
+
+    const selectedStudent = students.find((student) => student.id === createForm.student_id);
+    const totalAmount = validItems.reduce((sum, item) => sum + item.total, 0);
+    const invoiceNumber = `INV-${Date.now().toString(36).toUpperCase()}`;
+
+    setSavingInvoice(true);
+    try {
+      const invoicePayload: InvoiceInsert = {
+        invoice_number: invoiceNumber,
+        portal_user_id: createForm.student_id,
+        school_id: selectedStudent?.school_id ?? profile?.school_id ?? null,
+        amount: totalAmount,
+        currency: 'NGN',
+        status: createForm.status,
+        due_date: createForm.due_date || null,
+        notes: createForm.notes.trim() || null,
+        items: validItems as unknown as Json,
+      };
+      await paymentService.createInvoice(invoicePayload);
+
+      setShowCreate(false);
+      setCreateForm({
+        student_id: '',
+        due_date: '',
+        notes: '',
+        status: 'sent',
+        items: [{ description: '', quantity: 1, unit_price: 0, total: 0 }],
+      });
+      await load();
+    } catch (error: any) {
+      Alert.alert('Invoice builder', error?.message ?? 'Could not create invoice.');
+    } finally {
+      setSavingInvoice(false);
+    }
+  };
+
+  const createBulkInvoices = async () => {
+    const validItems = bulkForm.items.filter((item) => item.description.trim() && item.unit_price > 0);
+    const targetSchoolId = isSchool ? profile?.school_id ?? '' : bulkForm.school_id;
+    if (!targetSchoolId || validItems.length === 0) {
+      Alert.alert('Bulk billing', 'Choose a school and add at least one valid line item.');
+      return;
+    }
+
+    const recipients = students.filter((student) => student.school_id === targetSchoolId);
+    if (!recipients.length) {
+      Alert.alert('Bulk billing', 'No active students were found for that school.');
+      return;
+    }
+
+    setSavingInvoice(true);
+    try {
+      const totalAmount = validItems.reduce((sum, item) => sum + item.total, 0);
+      const rows: InvoiceInsert[] = recipients.map((student, index) => ({
+        invoice_number: `INV-${Date.now().toString(36).toUpperCase()}-${index + 1}`,
+        portal_user_id: student.id,
+        school_id: targetSchoolId,
+        amount: totalAmount,
+        currency: 'NGN',
+        status: bulkForm.status,
+        due_date: bulkForm.due_date || null,
+        notes: bulkForm.notes.trim() || null,
+        items: validItems as unknown as Json,
+      }));
+
+      await paymentService.createBulkInvoices(rows);
+
+      setShowBulkCreate(false);
+      setBulkForm({
+        school_id: isSchool ? profile?.school_id ?? '' : '',
+        due_date: '',
+        notes: '',
+        status: 'sent',
+        items: [{ description: '', quantity: 1, unit_price: 0, total: 0 }],
+      });
+      Alert.alert('Bulk billing', `${rows.length} invoices issued successfully.`);
+      await load();
+    } catch (error: any) {
+      Alert.alert('Bulk billing', error?.message ?? 'Could not issue bulk invoices.');
+    } finally {
+      setSavingInvoice(false);
+    }
+  };
+
+  const updateInvoiceStatus = async (invoice: Invoice, status: InvoiceStatus) => {
+    try {
+      await paymentService.updateInvoiceStatus(invoice.id, status);
+      await load();
+      setSelectedInvoice((current) => (current?.id === invoice.id ? { ...current, status } : current));
+    } catch (error: any) {
+      Alert.alert('Invoice', error.message);
+    }
+  };
+
+  const saveInvoiceDetails = async () => {
+    if (!selectedInvoice || (!isAdmin && !isSchool)) return;
+    if (selectedInvoice.status === 'paid' || selectedInvoice.status === 'cancelled') {
+      Alert.alert('Invoice', 'Paid or cancelled invoices cannot be edited here.');
+      return;
+    }
+    setSavingInvoiceEdit(true);
+    try {
+      await paymentService.patchInvoice(selectedInvoice.id, {
+        due_date: editDue.trim() || null,
+        notes: editNotes.trim() || null,
+        status: editStatus,
+        updated_at: new Date().toISOString(),
+      });
+      await load();
+      setSelectedInvoice((prev) =>
+        prev && prev.id === selectedInvoice.id
+          ? { ...prev, due_date: editDue.trim() || null, notes: editNotes.trim() || null, status: editStatus }
+          : prev,
+      );
+      Alert.alert('Invoice', 'Details saved.');
+    } catch (error: any) {
+      Alert.alert('Invoice', error?.message ?? 'Could not save.');
+    } finally {
+      setSavingInvoiceEdit(false);
+    }
+  };
+
   const markInvoicePaid = async (invoice: Invoice) => {
     Alert.alert('Mark Invoice Paid', `Confirm ${invoice.invoice_number} as paid?`, [
       { text: 'Cancel', style: 'cancel' },
       {
         text: 'Confirm',
         onPress: async () => {
-          const { error } = await supabase
-            .from('invoices')
-            .update({ status: 'paid' })
-            .eq('id', invoice.id);
-          if (!error) {
+          try {
+            await paymentService.markAsPaid(invoice.id);
             await load();
             setSelectedInvoice((current) => (current?.id === invoice.id ? { ...invoice, status: 'paid' } : current));
+          } catch (error: any) {
+            Alert.alert('Invoice', error.message);
           }
         },
       },
@@ -360,6 +567,17 @@ export default function InvoicesScreen({ navigation }: any) {
     <SafeAreaView style={styles.safe}>
       <ScreenHeader title={isAdmin ? 'FINANCE CENTRE' : 'MY INVOICES'} onBack={() => navigation.goBack()} />
 
+      {(isAdmin || isSchool) && (
+        <View style={styles.createRowGroup}>
+          <TouchableOpacity style={[styles.createBtn, { backgroundColor: colors.primary, borderColor: colors.primary }]} onPress={() => setShowCreate(true)}>
+            <Text style={styles.createBtnText}>+ ISSUE INVOICE</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={[styles.createBtn, { backgroundColor: colors.bgCard, borderColor: colors.primary }]} onPress={() => setShowBulkCreate(true)}>
+            <Text style={[styles.createBtnText, { color: colors.primary }]}>BULK INVOICES</Text>
+          </TouchableOpacity>
+        </View>
+      )}
+
       <View style={styles.statsRow}>
         <View style={[styles.statCard, { backgroundColor: colors.bgCard, borderColor: colors.border }]}>
           <Text style={[styles.statLabel, { color: colors.warning }]}>OUTSTANDING</Text>
@@ -499,10 +717,59 @@ export default function InvoicesScreen({ navigation }: any) {
                     )}
                   </View>
 
-                  {selectedInvoice.notes ? (
+                  {selectedInvoice.notes && (!isAdmin && !isSchool) ? (
                     <View style={[styles.section, { borderColor: colors.border, backgroundColor: colors.bgCard }]}> 
                       <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>NOTES</Text>
                       <Text style={[styles.sectionBody, { color: colors.textMuted }]}>{selectedInvoice.notes}</Text>
+                    </View>
+                  ) : null}
+
+                  {(isAdmin || isSchool) && selectedInvoice.status !== 'paid' && selectedInvoice.status !== 'cancelled' ? (
+                    <View style={[styles.section, { borderColor: colors.border, backgroundColor: colors.bgCard }]}>
+                      <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>EDIT (WEB PARITY)</Text>
+                      <Text style={[styles.formLabel, { color: colors.textMuted }]}>DUE DATE</Text>
+                      <TextInput
+                        value={editDue}
+                        onChangeText={setEditDue}
+                        placeholder="YYYY-MM-DD"
+                        placeholderTextColor={colors.textMuted}
+                        style={[styles.formInput, { color: colors.textPrimary, borderColor: colors.border, backgroundColor: colors.bg }]}
+                      />
+                      <Text style={[styles.formLabel, { color: colors.textMuted }]}>NOTES</Text>
+                      <TextInput
+                        value={editNotes}
+                        onChangeText={setEditNotes}
+                        multiline
+                        placeholder="Internal notes"
+                        placeholderTextColor={colors.textMuted}
+                        style={[styles.formInput, styles.formArea, { color: colors.textPrimary, borderColor: colors.border, backgroundColor: colors.bg }]}
+                      />
+                      <Text style={[styles.formLabel, { color: colors.textMuted }]}>STATUS</Text>
+                      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>
+                        {(['draft', 'sent', 'overdue'] as InvoiceStatus[]).map((s) => {
+                          const active = editStatus === s;
+                          return (
+                            <TouchableOpacity
+                              key={s}
+                              onPress={() => setEditStatus(s)}
+                              style={[
+                                styles.chip,
+                                { borderColor: colors.border, backgroundColor: colors.bg },
+                                active && { borderColor: colors.primary, backgroundColor: colors.primary + '10' },
+                              ]}
+                            >
+                              <Text style={[styles.chipText, { color: active ? colors.primary : colors.textMuted }]}>{s}</Text>
+                            </TouchableOpacity>
+                          );
+                        })}
+                      </ScrollView>
+                      <TouchableOpacity
+                        onPress={() => void saveInvoiceDetails()}
+                        disabled={savingInvoiceEdit}
+                        style={[styles.actionBtn, { backgroundColor: colors.primary, borderColor: colors.primary, marginTop: 12 }]}
+                      >
+                        <Text style={styles.actionPrimaryText}>{savingInvoiceEdit ? 'SAVING…' : 'SAVE CHANGES'}</Text>
+                      </TouchableOpacity>
                     </View>
                   ) : null}
 
@@ -555,9 +822,309 @@ export default function InvoicesScreen({ navigation }: any) {
                       <Text style={styles.actionPrimaryText}>MARK PAID</Text>
                     </TouchableOpacity>
                   ) : null}
+
+                  {(isAdmin || isSchool) && selectedInvoice.status === 'draft' ? (
+                    <TouchableOpacity
+                      style={[styles.actionBtn, { backgroundColor: colors.primary, borderColor: colors.primary }]}
+                      onPress={() => updateInvoiceStatus(selectedInvoice, 'sent')}
+                    >
+                      <Text style={styles.actionPrimaryText}>SEND</Text>
+                    </TouchableOpacity>
+                  ) : null}
+
+                  {(isAdmin || isSchool) && selectedInvoice.status !== 'cancelled' && selectedInvoice.status !== 'paid' ? (
+                    <TouchableOpacity
+                      style={[styles.actionBtn, { backgroundColor: colors.bgCard, borderColor: colors.error }]}
+                      onPress={() => updateInvoiceStatus(selectedInvoice, 'cancelled')}
+                    >
+                      <Text style={[styles.actionText, { color: colors.error }]}>CANCEL</Text>
+                    </TouchableOpacity>
+                  ) : null}
                 </View>
               </>
             ) : null}
+          </View>
+        </View>
+      </Modal>
+
+      <Modal visible={showCreate} animationType="slide" transparent onRequestClose={() => setShowCreate(false)}>
+        <View style={styles.modalBackdrop}>
+          <View style={[styles.modalCard, { backgroundColor: colors.bg, borderColor: colors.border }]}>
+            <View style={[styles.modalHeader, { borderBottomColor: colors.border }]}>
+              <View style={{ flex: 1 }}>
+                <Text style={[styles.modalEyebrow, { color: colors.primary }]}>INVOICE BUILDER</Text>
+                <Text style={[styles.modalTitle, { color: colors.textPrimary }]}>Create invoice</Text>
+                <Text style={[styles.modalSub, { color: colors.textMuted }]}>Issue a student invoice directly from mobile.</Text>
+              </View>
+              <TouchableOpacity onPress={() => setShowCreate(false)} style={[styles.closeBtn, { borderColor: colors.border }]}>
+                <Text style={[styles.closeText, { color: colors.textSecondary }]}>X</Text>
+              </TouchableOpacity>
+            </View>
+
+            <ScrollView contentContainerStyle={styles.modalScroll}>
+              <View style={[styles.section, { borderColor: colors.border, backgroundColor: colors.bgCard }]}>
+                <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>RECIPIENT</Text>
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filterRow}>
+                  {students.map((student) => {
+                    const active = createForm.student_id === student.id;
+                    return (
+                      <TouchableOpacity
+                        key={student.id}
+                        onPress={() => setCreateForm((current) => ({ ...current, student_id: student.id }))}
+                        style={[
+                          styles.chip,
+                          { borderColor: colors.border, backgroundColor: colors.bg },
+                          active && { borderColor: colors.primary, backgroundColor: colors.primary + '10' },
+                        ]}
+                      >
+                        <Text style={[styles.chipText, { color: active ? colors.primary : colors.textMuted }]}>{student.full_name}</Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </ScrollView>
+
+                <Text style={[styles.formLabel, { color: colors.textMuted }]}>DUE DATE</Text>
+                <TextInput
+                  value={createForm.due_date}
+                  onChangeText={(value) => setCreateForm((current) => ({ ...current, due_date: value }))}
+                  placeholder="YYYY-MM-DD"
+                  placeholderTextColor={colors.textMuted}
+                  style={[styles.formInput, { color: colors.textPrimary, borderColor: colors.border, backgroundColor: colors.bg }]}
+                />
+
+                <Text style={[styles.formLabel, { color: colors.textMuted }]}>STATUS</Text>
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filterRow}>
+                  {(['draft', 'sent'] as InvoiceStatus[]).map((status) => (
+                    <TouchableOpacity
+                      key={status}
+                      onPress={() => setCreateForm((current) => ({ ...current, status }))}
+                      style={[
+                        styles.chip,
+                        { borderColor: colors.border, backgroundColor: colors.bg },
+                        createForm.status === status && { borderColor: colors.primary, backgroundColor: colors.primary + '10' },
+                      ]}
+                    >
+                      <Text style={[styles.chipText, { color: createForm.status === status ? colors.primary : colors.textMuted }]}>{status.toUpperCase()}</Text>
+                    </TouchableOpacity>
+                  ))}
+                </ScrollView>
+              </View>
+
+              <View style={[styles.section, { borderColor: colors.border, backgroundColor: colors.bgCard }]}>
+                <View style={styles.lineBuilderHeader}>
+                  <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>LINE ITEMS</Text>
+                  <TouchableOpacity onPress={addCreateItem}>
+                    <Text style={[styles.addLineText, { color: colors.primary }]}>+ Add line</Text>
+                  </TouchableOpacity>
+                </View>
+
+                {createForm.items.map((item, index) => (
+                  <View key={`create-item-${index}`} style={[styles.builderCard, { borderColor: colors.border }]}>
+                    <TextInput
+                      value={item.description}
+                      onChangeText={(value) => updateCreateItem(index, { description: value })}
+                      placeholder="Description"
+                      placeholderTextColor={colors.textMuted}
+                      style={[styles.formInput, { color: colors.textPrimary, borderColor: colors.border, backgroundColor: colors.bg }]}
+                    />
+                    <View style={styles.builderRow}>
+                      <TextInput
+                        value={String(item.quantity)}
+                        onChangeText={(value) => updateCreateItem(index, { quantity: Number(value || 0) })}
+                        placeholder="Qty"
+                        keyboardType="number-pad"
+                        placeholderTextColor={colors.textMuted}
+                        style={[styles.formInput, styles.builderHalf, { color: colors.textPrimary, borderColor: colors.border, backgroundColor: colors.bg }]}
+                      />
+                      <TextInput
+                        value={String(item.unit_price)}
+                        onChangeText={(value) => updateCreateItem(index, { unit_price: Number(value || 0) })}
+                        placeholder="Unit price"
+                        keyboardType="number-pad"
+                        placeholderTextColor={colors.textMuted}
+                        style={[styles.formInput, styles.builderHalf, { color: colors.textPrimary, borderColor: colors.border, backgroundColor: colors.bg }]}
+                      />
+                    </View>
+                    <View style={styles.builderFooter}>
+                      <Text style={[styles.lineTotalLabel, { color: colors.textMuted }]}>TOTAL</Text>
+                      <Text style={[styles.lineTotalValue, { color: colors.textPrimary }]}>{formatMoney(item.total, 'NGN')}</Text>
+                    </View>
+                    {createForm.items.length > 1 ? (
+                      <TouchableOpacity onPress={() => removeCreateItem(index)}>
+                        <Text style={[styles.removeLineText, { color: colors.error }]}>Remove line</Text>
+                      </TouchableOpacity>
+                    ) : null}
+                  </View>
+                ))}
+
+                <Text style={[styles.invoiceTotal, { color: colors.textPrimary }]}>
+                  TOTAL {formatMoney(createForm.items.reduce((sum, item) => sum + item.total, 0), 'NGN')}
+                </Text>
+              </View>
+
+              <View style={[styles.section, { borderColor: colors.border, backgroundColor: colors.bgCard }]}>
+                <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>NOTES</Text>
+                <TextInput
+                  value={createForm.notes}
+                  onChangeText={(value) => setCreateForm((current) => ({ ...current, notes: value }))}
+                  placeholder="Optional invoice note"
+                  placeholderTextColor={colors.textMuted}
+                  multiline
+                  style={[styles.formInput, styles.formArea, { color: colors.textPrimary, borderColor: colors.border, backgroundColor: colors.bg }]}
+                />
+              </View>
+            </ScrollView>
+
+            <View style={[styles.actionBar, { borderTopColor: colors.border }]}>
+              <TouchableOpacity style={[styles.actionBtn, { backgroundColor: colors.bgCard, borderColor: colors.border }]} onPress={() => setShowCreate(false)}>
+                <Text style={[styles.actionText, { color: colors.textPrimary }]}>CLOSE</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={[styles.actionBtn, { backgroundColor: colors.primary, borderColor: colors.primary }]} onPress={createInvoice} disabled={savingInvoice}>
+                <Text style={styles.actionPrimaryText}>{savingInvoice ? 'ISSUING...' : 'ISSUE INVOICE'}</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      <Modal visible={showBulkCreate} animationType="slide" transparent onRequestClose={() => setShowBulkCreate(false)}>
+        <View style={styles.modalBackdrop}>
+          <View style={[styles.modalCard, { backgroundColor: colors.bg, borderColor: colors.border }]}>
+            <View style={[styles.modalHeader, { borderBottomColor: colors.border }]}>
+              <View style={{ flex: 1 }}>
+                <Text style={[styles.modalEyebrow, { color: colors.primary }]}>BULK BILLING</Text>
+                <Text style={[styles.modalTitle, { color: colors.textPrimary }]}>Issue invoices in bulk</Text>
+                <Text style={[styles.modalSub, { color: colors.textMuted }]}>Create matching invoices for every active student in a school.</Text>
+              </View>
+              <TouchableOpacity onPress={() => setShowBulkCreate(false)} style={[styles.closeBtn, { borderColor: colors.border }]}>
+                <Text style={[styles.closeText, { color: colors.textSecondary }]}>X</Text>
+              </TouchableOpacity>
+            </View>
+
+            <ScrollView contentContainerStyle={styles.modalScroll}>
+              <View style={[styles.section, { borderColor: colors.border, backgroundColor: colors.bgCard }]}>
+                <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>SCHOOL</Text>
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filterRow}>
+                  {(isSchool ? schools.filter((school) => school.id === profile?.school_id) : schools).map((school) => (
+                    <TouchableOpacity
+                      key={school.id}
+                      onPress={() => setBulkForm((current) => ({ ...current, school_id: school.id }))}
+                      style={[
+                        styles.chip,
+                        { borderColor: colors.border, backgroundColor: colors.bg },
+                        bulkForm.school_id === school.id && { borderColor: colors.primary, backgroundColor: colors.primary + '10' },
+                      ]}
+                    >
+                      <Text style={[styles.chipText, { color: bulkForm.school_id === school.id ? colors.primary : colors.textMuted }]}>{school.name}</Text>
+                    </TouchableOpacity>
+                  ))}
+                </ScrollView>
+                {bulkForm.school_id ? (
+                  <Text style={[styles.sectionBody, { color: colors.textMuted }]}>
+                    {students.filter((student) => student.school_id === bulkForm.school_id).length} active students will be billed.
+                  </Text>
+                ) : null}
+
+                <Text style={[styles.formLabel, { color: colors.textMuted, marginTop: SPACING.md }]}>DUE DATE</Text>
+                <TextInput
+                  value={bulkForm.due_date}
+                  onChangeText={(value) => setBulkForm((current) => ({ ...current, due_date: value }))}
+                  placeholder="YYYY-MM-DD"
+                  placeholderTextColor={colors.textMuted}
+                  style={[styles.formInput, { color: colors.textPrimary, borderColor: colors.border, backgroundColor: colors.bg }]}
+                />
+
+                <Text style={[styles.formLabel, { color: colors.textMuted }]}>STATUS</Text>
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filterRow}>
+                  {(['draft', 'sent'] as InvoiceStatus[]).map((status) => (
+                    <TouchableOpacity
+                      key={status}
+                      onPress={() => setBulkForm((current) => ({ ...current, status }))}
+                      style={[
+                        styles.chip,
+                        { borderColor: colors.border, backgroundColor: colors.bg },
+                        bulkForm.status === status && { borderColor: colors.primary, backgroundColor: colors.primary + '10' },
+                      ]}
+                    >
+                      <Text style={[styles.chipText, { color: bulkForm.status === status ? colors.primary : colors.textMuted }]}>{status.toUpperCase()}</Text>
+                    </TouchableOpacity>
+                  ))}
+                </ScrollView>
+              </View>
+
+              <View style={[styles.section, { borderColor: colors.border, backgroundColor: colors.bgCard }]}>
+                <View style={styles.lineBuilderHeader}>
+                  <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>LINE ITEMS</Text>
+                  <TouchableOpacity onPress={addBulkItem}>
+                    <Text style={[styles.addLineText, { color: colors.primary }]}>+ Add line</Text>
+                  </TouchableOpacity>
+                </View>
+
+                {bulkForm.items.map((item, index) => (
+                  <View key={`bulk-item-${index}`} style={[styles.builderCard, { borderColor: colors.border }]}>
+                    <TextInput
+                      value={item.description}
+                      onChangeText={(value) => updateBulkItem(index, { description: value })}
+                      placeholder="Description"
+                      placeholderTextColor={colors.textMuted}
+                      style={[styles.formInput, { color: colors.textPrimary, borderColor: colors.border, backgroundColor: colors.bg }]}
+                    />
+                    <View style={styles.builderRow}>
+                      <TextInput
+                        value={String(item.quantity)}
+                        onChangeText={(value) => updateBulkItem(index, { quantity: Number(value || 0) })}
+                        placeholder="Qty"
+                        keyboardType="number-pad"
+                        placeholderTextColor={colors.textMuted}
+                        style={[styles.formInput, styles.builderHalf, { color: colors.textPrimary, borderColor: colors.border, backgroundColor: colors.bg }]}
+                      />
+                      <TextInput
+                        value={String(item.unit_price)}
+                        onChangeText={(value) => updateBulkItem(index, { unit_price: Number(value || 0) })}
+                        placeholder="Unit price"
+                        keyboardType="number-pad"
+                        placeholderTextColor={colors.textMuted}
+                        style={[styles.formInput, styles.builderHalf, { color: colors.textPrimary, borderColor: colors.border, backgroundColor: colors.bg }]}
+                      />
+                    </View>
+                    <View style={styles.builderFooter}>
+                      <Text style={[styles.lineTotalLabel, { color: colors.textMuted }]}>TOTAL</Text>
+                      <Text style={[styles.lineTotalValue, { color: colors.textPrimary }]}>{formatMoney(item.total, 'NGN')}</Text>
+                    </View>
+                    {bulkForm.items.length > 1 ? (
+                      <TouchableOpacity onPress={() => removeBulkItem(index)}>
+                        <Text style={[styles.removeLineText, { color: colors.error }]}>Remove line</Text>
+                      </TouchableOpacity>
+                    ) : null}
+                  </View>
+                ))}
+
+                <Text style={[styles.invoiceTotal, { color: colors.textPrimary }]}>
+                  PER STUDENT {formatMoney(bulkForm.items.reduce((sum, item) => sum + item.total, 0), 'NGN')}
+                </Text>
+              </View>
+
+              <View style={[styles.section, { borderColor: colors.border, backgroundColor: colors.bgCard }]}>
+                <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>NOTES</Text>
+                <TextInput
+                  value={bulkForm.notes}
+                  onChangeText={(value) => setBulkForm((current) => ({ ...current, notes: value }))}
+                  placeholder="Optional note added to every invoice"
+                  placeholderTextColor={colors.textMuted}
+                  multiline
+                  style={[styles.formInput, styles.formArea, { color: colors.textPrimary, borderColor: colors.border, backgroundColor: colors.bg }]}
+                />
+              </View>
+            </ScrollView>
+
+            <View style={[styles.actionBar, { borderTopColor: colors.border }]}>
+              <TouchableOpacity style={[styles.actionBtn, { backgroundColor: colors.bgCard, borderColor: colors.border }]} onPress={() => setShowBulkCreate(false)}>
+                <Text style={[styles.actionText, { color: colors.textPrimary }]}>CLOSE</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={[styles.actionBtn, { backgroundColor: colors.primary, borderColor: colors.primary }]} onPress={createBulkInvoices} disabled={savingInvoice}>
+                <Text style={styles.actionPrimaryText}>{savingInvoice ? 'ISSUING...' : 'ISSUE BULK INVOICES'}</Text>
+              </TouchableOpacity>
+            </View>
           </View>
         </View>
       </Modal>
@@ -567,6 +1134,10 @@ export default function InvoicesScreen({ navigation }: any) {
 
 const getStyles = (colors: any) => StyleSheet.create({
   safe: { flex: 1, backgroundColor: colors.bg },
+  createRowGroup: { paddingHorizontal: SPACING.xl, marginBottom: SPACING.md, gap: SPACING.sm },
+  createRow: { paddingHorizontal: SPACING.xl, marginBottom: SPACING.md },
+  createBtn: { minHeight: 46, borderWidth: 1, borderRadius: RADIUS.sm, alignItems: 'center', justifyContent: 'center' },
+  createBtnText: { color: '#fff', fontFamily: FONT_FAMILY.bodyBold, fontSize: 10, letterSpacing: 1.2 },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
   statsRow: { flexDirection: 'row', gap: SPACING.sm, paddingHorizontal: SPACING.xl, marginBottom: SPACING.md },
   statCard: { flex: 1, borderWidth: 1, borderRadius: RADIUS.sm, padding: SPACING.md },
@@ -615,6 +1186,19 @@ const getStyles = (colors: any) => StyleSheet.create({
   detailAmount: { fontFamily: FONT_FAMILY.display, fontSize: 28, marginBottom: 8 },
   detailMeta: { fontFamily: FONT_FAMILY.body, fontSize: 12, marginTop: 2 },
   section: { borderWidth: 1, borderRadius: RADIUS.sm, padding: SPACING.lg },
+  formLabel: { fontFamily: FONT_FAMILY.bodyBold, fontSize: 10, letterSpacing: LETTER_SPACING.wide, marginTop: SPACING.md, marginBottom: 8 },
+  formInput: { borderWidth: 1, borderRadius: RADIUS.sm, paddingHorizontal: SPACING.md, paddingVertical: 12, fontFamily: FONT_FAMILY.body, fontSize: 13 },
+  formArea: { minHeight: 86, textAlignVertical: 'top' },
+  lineBuilderHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: SPACING.md },
+  addLineText: { fontFamily: FONT_FAMILY.bodyBold, fontSize: 10, letterSpacing: LETTER_SPACING.wide },
+  builderCard: { borderWidth: 1, borderRadius: RADIUS.sm, padding: SPACING.md, gap: SPACING.sm, marginBottom: SPACING.sm },
+  builderRow: { flexDirection: 'row', gap: SPACING.sm },
+  builderHalf: { flex: 1 },
+  builderFooter: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  lineTotalLabel: { fontFamily: FONT_FAMILY.mono, fontSize: 10, letterSpacing: 1 },
+  lineTotalValue: { fontFamily: FONT_FAMILY.display, fontSize: 14 },
+  removeLineText: { fontFamily: FONT_FAMILY.bodyBold, fontSize: 10, letterSpacing: LETTER_SPACING.wide },
+  invoiceTotal: { marginTop: SPACING.sm, fontFamily: FONT_FAMILY.display, fontSize: FONT_SIZE.base, textAlign: 'right' },
   sectionTitle: { fontFamily: FONT_FAMILY.bodyBold, fontSize: 12, letterSpacing: LETTER_SPACING.wide, marginBottom: SPACING.md },
   sectionBody: { fontFamily: FONT_FAMILY.body, fontSize: 12, lineHeight: 20 },
   lineItem: { flexDirection: 'row', alignItems: 'center', gap: SPACING.md, paddingVertical: SPACING.sm, borderBottomWidth: 1 },

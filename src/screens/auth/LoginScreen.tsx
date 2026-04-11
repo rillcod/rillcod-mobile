@@ -1,11 +1,10 @@
 import React, { useState } from 'react';
 import {
   View, Text, TouchableOpacity, StyleSheet,
-  KeyboardAvoidingView, Platform, ScrollView, Alert, Image,
+  KeyboardAvoidingView, Platform, ScrollView, Image,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
-import { MotiView, MotiText } from 'moti';
-import { BlurView } from 'expo-blur';
+import { MotiView } from 'moti';
 import { StatusBar } from 'expo-status-bar';
 import { useAuth } from '../../contexts/AuthContext';
 import { PremiumButton } from '../../components/ui/PremiumButton';
@@ -17,8 +16,11 @@ import { SPACING, RADIUS, SHADOW } from '../../constants/spacing';
 import { t } from '../../i18n';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { RootStackParamList } from '../../navigation/types';
+import { ROUTES } from '../../navigation/routes';
 
 type Props = { navigation: NativeStackNavigationProp<RootStackParamList, 'Login'> };
+
+const PLATFORM_PILLS = ['STEM Robotics', 'Digital Learning', 'School LMS'] as const;
 
 export default function LoginScreen({ navigation }: Props) {
   const { signIn, loading: authLoading } = useAuth();
@@ -27,10 +29,20 @@ export default function LoginScreen({ navigation }: Props) {
   const [loading, setLoading] = useState(false);
   const [errors, setErrors] = useState<{ email?: string; password?: string }>({});
 
+  const updateEmail = (value: string) => {
+    setEmail(value);
+    setErrors(prev => ({ ...prev, email: undefined, password: undefined }));
+  };
+
+  const updatePassword = (value: string) => {
+    setPassword(value);
+    setErrors(prev => ({ ...prev, password: undefined }));
+  };
+
   const validate = () => {
     const e: typeof errors = {};
-    if (!email.trim()) e.email = 'Email is required';
-    else if (!/\S+@\S+\.\S+/.test(email)) e.email = 'Enter a valid email';
+    if (!email.trim()) e.email = 'Email address is required';
+    else if (!/\S+@\S+\.\S+/.test(email)) e.email = 'Enter a valid email address';
     if (!password) e.password = 'Password is required';
     setErrors(e);
     return !Object.keys(e).length;
@@ -42,18 +54,22 @@ export default function LoginScreen({ navigation }: Props) {
     const { error } = await signIn(email.trim().toLowerCase(), password);
     setLoading(false);
     if (error) {
-      Alert.alert('Sign In Failed', error.includes('Invalid') ? 'Incorrect email or password.' : error);
+      setErrors({ password: error });
     }
   };
 
   return (
     <View style={styles.container}>
-      <StatusBar style="light" />
+      <StatusBar style="dark" />
       <OfflineBanner />
 
-      {/* Ambient glows */}
-      <View style={[styles.glow1]} />
-      <View style={[styles.glow2]} />
+      {/* Top accent bar */}
+      <LinearGradient
+        colors={COLORS.gradPrimary}
+        start={{ x: 0, y: 0 }}
+        end={{ x: 1, y: 0 }}
+        style={styles.accentBar}
+      />
 
       <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={{ flex: 1 }}>
         <ScrollView
@@ -61,59 +77,80 @@ export default function LoginScreen({ navigation }: Props) {
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
         >
-          {/* Brand */}
+
+          {/* Header — logo + name + platform pills */}
           <MotiView
-            from={{ opacity: 0, translateY: -20 }}
+            from={{ opacity: 0, translateY: -16 }}
             animate={{ opacity: 1, translateY: 0 }}
-            transition={{ type: 'spring', delay: 100 }}
-            style={styles.brand}
+            transition={{ type: 'spring', delay: 80, damping: 18 }}
+            style={styles.header}
           >
-            <View style={styles.logoWrap}>
-              <Image source={require('../../../assets/rillcod-icon.png')} style={styles.logo} resizeMode="cover" />
+            <View style={styles.logoRow}>
+              <View style={styles.logoWrap}>
+                <Image
+                  source={require('../../../assets/rillcod-icon.png')}
+                  style={styles.logo}
+                  resizeMode="contain"
+                />
+              </View>
+              <View style={styles.brandText}>
+                <Text style={styles.brandName}>{t('app.loginBrandName')}</Text>
+                <Text style={styles.brandTagline}>{t('app.tagline')}</Text>
+              </View>
             </View>
-            <MotiText style={styles.brandName}>{t('app.name')}</MotiText>
-            <Text style={styles.brandTagline}>{t('app.tagline')}</Text>
+
+            <View style={styles.pillRow}>
+              {PLATFORM_PILLS.map((pill) => (
+                <View key={pill} style={styles.pill}>
+                  <Text style={styles.pillText}>{pill}</Text>
+                </View>
+              ))}
+            </View>
           </MotiView>
 
-          {/* Card */}
+          {/* Sign-in card */}
           <MotiView
-            from={{ opacity: 0, translateY: 30 }}
+            from={{ opacity: 0, translateY: 24 }}
             animate={{ opacity: 1, translateY: 0 }}
-            transition={{ type: 'spring', delay: 250, damping: 20 }}
+            transition={{ type: 'spring', delay: 200, damping: 20 }}
             style={styles.card}
           >
-            <BlurView intensity={20} tint="dark" style={StyleSheet.absoluteFill} />
-            <View style={styles.cardInner}>
+            <View style={styles.cardHeader}>
+              <Text style={styles.cardTitle}>Sign In to Your Portal</Text>
+              <Text style={styles.cardSub}>Access your dashboard with your assigned credentials</Text>
+            </View>
 
-              <Text style={styles.cardTitle}>{t('auth.welcomeBack')}</Text>
-              <Text style={styles.cardSub}>{t('auth.signInPortal')}</Text>
+            <View style={styles.cardDivider} />
 
-              <View style={styles.divider} />
-
+            <View style={styles.cardBody}>
               <PremiumInput
-                label={t('fields.email')}
-                icon="✉️"
+                label="Email Address"
                 value={email}
-                onChangeText={setEmail}
-                placeholder="yourname@email.com"
+                onChangeText={updateEmail}
+                placeholder="name@institution.com"
                 keyboardType="email-address"
                 autoCapitalize="none"
                 autoCorrect={false}
+                autoComplete="email"
                 error={errors.email}
               />
 
               <PremiumInput
-                label={t('fields.password')}
-                icon="🔐"
+                label="Password"
                 value={password}
-                onChangeText={setPassword}
-                placeholder="••••••••"
+                onChangeText={updatePassword}
+                placeholder="Enter your password"
                 secure
+                autoComplete="password"
                 error={errors.password}
               />
 
-              <TouchableOpacity style={styles.forgotLink} onPress={() => navigation.navigate('ForgotPassword')}>
-                <Text style={styles.forgotText}>{t('auth.forgotPassword')}</Text>
+              <TouchableOpacity
+                style={styles.forgotLink}
+                onPress={() => navigation.navigate(ROUTES.ForgotPassword)}
+                activeOpacity={0.7}
+              >
+                <Text style={styles.forgotText}>Forgot password?</Text>
               </TouchableOpacity>
 
               <PremiumButton
@@ -122,69 +159,82 @@ export default function LoginScreen({ navigation }: Props) {
                 loading={loading || authLoading}
                 disabled={loading || authLoading}
               />
-
-              <View style={styles.orRow}>
-                <View style={styles.orLine} />
-                <Text style={styles.orText}>{t('auth.or')}</Text>
-                <View style={styles.orLine} />
-              </View>
-
-              <TouchableOpacity
-                style={styles.registerBtn}
-                onPress={() => navigation.navigate('Register')}
-                activeOpacity={0.85}
-              >
-                <LinearGradient
-                  colors={['rgba(255,255,255,0.05)', 'rgba(255,255,255,0.02)']}
-                  style={styles.registerGrad}
-                >
-                  <Text style={styles.registerText}>{t('auth.createAccount')}</Text>
-                  <Text style={styles.registerArrow}>→</Text>
-                </LinearGradient>
-              </TouchableOpacity>
-
-              {/* Public registration links */}
-              <View style={styles.publicLinksWrap}>
-                <Text style={styles.publicLinksTitle}>New to Rillcod?</Text>
-                <View style={styles.publicLinksRow}>
-                  <TouchableOpacity
-                    style={styles.publicLinkBtn}
-                    onPress={() => (navigation as any).navigate('PublicStudentRegistration')}
-                    activeOpacity={0.8}
-                  >
-                    <Text style={styles.publicLinkEmoji}>🎓</Text>
-                    <Text style={styles.publicLinkLabel}>Student{'\n'}Enrolment</Text>
-                  </TouchableOpacity>
-                  <View style={styles.publicLinkSep} />
-                  <TouchableOpacity
-                    style={styles.publicLinkBtn}
-                    onPress={() => (navigation as any).navigate('PublicSchoolRegistration')}
-                    activeOpacity={0.8}
-                  >
-                    <Text style={styles.publicLinkEmoji}>🏫</Text>
-                    <Text style={styles.publicLinkLabel}>School{'\n'}Partnership</Text>
-                  </TouchableOpacity>
-                </View>
-              </View>
-
             </View>
           </MotiView>
 
-          {/* Trust badges */}
+          {/* Registration section */}
           <MotiView
             from={{ opacity: 0 }}
             animate={{ opacity: 1 }}
-            transition={{ type: 'timing', delay: 600 }}
-            style={styles.trustRow}
+            transition={{ type: 'timing', delay: 380, duration: 400 }}
+            style={styles.registerSection}
           >
-            {['🔒 Secure Login', '🌍 Global Platform', '🏆 Award-Winning'].map((b, i) => (
-              <View key={i} style={styles.trustBadge}>
-                <Text style={styles.trustText}>{b}</Text>
+            <View style={styles.registerDividerRow}>
+              <View style={styles.registerLine} />
+              <Text style={styles.registerDividerText}>New to Rillcod?</Text>
+              <View style={styles.registerLine} />
+            </View>
+
+            <View style={styles.registerCards}>
+              <TouchableOpacity
+                style={styles.regCard}
+                onPress={() => navigation.navigate(ROUTES.PublicStudentRegistration)}
+                activeOpacity={0.82}
+              >
+                <LinearGradient
+                  colors={[COLORS.student + '18', COLORS.student + '08']}
+                  style={styles.regCardGrad}
+                >
+                  <View style={[styles.regCardIcon, { backgroundColor: COLORS.student + '20' }]}>
+                    <Text style={[styles.regCardIconText, { color: COLORS.student }]}>S</Text>
+                  </View>
+                  <Text style={[styles.regCardLabel, { color: COLORS.student }]}>Student Enrolment</Text>
+                  <Text style={styles.regCardDesc}>Register as a learner</Text>
+                </LinearGradient>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.regCard}
+                onPress={() => navigation.navigate(ROUTES.PublicSchoolRegistration)}
+                activeOpacity={0.82}
+              >
+                <LinearGradient
+                  colors={[COLORS.school + '18', COLORS.school + '08']}
+                  style={styles.regCardGrad}
+                >
+                  <View style={[styles.regCardIcon, { backgroundColor: COLORS.school + '20' }]}>
+                    <Text style={[styles.regCardIconText, { color: COLORS.school }]}>P</Text>
+                  </View>
+                  <Text style={[styles.regCardLabel, { color: COLORS.school }]}>School Partnership</Text>
+                  <Text style={styles.regCardDesc}>Partner with Rillcod</Text>
+                </LinearGradient>
+              </TouchableOpacity>
+            </View>
+          </MotiView>
+
+          {/* Trust strip */}
+          <MotiView
+            from={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            transition={{ type: 'timing', delay: 520, duration: 400 }}
+            style={styles.trustStrip}
+          >
+            {[
+              { label: 'SSL Secured', detail: '256-bit encryption' },
+              { label: 'ISO Compliant', detail: 'Data privacy' },
+              { label: 'Always-On', detail: '99.9% uptime' },
+            ].map((item) => (
+              <View key={item.label} style={styles.trustItem}>
+                <View style={styles.trustDot} />
+                <View>
+                  <Text style={styles.trustLabel}>{item.label}</Text>
+                  <Text style={styles.trustDetail}>{item.detail}</Text>
+                </View>
               </View>
             ))}
           </MotiView>
 
-          <Text style={styles.footer}>© 2026 Rillcod Technologies Ltd.</Text>
+          <Text style={styles.footer}>© 2026 Rillcod Technologies Ltd. · All rights reserved.</Text>
         </ScrollView>
       </KeyboardAvoidingView>
     </View>
@@ -192,174 +242,232 @@ export default function LoginScreen({ navigation }: Props) {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: COLORS.bg },
-  glow1: {
-    position: 'absolute',
-    top: -80,
-    right: -60,
-    width: 280,
-    height: 280,
-    borderRadius: 140,
-    backgroundColor: COLORS.primaryGlow,
-    opacity: 0.6,
+  container: {
+    flex: 1,
+    backgroundColor: COLORS.bg,
   },
-  glow2: {
-    position: 'absolute',
-    bottom: 100,
-    left: -80,
-    width: 200,
-    height: 200,
-    borderRadius: 100,
-    backgroundColor: 'rgba(91,33,182,0.1)',
-    opacity: 0.8,
+  accentBar: {
+    height: 4,
+    width: '100%',
   },
-  scroll: { flexGrow: 1, padding: SPACING.xl, paddingTop: Platform.OS === 'ios' ? 56 : 40 },
-  brand: { alignItems: 'center', marginBottom: SPACING.xl },
+  scroll: {
+    flexGrow: 1,
+    paddingHorizontal: SPACING['2xl'],
+    paddingTop: Platform.OS === 'ios' ? 44 : 32,
+    paddingBottom: SPACING['3xl'],
+  },
+
+  /* ── Header ── */
+  header: {
+    marginBottom: SPACING['2xl'],
+  },
+  logoRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: SPACING.base,
+    marginBottom: SPACING.md,
+  },
   logoWrap: {
-    width: 80,
-    height: 80,
-    borderRadius: RADIUS.xl,
+    width: 56,
+    height: 56,
+    borderRadius: RADIUS.lg,
     overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: COLORS.border,
     alignItems: 'center',
     justifyContent: 'center',
-    marginBottom: SPACING.md,
-    ...SHADOW.glow(COLORS.primaryGlow),
+    backgroundColor: COLORS.bgCard,
+    padding: 4,
+    ...SHADOW.sm,
   },
-  logo: { width: 80, height: 80 },
+  logo: {
+    width: 48,
+    height: 48,
+  },
+  brandText: {
+    flex: 1,
+  },
   brandName: {
     fontFamily: FONT_FAMILY.display,
-    fontSize: FONT_SIZE['2xl'],
+    fontSize: FONT_SIZE.xl,
     color: COLORS.textPrimary,
-    letterSpacing: LETTER_SPACING.tight,
+    letterSpacing: LETTER_SPACING.wide,
+    textTransform: 'uppercase',
   },
   brandTagline: {
     fontFamily: FONT_FAMILY.body,
     fontSize: FONT_SIZE.xs,
     color: COLORS.textMuted,
     textTransform: 'uppercase',
-    letterSpacing: LETTER_SPACING.ultra,
-    marginTop: 4,
+    letterSpacing: LETTER_SPACING.wider,
+    marginTop: 2,
   },
+  pillRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: SPACING.xs,
+  },
+  pill: {
+    backgroundColor: COLORS.primaryPale,
+    borderWidth: 1,
+    borderColor: COLORS.primary + '40',
+    borderRadius: RADIUS.full,
+    paddingHorizontal: SPACING.md,
+    paddingVertical: 4,
+  },
+  pillText: {
+    fontFamily: FONT_FAMILY.bodySemi,
+    fontSize: FONT_SIZE.xs,
+    color: COLORS.primary,
+    letterSpacing: LETTER_SPACING.wide,
+  },
+
+  /* ── Sign-in card ── */
   card: {
-    borderRadius: RADIUS['2xl'],
-    overflow: 'hidden',
+    backgroundColor: COLORS.bgCard,
+    borderRadius: RADIUS.xl,
     borderWidth: 1,
     borderColor: COLORS.border,
-    ...SHADOW.lg,
+    marginBottom: SPACING['2xl'],
+    ...SHADOW.md,
   },
-  cardInner: { padding: SPACING.lg },
+  cardHeader: {
+    padding: SPACING['2xl'],
+    paddingBottom: SPACING.lg,
+  },
   cardTitle: {
     fontFamily: FONT_FAMILY.display,
     fontSize: FONT_SIZE['2xl'],
     color: COLORS.textPrimary,
-    marginBottom: 4,
+    marginBottom: 6,
   },
   cardSub: {
     fontFamily: FONT_FAMILY.body,
-    fontSize: FONT_SIZE.base,
+    fontSize: FONT_SIZE.sm,
     color: COLORS.textSecondary,
-    marginBottom: SPACING.lg,
+    lineHeight: FONT_SIZE.sm * 1.6,
   },
-  divider: {
+  cardDivider: {
     height: 1,
-    backgroundColor: COLORS.border,
-    marginBottom: SPACING.lg,
+    backgroundColor: COLORS.borderLight,
+    marginHorizontal: SPACING['2xl'],
   },
-  forgotLink: { alignSelf: 'flex-end', marginTop: -6, marginBottom: SPACING.lg },
+  cardBody: {
+    padding: SPACING['2xl'],
+    paddingTop: SPACING.xl,
+  },
+  forgotLink: {
+    alignSelf: 'flex-end',
+    marginTop: -8,
+    marginBottom: SPACING.xl,
+    paddingVertical: 4,
+  },
   forgotText: {
     fontFamily: FONT_FAMILY.bodySemi,
     fontSize: FONT_SIZE.sm,
-    color: COLORS.primaryLight,
+    color: COLORS.primary,
   },
-  orRow: { flexDirection: 'row', alignItems: 'center', gap: 10, marginVertical: SPACING.lg },
-  orLine: { flex: 1, height: 1, backgroundColor: COLORS.border },
-  orText: {
+
+  /* ── Registration section ── */
+  registerSection: {
+    marginBottom: SPACING['2xl'],
+  },
+  registerDividerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: SPACING.md,
+    marginBottom: SPACING.lg,
+  },
+  registerLine: {
+    flex: 1,
+    height: 1,
+    backgroundColor: COLORS.border,
+  },
+  registerDividerText: {
     fontFamily: FONT_FAMILY.bodySemi,
     fontSize: FONT_SIZE.xs,
     color: COLORS.textMuted,
     textTransform: 'uppercase',
     letterSpacing: LETTER_SPACING.wider,
   },
-  registerBtn: { borderRadius: RADIUS.md, overflow: 'hidden', borderWidth: 1, borderColor: COLORS.borderLight },
-  registerGrad: {
+  registerCards: {
     flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: SPACING.base,
-    gap: 8,
+    gap: SPACING.md,
   },
-  registerText: {
-    fontFamily: FONT_FAMILY.bodySemi,
-    fontSize: FONT_SIZE.base,
-    color: COLORS.textPrimary,
-  },
-  registerArrow: { fontSize: FONT_SIZE.base, color: COLORS.primaryLight },
-  trustRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    justifyContent: 'center',
-    gap: 8,
-    marginTop: SPACING.lg,
-  },
-  trustBadge: {
-    backgroundColor: COLORS.bgCard,
+  regCard: {
+    flex: 1,
+    borderRadius: RADIUS.lg,
+    overflow: 'hidden',
     borderWidth: 1,
     borderColor: COLORS.border,
-    borderRadius: RADIUS.full,
-    paddingHorizontal: 10,
-    paddingVertical: 5,
   },
-  trustText: {
+  regCardGrad: {
+    padding: SPACING.base,
+    alignItems: 'flex-start',
+    gap: SPACING.xs,
+  },
+  regCardIcon: {
+    width: 36,
+    height: 36,
+    borderRadius: RADIUS.sm,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 4,
+  },
+  regCardIconText: {
+    fontFamily: FONT_FAMILY.display,
+    fontSize: FONT_SIZE.md,
+  },
+  regCardLabel: {
+    fontFamily: FONT_FAMILY.bodySemi,
+    fontSize: FONT_SIZE.sm,
+    lineHeight: FONT_SIZE.sm * 1.4,
+  },
+  regCardDesc: {
     fontFamily: FONT_FAMILY.body,
     fontSize: FONT_SIZE.xs,
     color: COLORS.textMuted,
   },
+
+  /* ── Trust strip ── */
+  trustStrip: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    backgroundColor: COLORS.bgCard,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    borderRadius: RADIUS.lg,
+    padding: SPACING.base,
+    marginBottom: SPACING.xl,
+  },
+  trustItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: SPACING.xs,
+    flex: 1,
+  },
+  trustDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: COLORS.success,
+  },
+  trustLabel: {
+    fontFamily: FONT_FAMILY.bodySemi,
+    fontSize: 10,
+    color: COLORS.textSecondary,
+  },
+  trustDetail: {
+    fontFamily: FONT_FAMILY.body,
+    fontSize: 9,
+    color: COLORS.textMuted,
+  },
+
   footer: {
     fontFamily: FONT_FAMILY.body,
     fontSize: 10,
     color: COLORS.textMuted,
     textAlign: 'center',
-    marginTop: SPACING.lg,
-    opacity: 0.5,
-  },
-  publicLinksWrap: {
-    marginTop: SPACING.base,
-    backgroundColor: COLORS.bgCard,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-    borderRadius: RADIUS.lg,
-    padding: SPACING.md,
-  },
-  publicLinksTitle: {
-    fontFamily: FONT_FAMILY.bodySemi,
-    fontSize: FONT_SIZE.xs,
-    color: COLORS.textMuted,
-    textTransform: 'uppercase',
-    letterSpacing: 1,
-    textAlign: 'center',
-    marginBottom: SPACING.sm,
-  },
-  publicLinksRow: {
-    flexDirection: 'row',
-    alignItems: 'stretch',
-  },
-  publicLinkBtn: {
-    flex: 1,
-    alignItems: 'center',
-    gap: 6,
-    paddingVertical: SPACING.sm,
-  },
-  publicLinkEmoji: { fontSize: 28 },
-  publicLinkLabel: {
-    fontFamily: FONT_FAMILY.bodySemi,
-    fontSize: FONT_SIZE.xs,
-    color: COLORS.textSecondary,
-    textAlign: 'center',
-    lineHeight: 16,
-  },
-  publicLinkSep: {
-    width: 1,
-    backgroundColor: COLORS.border,
-    marginVertical: 4,
+    opacity: 0.6,
   },
 });

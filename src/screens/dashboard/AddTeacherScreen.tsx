@@ -1,4 +1,4 @@
-﻿import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity,
   TextInput, ActivityIndicator, Alert, Platform,
@@ -7,8 +7,10 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { MotiView } from 'moti';
 import { useAuth } from '../../contexts/AuthContext';
-import { supabase } from '../../lib/supabase';
 import { ScreenHeader } from '../../components/ui/ScreenHeader';
+import { authService } from '../../services/auth.service';
+import { schoolService } from '../../services/school.service';
+import { teacherService } from '../../services/teacher.service';
 import { COLORS } from '../../constants/colors';
 import { FONT_FAMILY, FONT_SIZE, LETTER_SPACING } from '../../constants/typography';
 import { SPACING, RADIUS } from '../../constants/spacing';
@@ -65,70 +67,63 @@ export default function AddTeacherScreen({ navigation, route }: any) {
   const [saving, setSaving] = useState(false);
   const [loading, setLoading] = useState(!!teacherId);
   const [credentials, setCredentials] = useState<Credentials | null>(null);
-  const [selectedSchoolId, setSelectedSchoolId] = useState(profile?.school_id ?? '');
+  // Multi-school: set of selected school IDs + one primary
+  const [selectedSchoolIds, setSelectedSchoolIds] = useState<string[]>(
+    profile?.school_id ? [profile.school_id] : []
+  );
+  const [primarySchoolId, setPrimarySchoolId] = useState<string>(profile?.school_id ?? '');
 
   const [form, setForm] = useState({
     full_name: '',
     email: '',
     phone: '',
     bio: '',
-    school_name: profile?.school_name ?? '',
     password: genPassword(),
   });
 
   useEffect(() => {
     if (!isAdmin) return;
-    supabase
-      .from('schools')
-      .select('id, name')
-      .eq('status', 'approved')
-      .limit(100)
-      .then(({ data }) => {
-        if (data) setSchools(data as School[]);
-      });
+    void schoolService
+      .listApprovedSchoolOptions(100)
+      .then((data) => setSchools(data as School[]))
+      .catch(() => setSchools([]));
   }, [isAdmin]);
 
   useEffect(() => {
     if (!teacherId) return;
 
     const loadTeacher = async () => {
-      const [{ data: teacher }, { data: assignments }] = await Promise.all([
-        supabase
-          .from('portal_users')
-          .select('id, full_name, email, phone, bio, school_id, school_name')
-          .eq('id', teacherId)
-          .single(),
-        supabase
-          .from('teacher_schools')
-          .select('school_id, schools!teacher_schools_school_id_fkey(id, name)')
-          .eq('teacher_id', teacherId)
-          .limit(1),
-      ]);
+      let teacher: any;
+      let assignments: any[] = [];
+      try {
+        const loaded = await teacherService.loadTeacherEditorState(teacherId);
+        teacher = loaded.teacher;
+        assignments = loaded.assignments as any[];
+      } catch {
+        setLoading(false);
+        return;
+      }
 
       if (teacher) {
-        const assignedSchool = assignments?.[0] as any;
-        const assignmentSchool = Array.isArray(assignedSchool?.schools) ? assignedSchool?.schools?.[0] : assignedSchool?.schools;
         setForm({
           full_name: teacher.full_name || '',
           email: teacher.email || '',
           phone: teacher.phone || '',
           bio: teacher.bio || '',
-          school_name: assignmentSchool?.name || teacher.school_name || '',
           password: '',
         });
-        setSelectedSchoolId(assignmentSchool?.id || teacher.school_id || '');
+        // Load ALL assigned schools (multi-school support)
+        const allIds = assignments.map((a: any) => a.school_id).filter(Boolean);
+        const primaryRow = assignments.find((a: any) => a.is_primary);
+        const primaryId = primaryRow?.school_id || teacher.school_id || allIds[0] || '';
+        setSelectedSchoolIds(allIds.length > 0 ? allIds : (teacher.school_id ? [teacher.school_id] : []));
+        setPrimarySchoolId(primaryId);
       }
       setLoading(false);
     };
 
     loadTeacher();
   }, [teacherId]);
-
-  useEffect(() => {
-    if (!isAdmin || !form.school_name) return;
-    const match = schools.find((school) => school.name === form.school_name);
-    if (match) setSelectedSchoolId(match.id);
-  }, [form.school_name, isAdmin, schools]);
 
   const summary = useMemo(() => {
     if (teacherId) return 'Update teacher profile and deployment.';
@@ -137,91 +132,91 @@ export default function AddTeacherScreen({ navigation, route }: any) {
 
   const set = (key: string) => (val: string) => setForm((current) => ({ ...current, [key]: val }));
 
-  const saveAssignment = async (targetTeacherId: string, schoolId: string | null) => {
-    await supabase.from('teacher_schools').delete().eq('teacher_id', targetTeacherId);
-
-    if (!schoolId) return;
-
-    const school = schools.find((item) => item.id === schoolId);
-    await supabase.from('teacher_schools').insert({
-      teacher_id: targetTeacherId,
-      school_id: schoolId,
-      assigned_by: profile?.id ?? null,
-      is_primary: true,
+  const saveAssignments = async (targetTeacherId: string, schoolIds: string[], primaryId: string) => {
+    if (schoolIds.length === 0) return;
+    await teacherService.replaceTeacherSchoolAssignments({
+      teacherId: targetTeacherId,
+      schoolIds,
+      primarySchoolId: primaryId,
+      assignedBy: profile?.id ?? null,
     });
-
-    await supabase.from('portal_users').update({
-      school_id: schoolId,
-      school_name: school?.name ?? (form.school_name.trim() || null),
-    }).eq('id', targetTeacherId);
   };
 
   const submit = async () => {
-    if (!form.full_name.trim()) { Alert.alert('Full name is required'); return; }
-    if (!form.email.trim()) { Alert.alert('Email is required'); return; }
-    if (isAdmin && form.school_name.trim() && !selectedSchoolId) { Alert.alert('Choose a school from the approved list'); return; }
+    if (!form.full_name.trim()) { Alert.alert('Validation', 'Full name is required'); return; }
+    if (!form.email.trim()) { Alert.alert('Validation', 'Email address is required'); return; }
+    if (isAdmin && selectedSchoolIds.length === 0) {
+      Alert.alert('Validation', 'Assign the teacher to at least one school');
+      return;
+    }
 
     setSaving(true);
     const email = form.email.trim().toLowerCase();
-    const resolvedSchoolId = isAdmin ? (selectedSchoolId || null) : (profile?.school_id || null);
-    const resolvedSchoolName = isAdmin ? (form.school_name.trim() || null) : (profile?.school_name || null);
+
+    // For non-admin: derive schools from own profile
+    const resolvedSchoolIds = isAdmin
+      ? selectedSchoolIds
+      : (profile?.school_id ? [profile.school_id] : []);
+    const resolvedPrimaryId = isAdmin
+      ? (primarySchoolId || resolvedSchoolIds[0] || '')
+      : (profile?.school_id ?? '');
 
     if (teacherId) {
-      const { error } = await supabase.from('portal_users').update({
-        full_name: form.full_name.trim(),
-        email,
-        phone: form.phone.trim() || null,
-        bio: form.bio.trim() || null,
-        school_id: resolvedSchoolId,
-        school_name: resolvedSchoolName,
-      }).eq('id', teacherId);
-
-      if (error) {
-        Alert.alert('Error', error.message);
+      try {
+        await teacherService.updateTeacher(teacherId, {
+          full_name: form.full_name.trim(),
+          email,
+          phone: form.phone.trim() || null,
+          bio: form.bio.trim() || null,
+        });
+        await saveAssignments(teacherId, resolvedSchoolIds, resolvedPrimaryId);
+      } catch (error: any) {
+        Alert.alert('Error', error?.message ?? 'Could not update teacher');
         setSaving(false);
         return;
       }
-
-      await saveAssignment(teacherId, resolvedSchoolId);
       Alert.alert('Teacher Updated', 'Changes saved successfully.', [{ text: 'OK', onPress: () => navigation.goBack() }]);
       setSaving(false);
       return;
     }
 
     const password = form.password || genPassword();
-    const { data: signUpData, error: signUpError } = await supabase.auth.signUp({
-      email,
-      password,
-      options: { data: { full_name: form.full_name.trim(), role: 'teacher' } },
-    });
-
-    if (signUpError && !signUpError.message.toLowerCase().includes('already registered')) {
-      Alert.alert('Error', signUpError.message);
+    let userId: string | undefined;
+    try {
+      const signUp = await authService.signUpTeacherAccount({
+        email,
+        password,
+        fullName: form.full_name.trim(),
+      });
+      userId = signUp.userId;
+    } catch (error: any) {
+      Alert.alert('Error', error?.message ?? 'Could not register account');
       setSaving(false);
       return;
     }
 
-    const userId = signUpData?.user?.id;
-    const { data: teacherRecord, error } = await supabase.from('portal_users').upsert({
-      ...(userId ? { id: userId } : {}),
-      email,
-      full_name: form.full_name.trim(),
-      role: 'teacher',
-      phone: form.phone.trim() || null,
-      bio: form.bio.trim() || null,
-      school_id: resolvedSchoolId,
-      school_name: resolvedSchoolName,
-      is_active: true,
-      is_deleted: false,
-    }, { onConflict: 'email' }).select('id').single();
-
-    if (error || !teacherRecord) {
+    let newTeacherId: string;
+    try {
+      newTeacherId = await teacherService.upsertTeacherPortalAfterSignUp({
+        userId,
+        email,
+        full_name: form.full_name.trim(),
+        phone: form.phone.trim() || null,
+        bio: form.bio.trim() || null,
+      });
+    } catch (error: any) {
       Alert.alert('Error', error?.message ?? 'Failed to create teacher');
       setSaving(false);
       return;
     }
 
-    await saveAssignment(teacherRecord.id, resolvedSchoolId);
+    try {
+      await saveAssignments(newTeacherId, resolvedSchoolIds, resolvedPrimaryId);
+    } catch (error: any) {
+      Alert.alert('Error', error?.message ?? 'Could not assign schools');
+      setSaving(false);
+      return;
+    }
     setSaving(false);
     setCredentials({ email, password, name: form.full_name.trim() });
   };
@@ -273,7 +268,7 @@ export default function AddTeacherScreen({ navigation, route }: any) {
             <LinearGradient colors={[COLORS.info + '18', 'transparent']} style={StyleSheet.absoluteFill} />
             <Text style={styles.heroEyebrow}>Teacher Workspace</Text>
             <Text style={styles.heroTitle}>{summary}</Text>
-            <Text style={styles.heroMeta}>{resolvedSchoolNameText(isAdmin, form.school_name, profile?.school_name)}</Text>
+            <Text style={styles.heroMeta}>{resolvedSchoolNameText(isAdmin, selectedSchoolIds, schools, profile?.school_name)}</Text>
           </View>
 
           <View style={styles.section}>
@@ -292,24 +287,63 @@ export default function AddTeacherScreen({ navigation, route }: any) {
             <Text style={styles.sectionTitle}>School Deployment</Text>
             {isAdmin ? (
               <View style={field.wrap}>
-                <Text style={field.label}>Assign to School</Text>
-                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.pills}>
-                  {schools.map((school) => (
+                <View style={styles.schoolLabelRow}>
+                  <Text style={field.label}>Assign Schools</Text>
+                  <Text style={styles.schoolCount}>
+                    {selectedSchoolIds.length} selected
+                  </Text>
+                </View>
+                {schools.map((school) => {
+                  const isSelected = selectedSchoolIds.includes(school.id);
+                  const isPrimary = primarySchoolId === school.id && isSelected;
+                  return (
                     <TouchableOpacity
                       key={school.id}
+                      style={[styles.schoolRow, isSelected && styles.schoolRowActive]}
+                      activeOpacity={0.8}
                       onPress={() => {
-                        setSelectedSchoolId(school.id);
-                        setForm((current) => ({ ...current, school_name: school.name }));
+                        setSelectedSchoolIds((prev) => {
+                          if (prev.includes(school.id)) {
+                            const next = prev.filter((id) => id !== school.id);
+                            // If we removed the primary, reassign to first remaining
+                            if (primarySchoolId === school.id && next.length > 0) {
+                              setPrimarySchoolId(next[0]);
+                            } else if (next.length === 0) {
+                              setPrimarySchoolId('');
+                            }
+                            return next;
+                          }
+                          // First selection becomes primary automatically
+                          if (prev.length === 0) setPrimarySchoolId(school.id);
+                          return [...prev, school.id];
+                        });
                       }}
-                      style={[styles.pill, selectedSchoolId === school.id && styles.pillActive]}
                     >
-                      <Text style={[styles.pillText, selectedSchoolId === school.id && styles.pillTextActive]} numberOfLines={1}>
-                        {school.name}
-                      </Text>
+                      <View style={[styles.schoolCheck, isSelected && styles.schoolCheckActive]}>
+                        {isSelected && <View style={styles.schoolCheckDot} />}
+                      </View>
+                      <View style={{ flex: 1 }}>
+                        <Text style={[styles.schoolRowName, isSelected && { color: COLORS.info }]} numberOfLines={1}>
+                          {school.name}
+                        </Text>
+                        {isPrimary && (
+                          <Text style={styles.primaryBadge}>Primary School</Text>
+                        )}
+                      </View>
+                      {isSelected && !isPrimary && (
+                        <TouchableOpacity
+                          onPress={() => setPrimarySchoolId(school.id)}
+                          style={styles.setPrimaryBtn}
+                        >
+                          <Text style={styles.setPrimaryText}>Set Primary</Text>
+                        </TouchableOpacity>
+                      )}
                     </TouchableOpacity>
-                  ))}
-                </ScrollView>
-                <Text style={styles.helperText}>This also syncs the teacher into the school assignment registry.</Text>
+                  );
+                })}
+                <Text style={styles.helperText}>
+                  Tap to toggle. A teacher can belong to multiple schools. The primary school is used for timetable and dashboard defaults.
+                </Text>
               </View>
             ) : (
               <View style={styles.lockedField}>
@@ -354,8 +388,15 @@ export default function AddTeacherScreen({ navigation, route }: any) {
   );
 }
 
-function resolvedSchoolNameText(isAdmin: boolean, formSchoolName: string, profileSchoolName?: string | null) {
-  if (isAdmin) return formSchoolName ? `Assigned school: ${formSchoolName}` : 'Choose the school this teacher belongs to.';
+function resolvedSchoolNameText(isAdmin: boolean, selectedIds: string[], allSchools: School[], profileSchoolName?: string | null) {
+  if (isAdmin) {
+    if (selectedIds.length === 0) return 'Select one or more schools for this teacher.';
+    if (selectedIds.length === 1) {
+      const name = allSchools.find(s => s.id === selectedIds[0])?.name ?? 'Selected school';
+      return `Assigned to: ${name}`;
+    }
+    return `Assigned to ${selectedIds.length} schools`;
+  }
   return profileSchoolName ? `Using your school: ${profileSchoolName}` : 'School will be attached from your account.';
 }
 
@@ -397,12 +438,36 @@ const styles = StyleSheet.create({
   heroMeta: { fontFamily: FONT_FAMILY.body, fontSize: FONT_SIZE.sm, color: COLORS.textMuted, lineHeight: 20 },
   section: { marginBottom: SPACING.xl },
   sectionTitle: { fontFamily: FONT_FAMILY.display, fontSize: FONT_SIZE.sm, color: COLORS.textPrimary, textTransform: 'uppercase', letterSpacing: 1.2, marginBottom: SPACING.md },
-  pills: { gap: SPACING.sm, paddingVertical: 4 },
-  pill: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: RADIUS.full, borderWidth: 1, borderColor: COLORS.border, backgroundColor: COLORS.bgCard, maxWidth: 200 },
-  pillActive: { backgroundColor: COLORS.info + '20', borderColor: COLORS.info },
-  pillText: { fontFamily: FONT_FAMILY.body, fontSize: FONT_SIZE.xs, color: COLORS.textMuted },
-  pillTextActive: { color: COLORS.info },
-  helperText: { fontFamily: FONT_FAMILY.body, fontSize: FONT_SIZE.xs, color: COLORS.textMuted, marginTop: 8 },
+  helperText: { fontFamily: FONT_FAMILY.body, fontSize: FONT_SIZE.xs, color: COLORS.textMuted, marginTop: 10 },
+  schoolLabelRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 },
+  schoolCount: { fontFamily: FONT_FAMILY.bodySemi, fontSize: FONT_SIZE.xs, color: COLORS.info },
+  schoolRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    borderRadius: RADIUS.md,
+    padding: 12,
+    marginBottom: 8,
+    backgroundColor: COLORS.bgCard,
+  },
+  schoolRowActive: { borderColor: COLORS.info, backgroundColor: COLORS.info + '08' },
+  schoolCheck: {
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    borderWidth: 2,
+    borderColor: COLORS.border,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  schoolCheckActive: { borderColor: COLORS.info },
+  schoolCheckDot: { width: 10, height: 10, borderRadius: 5, backgroundColor: COLORS.info },
+  schoolRowName: { fontFamily: FONT_FAMILY.bodySemi, fontSize: FONT_SIZE.sm, color: COLORS.textPrimary },
+  primaryBadge: { fontFamily: FONT_FAMILY.bodySemi, fontSize: 9, color: COLORS.success, textTransform: 'uppercase', letterSpacing: 1, marginTop: 2 },
+  setPrimaryBtn: { paddingHorizontal: 8, paddingVertical: 4, borderRadius: RADIUS.xs, borderWidth: 1, borderColor: COLORS.info + '60' },
+  setPrimaryText: { fontFamily: FONT_FAMILY.bodySemi, fontSize: 9, color: COLORS.info, textTransform: 'uppercase', letterSpacing: 0.8 },
   lockedField: { backgroundColor: COLORS.bgCard, borderWidth: 1, borderColor: COLORS.border, borderRadius: RADIUS.md, paddingHorizontal: SPACING.md, paddingVertical: 12, flexDirection: 'row', justifyContent: 'space-between' },
   lockedLabel: { fontFamily: FONT_FAMILY.body, fontSize: FONT_SIZE.sm, color: COLORS.textMuted },
   lockedValue: { fontFamily: FONT_FAMILY.bodySemi, fontSize: FONT_SIZE.sm, color: COLORS.textPrimary },

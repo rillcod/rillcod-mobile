@@ -1,4 +1,4 @@
-﻿import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   View,
   Text,
@@ -12,10 +12,13 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { MotiView } from 'moti';
 import { LinearGradient } from 'expo-linear-gradient';
-
-import { supabase } from '../../lib/supabase';
+import { useAuth } from '../../contexts/AuthContext';
 import { useTheme } from '../../contexts/ThemeContext';
+import { courseService } from '../../services/course.service';
+import { analyticsService } from '../../services/analytics.service';
+import { gamificationService } from '../../services/gamification.service';
 import { ScreenHeader } from '../../components/ui/ScreenHeader';
+import { ROUTES } from '../../navigation/routes';
 import { FONT_FAMILY, FONT_SIZE } from '../../constants/typography';
 import { SPACING, RADIUS } from '../../constants/spacing';
 import { useHaptics } from '../../hooks/useHaptics';
@@ -33,6 +36,7 @@ interface LessonRecord {
   video_url: string | null;
   course_id: string | null;
   order_index: number | null;
+  created_by: string | null;
   courses?: { id: string; title: string | null } | null;
 }
 
@@ -108,6 +112,7 @@ function Section({ title, children, colors }: { title: string; children: React.R
 }
 
 export default function LessonDetailScreen({ navigation, route }: any) {
+  const { profile } = useAuth();
   const { colors } = useTheme();
   const { light, success } = useHaptics();
   const { lessonId } = route.params as { lessonId: string };
@@ -134,79 +139,48 @@ export default function LessonDetailScreen({ navigation, route }: any) {
   const completed = progress?.status === 'completed' || !!progress?.completed_at;
   const visibleProgress = completed ? 100 : Math.max(progress?.progress_percentage ?? 0, 10);
 
+  const isStudent = profile?.role === 'student';
+
+  const canEditLesson =
+    !!lesson &&
+    (profile?.role === 'admin' ||
+      (profile?.role === 'teacher' && (!lesson.created_by || lesson.created_by === profile.id)));
+
   const openUrl = async (url: string | null | undefined, fallback: string) => {
     if (!url) return Alert.alert('Unavailable', fallback);
     if (!(await Linking.canOpenURL(url))) {
       return Alert.alert('Unavailable', 'This link cannot be opened on the device.');
     }
+    
+    // Log analytics
+    if (profile?.id) {
+      analyticsService.trackEvent(profile.id, 'video_open', {
+        lessonId,
+        courseId: lesson?.course_id,
+        url
+      });
+    }
+
     await Linking.openURL(url);
   };
 
   const loadData = useCallback(async () => {
     try {
-      const { data: lessonData, error: lessonError } = await supabase
-        .from('lessons')
-        .select(`
-          id,
-          title,
-          description,
-          content,
-          content_layout,
-          lesson_notes,
-          lesson_type,
-          duration_minutes,
-          status,
-          video_url,
-          course_id,
-          order_index,
-          courses (id, title)
-        `)
-        .eq('id', lessonId)
-        .single();
-      if (lessonError) throw lessonError;
-      const resolvedLesson = lessonData as LessonRecord;
-      setLesson(resolvedLesson);
+      const { lesson, materials: mats, assignments: asgns, lessonPlan: plan, siblings: sibs, progress: prog } = await courseService.getLessonDetail(lessonId, profile?.id, profile?.role !== 'student');
+      
+      setLesson(lesson as any);
+      setMaterials(mats as any);
+      setAssignments(asgns as any);
+      setLessonPlan(plan as any);
+      setSiblings(sibs as any);
+      setProgress(prog as any);
 
-      const [{ data: mats }, { data: asgns }, { data: planData }] = await Promise.all([
-        supabase.from('lesson_materials').select('id, title, file_url, file_type').eq('lesson_id', lessonId).order('created_at'),
-        supabase.from('assignments').select('id, title, assignment_type, due_date, instructions, max_points').eq('lesson_id', lessonId).eq('is_active', true).order('created_at'),
-        supabase.from('lesson_plans').select('summary_notes, objectives, activities, assessment_methods').eq('lesson_id', lessonId).maybeSingle(),
-      ]);
-
-      setMaterials((mats as MaterialRecord[]) ?? []);
-      setAssignments((asgns as AssignmentRecord[]) ?? []);
-      setLessonPlan((planData as LessonPlanRecord | null) ?? null);
-
-      if (resolvedLesson.course_id) {
-        const { data: lessonSiblings } = await supabase
-          .from('lessons')
-          .select('id, title')
-          .eq('course_id', resolvedLesson.course_id)
-          .order('order_index', { ascending: true, nullsFirst: false })
-          .order('created_at', { ascending: true });
-        setSiblings((lessonSiblings as { id: string; title: string }[]) ?? []);
-      }
-
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
-      if (user) {
-        const { data: progressData } = await supabase
-          .from('lesson_progress')
-          .select('progress_percentage, status, time_spent_minutes, completed_at')
-          .eq('lesson_id', lessonId)
-          .eq('portal_user_id', user.id)
-          .maybeSingle();
-        setProgress((progressData as LessonProgressRecord | null) ?? null);
-
-        await supabase.from('lesson_progress').upsert({
-          lesson_id: lessonId,
-          portal_user_id: user.id,
-          status: progressData?.status ?? 'in_progress',
-          progress_percentage: Math.max(progressData?.progress_percentage ?? 0, 10),
-          last_accessed_at: new Date().toISOString(),
-          time_spent_minutes: progressData?.time_spent_minutes ?? 0,
-          updated_at: new Date().toISOString(),
+      if (profile?.id) {
+        await courseService.updateLessonProgress({
+          userId: profile.id,
+          courseId: lesson.course_id ?? '',
+          lessonId,
+          status: (prog?.status as 'completed' | 'in_progress') ?? 'in_progress'
         });
       }
     } catch (error: any) {
@@ -215,37 +189,42 @@ export default function LessonDetailScreen({ navigation, route }: any) {
     } finally {
       setLoading(false);
     }
-  }, [lessonId, navigation]);
+  }, [lessonId, navigation, profile]);
 
   useEffect(() => {
     loadData();
   }, [loadData]);
 
   const markComplete = async () => {
-    if (marking) return;
+    if (marking || !profile?.id) return;
     setMarking(true);
     try {
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
-      if (!user) throw new Error('You need to be signed in.');
-      const timeSpent = (progress?.time_spent_minutes ?? 0) + 5;
-      const completedAt = new Date().toISOString();
-      const { error } = await supabase.from('lesson_progress').upsert({
-        lesson_id: lessonId,
-        portal_user_id: user.id,
+      await courseService.updateLessonProgress({
+        userId: profile.id,
+        courseId: lesson?.course_id ?? '',
+        lessonId,
         status: 'completed',
-        progress_percentage: 100,
-        completed_at: completedAt,
-        last_accessed_at: completedAt,
-        time_spent_minutes: timeSpent,
-        updated_at: completedAt,
+        incrementMinutes: 5,
       });
-      if (error) throw error;
+
+      try {
+        await gamificationService.awardPoints(
+          profile.id,
+          'lesson_complete',
+          lessonId,
+          lesson?.title ?? 'Lesson',
+        );
+      } catch {
+        /* points are optional if tables or RLS differ */
+      }
+
+      const completedAt = new Date().toISOString();
+      const timeSpent = (progress?.time_spent_minutes ?? 0) + 5;
       setProgress({ progress_percentage: 100, status: 'completed', time_spent_minutes: timeSpent, completed_at: completedAt });
+      
       await success();
       Alert.alert('Progress Saved', nextLesson ? 'Lesson completed. Opening the next lesson.' : 'Lesson completed.');
-      if (nextLesson) navigation.replace('LessonDetail', { lessonId: nextLesson.id });
+      if (nextLesson) navigation.replace(ROUTES.LessonDetail, { lessonId: nextLesson.id });
     } catch (error: any) {
       Alert.alert('Progress', error.message || 'Unable to mark the lesson complete.');
     } finally {
@@ -267,6 +246,19 @@ export default function LessonDetailScreen({ navigation, route }: any) {
         title={lesson.title}
         subtitle={`${lesson.courses?.title ?? 'Learning'} · ${(lesson.lesson_type ?? 'lesson').toUpperCase()}`}
         onBack={() => navigation.goBack()}
+        rightAction={
+          canEditLesson
+            ? {
+                label: 'Edit',
+                color: colors.primary,
+                onPress: () =>
+                  navigation.navigate(ROUTES.LessonEditor, {
+                    lessonId: lesson.id,
+                    courseId: lesson.course_id ?? undefined,
+                  }),
+              }
+            : undefined
+        }
       />
 
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scroll}>
@@ -288,6 +280,59 @@ export default function LessonDetailScreen({ navigation, route }: any) {
             <Text style={styles.primaryActionText}>Open Lesson Video</Text>
           </TouchableOpacity>
         )}
+
+        <View style={styles.quickRow}>
+          <TouchableOpacity
+            style={[styles.quickCard, { backgroundColor: colors.bgCard, borderColor: colors.border }]}
+            onPress={() => {
+              light();
+              if (isStudent && lesson.course_id) {
+                navigation.navigate(ROUTES.CourseDetail, {
+                  courseId: lesson.course_id,
+                  title: lesson.courses?.title ?? undefined,
+                });
+              } else {
+                navigation.navigate(ROUTES.Lessons);
+              }
+            }}
+          >
+            <Text style={[styles.quickLabel, { color: colors.textMuted }]}>COURSE</Text>
+            <Text style={[styles.quickValue, { color: colors.textPrimary }]}>All lessons</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.quickCard, { backgroundColor: colors.bgCard, borderColor: colors.border }]}
+            onPress={() =>
+              assignments[0]
+                ? navigation.navigate(ROUTES.AssignmentDetail, {
+                    assignmentId: assignments[0].id,
+                    title: assignments[0].title,
+                  })
+                : navigation.navigate(ROUTES.Assignments)
+            }
+          >
+            <Text style={[styles.quickLabel, { color: colors.textMuted }]}>WORK</Text>
+            <Text style={[styles.quickValue, { color: colors.textPrimary }]}>
+              {assignments.length ? `${assignments.length} linked` : 'Assignments'}
+            </Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.quickCard, { backgroundColor: colors.bgCard, borderColor: colors.border }]}
+            onPress={() => {
+              light();
+              if (lesson.course_id) {
+                navigation.navigate(ROUTES.CourseDiscussion, {
+                  courseId: lesson.course_id,
+                  courseTitle: lesson.courses?.title ?? undefined,
+                });
+              } else {
+                Alert.alert('Forum', 'This lesson is not linked to a course yet.');
+              }
+            }}
+          >
+            <Text style={[styles.quickLabel, { color: colors.textMuted }]}>COMMUNITY</Text>
+            <Text style={[styles.quickValue, { color: colors.textPrimary }]}>Q&A Forum</Text>
+          </TouchableOpacity>
+        </View>
 
         {contentParagraphs.length > 0 && (
           <Section title="Core Content" colors={colors}>
@@ -312,14 +357,29 @@ export default function LessonDetailScreen({ navigation, route }: any) {
           </Section>
         )}
 
-        {(lessonPlan?.summary_notes || objectives.length || activities.length || assessments.length) && (
-          <Section title="Teaching Plan" colors={colors}>
-            {!!lessonPlan?.summary_notes && <Text style={[styles.bodyText, { color: colors.textSecondary }]}>{lessonPlan.summary_notes}</Text>}
-            {objectives.map((item, index) => <Text key={`o-${index}`} style={[styles.bullet, { color: colors.textSecondary }]}>• {item}</Text>)}
-            {activities.map((item, index) => <Text key={`a-${index}`} style={[styles.bullet, { color: colors.textSecondary }]}>• {item}</Text>)}
-            {assessments.map((item, index) => <Text key={`m-${index}`} style={[styles.bullet, { color: colors.textSecondary }]}>• {item}</Text>)}
-          </Section>
-        )}
+        {!isStudent &&
+          (lessonPlan?.summary_notes || objectives.length || activities.length || assessments.length) ? (
+            <Section title="Teaching Plan" colors={colors}>
+              {!!lessonPlan?.summary_notes && (
+                <Text style={[styles.bodyText, { color: colors.textSecondary }]}>{lessonPlan.summary_notes}</Text>
+              )}
+              {objectives.map((item, index) => (
+                <Text key={`o-${index}`} style={[styles.bullet, { color: colors.textSecondary }]}>
+                  • {item}
+                </Text>
+              ))}
+              {activities.map((item, index) => (
+                <Text key={`a-${index}`} style={[styles.bullet, { color: colors.textSecondary }]}>
+                  • {item}
+                </Text>
+              ))}
+              {assessments.map((item, index) => (
+                <Text key={`m-${index}`} style={[styles.bullet, { color: colors.textSecondary }]}>
+                  • {item}
+                </Text>
+              ))}
+            </Section>
+          ) : null}
 
         {materials.length > 0 && (
           <Section title="Materials" colors={colors}>
@@ -338,7 +398,7 @@ export default function LessonDetailScreen({ navigation, route }: any) {
         {assignments.length > 0 && (
           <Section title="Assignments" colors={colors}>
             {assignments.map((assignment) => (
-              <TouchableOpacity key={assignment.id} onPress={() => navigation.navigate('AssignmentDetail', { assignmentId: assignment.id, title: assignment.title })} style={[styles.rowCard, { backgroundColor: colors.bg, borderColor: colors.border }]}>
+              <TouchableOpacity key={assignment.id} onPress={() => navigation.navigate(ROUTES.AssignmentDetail, { assignmentId: assignment.id, title: assignment.title })} style={[styles.rowCard, { backgroundColor: colors.bg, borderColor: colors.border }]}>
                 <View style={{ flex: 1 }}>
                   <Text style={[styles.cardTitle, { color: colors.textPrimary }]}>{assignment.title}</Text>
                   <Text style={[styles.metaText, { color: colors.textMuted }]}>
@@ -359,13 +419,13 @@ export default function LessonDetailScreen({ navigation, route }: any) {
 
         <View style={styles.navRow}>
           {previousLesson ? (
-            <TouchableOpacity style={[styles.navCard, { backgroundColor: colors.bgCard, borderColor: colors.border }]} onPress={() => { light(); navigation.push('LessonDetail', { lessonId: previousLesson.id }); }}>
+            <TouchableOpacity style={[styles.navCard, { backgroundColor: colors.bgCard, borderColor: colors.border }]} onPress={() => { light(); navigation.push(ROUTES.LessonDetail, { lessonId: previousLesson.id }); }}>
               <Text style={[styles.metaText, { color: colors.textMuted }]}>PREVIOUS</Text>
               <Text style={[styles.cardTitle, { color: colors.textPrimary }]} numberOfLines={2}>{previousLesson.title}</Text>
             </TouchableOpacity>
           ) : <View style={{ flex: 1 }} />}
           {nextLesson ? (
-            <TouchableOpacity style={[styles.navCard, { backgroundColor: colors.bgCard, borderColor: colors.border }]} onPress={() => { light(); navigation.push('LessonDetail', { lessonId: nextLesson.id }); }}>
+            <TouchableOpacity style={[styles.navCard, { backgroundColor: colors.bgCard, borderColor: colors.border }]} onPress={() => { light(); navigation.push(ROUTES.LessonDetail, { lessonId: nextLesson.id }); }}>
               <Text style={[styles.metaText, { color: colors.textMuted, textAlign: 'right' }]}>NEXT</Text>
               <Text style={[styles.cardTitle, { color: colors.textPrimary, textAlign: 'right' }]} numberOfLines={2}>{nextLesson.title}</Text>
             </TouchableOpacity>
@@ -394,6 +454,10 @@ const styles = StyleSheet.create({
   fill: { height: '100%', borderRadius: RADIUS.full },
   primaryAction: { marginTop: SPACING.lg, borderRadius: RADIUS.lg, paddingVertical: 14, alignItems: 'center' },
   primaryActionText: { fontFamily: FONT_FAMILY.bodyBold, fontSize: FONT_SIZE.sm, color: '#fff', letterSpacing: 0.4 },
+  quickRow: { flexDirection: 'row', gap: 12, marginTop: SPACING.lg },
+  quickCard: { flex: 1, borderWidth: 1, borderRadius: RADIUS.lg, padding: SPACING.md },
+  quickLabel: { fontFamily: FONT_FAMILY.bodyBold, fontSize: 10, letterSpacing: 1 },
+  quickValue: { fontFamily: FONT_FAMILY.bodySemi, fontSize: FONT_SIZE.sm, marginTop: 6 },
   section: { borderWidth: 1, borderRadius: RADIUS.xl, padding: SPACING.lg, marginTop: SPACING.lg },
   sectionTitle: { fontFamily: FONT_FAMILY.display, fontSize: FONT_SIZE.lg, marginBottom: SPACING.md },
   sectionBody: { gap: 12 },

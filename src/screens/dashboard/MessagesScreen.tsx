@@ -1,15 +1,28 @@
-import React, { useEffect, useState, useCallback, useRef, useMemo } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  View, Text, StyleSheet, FlatList, TouchableOpacity,
-  TextInput, RefreshControl, ActivityIndicator, KeyboardAvoidingView, Platform, ScrollView,
+  ActivityIndicator,
+  Alert,
+  FlatList,
+  RefreshControl,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { MotiView } from 'moti';
+import { ScreenHeader } from '../../components/ui/ScreenHeader';
 import { useAuth } from '../../contexts/AuthContext';
-import { supabase } from '../../lib/supabase';
 import { useTheme } from '../../contexts/ThemeContext';
-import { FONT_FAMILY, FONT_SIZE } from '../../constants/typography';
+import { chatService } from '../../services/chat.service';
+import { announcementService, type AnnouncementBoardRow } from '../../services/announcement.service';
+import { templateService } from '../../services/template.service';
+import { FONT_FAMILY, FONT_SIZE, LETTER_SPACING } from '../../constants/typography';
 import { SPACING, RADIUS } from '../../constants/spacing';
+
+type Tab = 'inbox' | 'directory' | 'board';
 
 interface Thread {
   id: string;
@@ -32,6 +45,7 @@ interface MessageItem {
   message: string;
   sender_id: string | null;
   created_at: string | null;
+  subject?: string | null;
 }
 
 function timeAgo(dateStr: string | null): string {
@@ -45,53 +59,69 @@ function timeAgo(dateStr: string | null): string {
   return new Date(dateStr).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
 }
 
-export default function MessagesScreen({ navigation }: any) {
+export default function MessagesScreenV2({ navigation }: any) {
   const { profile } = useAuth();
   const { colors } = useTheme();
-  const styles = getStyles(colors);
+  const styles = useMemo(() => getStyles(colors), [colors]);
+  const listRef = useRef<FlatList>(null);
+
+  const [tab, setTab] = useState<Tab>('inbox');
   const [threads, setThreads] = useState<Thread[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
   const [activeThread, setActiveThread] = useState<Thread | null>(null);
   const [messages, setMessages] = useState<MessageItem[]>([]);
   const [contacts, setContacts] = useState<Contact[]>([]);
+  const [announcements, setAnnouncements] = useState<AnnouncementBoardRow[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [search, setSearch] = useState('');
   const [newMsg, setNewMsg] = useState('');
+  const [threadSubject, setThreadSubject] = useState('');
+  const [announcementTitle, setAnnouncementTitle] = useState('');
+  const [announcementContent, setAnnouncementContent] = useState('');
+  const [announcementAudience, setAnnouncementAudience] = useState('all');
   const [sending, setSending] = useState(false);
-  const listRef = useRef<FlatList>(null);
+  const [posting, setPosting] = useState(false);
+
+  const isStaff = profile?.role === 'admin' || profile?.role === 'teacher' || profile?.role === 'school';
 
   const roleTargets = useMemo(() => {
     if (!profile?.role) return [];
     return profile.role === 'parent'
       ? ['teacher', 'school', 'admin']
       : profile.role === 'student'
-        ? ['teacher', 'admin']
+        ? ['teacher', 'admin', 'school']
         : profile.role === 'teacher'
           ? ['student', 'parent', 'school', 'admin']
           : profile.role === 'school'
-            ? ['teacher', 'admin', 'parent']
+            ? ['teacher', 'admin', 'parent', 'student']
             : ['teacher', 'school', 'parent', 'student'];
   }, [profile?.role]);
 
-  const loadThreads = useCallback(async () => {
-    if (!profile) return;
-    try {
-      const { data } = await supabase
-        .from('messages')
-        .select('id, subject, message, sender_id, recipient_id, is_read, created_at')
-        .or(`sender_id.eq.${profile.id},recipient_id.eq.${profile.id}`)
-        .order('created_at', { ascending: false })
-        .limit(80);
+  const load = useCallback(async () => {
+    if (!profile) {
+      setLoading(false);
+      setRefreshing(false);
+      return;
+    }
 
-      const raw = data ?? [];
+    try {
+      const [rawMessages, contactRows, boardRows] = await Promise.all([
+        chatService.listMailboxPreview(profile.id, 120),
+        chatService.listDirectoryContacts(profile.id, roleTargets, 40),
+        announcementService.listActiveForBoard({
+          isAdmin: profile.role === 'admin',
+          schoolId: profile.school_id ?? null,
+          limit: 50,
+        }),
+      ]);
       const grouped = new Map<string, Thread>();
-      raw.forEach((item: any) => {
+      rawMessages.forEach((item) => {
         const otherId = item.sender_id === profile.id ? item.recipient_id : item.sender_id;
         if (!otherId || grouped.has(otherId)) return;
         grouped.set(otherId, {
           id: otherId,
-          subject: item.subject,
-          last_message: item.message,
+          subject: item.subject ?? null,
+          last_message: item.message ?? null,
           last_message_at: item.created_at ?? new Date().toISOString(),
           is_read: item.recipient_id === profile.id ? !!item.is_read : true,
           other_user_name: 'User',
@@ -101,11 +131,8 @@ export default function MessagesScreen({ navigation }: any) {
 
       const baseThreads = Array.from(grouped.values());
       if (baseThreads.length > 0) {
-        const { data: users } = await supabase
-          .from('portal_users')
-          .select('id, full_name, role')
-          .in('id', baseThreads.map((item) => item.id));
-        const userMap = new Map((users ?? []).map((user: any) => [user.id, user]));
+        const users = await chatService.lookupUsersByIds(baseThreads.map((item) => item.id));
+        const userMap = new Map(users.map((user) => [user.id, user]));
         baseThreads.forEach((thread) => {
           const user = userMap.get(thread.id);
           if (user) {
@@ -115,15 +142,16 @@ export default function MessagesScreen({ navigation }: any) {
         });
       }
 
-      setThreads(baseThreads);
+      const visibleAnnouncements = boardRows.filter((item) => {
+        if (!item.target_audience || item.target_audience === 'all') return true;
+        return item.target_audience === profile.role;
+      });
 
-      const { data: suggestedContacts } = await supabase
-        .from('portal_users')
-        .select('id, full_name, role')
-        .neq('id', profile.id)
-        .in('role', roleTargets)
-        .limit(20);
-      setContacts((suggestedContacts ?? []) as Contact[]);
+      setThreads(baseThreads);
+      setContacts(contactRows as Contact[]);
+      setAnnouncements(visibleAnnouncements);
+    } catch (e: any) {
+      Alert.alert('Messages', e?.message ?? 'Could not refresh your inbox.');
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -132,45 +160,30 @@ export default function MessagesScreen({ navigation }: any) {
 
   const loadMessages = useCallback(async (otherId: string) => {
     if (!profile) return;
-    const { data } = await supabase
-      .from('messages')
-      .select('id, message, sender_id, created_at')
-      .or(`and(sender_id.eq.${profile.id},recipient_id.eq.${otherId}),and(sender_id.eq.${otherId},recipient_id.eq.${profile.id})`)
-      .order('created_at', { ascending: true })
-      .limit(120);
-    setMessages((data as MessageItem[]) ?? []);
-    await supabase
-      .from('messages')
-      .update({ is_read: true, read_at: new Date().toISOString() })
-      .eq('recipient_id', profile.id)
-      .eq('sender_id', otherId)
-      .eq('is_read', false);
+    try {
+      const rows = (await chatService.fetchThreadAscending(profile.id, otherId, 160)) as MessageItem[];
+      setMessages(rows);
+      const firstSubject = rows.find((item) => item.subject)?.subject ?? '';
+      setThreadSubject(firstSubject);
+      await chatService.markUnreadFromSenderRead(profile.id, otherId);
+    } catch (e: any) {
+      Alert.alert('Conversation', e?.message ?? 'Could not load messages.');
+    }
   }, [profile]);
 
-  const sendMessage = async () => {
-    if (!newMsg.trim() || !activeThread || !profile) return;
-    setSending(true);
-    const { error } = await supabase.from('messages').insert({
-      sender_id: profile.id,
-      recipient_id: activeThread.id,
-      message: newMsg.trim(),
-      subject: activeThread.subject ?? null,
-      is_read: false,
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
-    });
-    setSending(false);
-    if (!error) {
-      setNewMsg('');
-      loadMessages(activeThread.id);
-      loadThreads();
-    }
-  };
+  useEffect(() => {
+    load();
+  }, [load]);
 
-  useEffect(() => { loadThreads(); }, [loadThreads]);
+  useEffect(() => {
+    if (messages.length > 0) {
+      listRef.current?.scrollToEnd({ animated: true });
+    }
+  }, [messages]);
 
   const openThread = (thread: Thread) => {
     setActiveThread(thread);
+    setThreadSubject(thread.subject ?? '');
     loadMessages(thread.id);
   };
 
@@ -187,213 +200,373 @@ export default function MessagesScreen({ navigation }: any) {
       other_user_role: contact.role,
     });
     setMessages([]);
+    setThreadSubject('');
+    setTab('inbox');
   };
 
-  const roleColor = (role: string) => {
-    if (role === 'admin') return colors.admin;
-    if (role === 'teacher') return colors.teacher;
-    if (role === 'school') return colors.school;
-    if (role === 'parent') return colors.warning;
-    return colors.textMuted;
+  const sendMessage = async () => {
+    if (!newMsg.trim() || !activeThread || !profile) return;
+    setSending(true);
+    try {
+      const now = new Date().toISOString();
+      await chatService.insertMessage({
+        sender_id: profile.id,
+        recipient_id: activeThread.id,
+        message: newMsg.trim(),
+        subject: threadSubject.trim() || activeThread.subject || null,
+        is_read: false,
+        created_at: now,
+        updated_at: now,
+      });
+      setNewMsg('');
+      await loadMessages(activeThread.id);
+      await load();
+    } catch (e: any) {
+      Alert.alert('Send failed', e?.message ?? 'Message could not be sent.');
+    } finally {
+      setSending(false);
+    }
   };
 
-  const filteredThreads = threads.filter((thread) => {
-    const haystack = `${thread.other_user_name} ${thread.other_user_role} ${thread.subject ?? ''} ${thread.last_message ?? ''}`.toLowerCase();
-    return !search.trim() || haystack.includes(search.trim().toLowerCase());
-  });
+  const applyAnnouncementTemplate = async () => {
+    try {
+      const composed = await templateService.compose('board_announcement', 'email', {
+        school_name: profile?.school_name ?? 'Our school',
+        author: profile?.full_name ?? 'Team',
+      });
+      if (composed.subject) setAnnouncementTitle(composed.subject);
+      setAnnouncementContent(composed.content);
+    } catch {
+      Alert.alert(
+        'Template',
+        'No active email template named "board_announcement" in notification_templates. Add one in the database to use this shortcut.',
+      );
+    }
+  };
 
-  const filteredContacts = contacts.filter((contact) => {
-    const haystack = `${contact.full_name} ${contact.role}`.toLowerCase();
-    return !search.trim() || haystack.includes(search.trim().toLowerCase());
-  });
+  const postAnnouncement = async () => {
+    if (!announcementTitle.trim() || !announcementContent.trim() || !profile || !isStaff) return;
+    setPosting(true);
+    try {
+      await announcementService.createAnnouncement(
+        {
+          title: announcementTitle.trim(),
+          content: announcementContent.trim(),
+          target_audience: announcementAudience,
+          school_id: profile.role === 'school' ? profile.school_id ?? null : null,
+          is_active: true,
+        },
+        profile.id,
+      );
+      setAnnouncementTitle('');
+      setAnnouncementContent('');
+      setAnnouncementAudience('all');
+      await load();
+    } catch (e: any) {
+      Alert.alert('Board', e?.message ?? 'Could not post announcement.');
+    } finally {
+      setPosting(false);
+    }
+  };
 
-  if (!activeThread) {
+  const filteredThreads = useMemo(() => {
+    const value = search.trim().toLowerCase();
+    return threads.filter((thread) => {
+      const haystack = `${thread.other_user_name} ${thread.other_user_role} ${thread.subject ?? ''} ${thread.last_message ?? ''}`.toLowerCase();
+      return !value || haystack.includes(value);
+    });
+  }, [search, threads]);
+
+  const filteredContacts = useMemo(() => {
+    const value = search.trim().toLowerCase();
+    return contacts.filter((contact) => {
+      const haystack = `${contact.full_name} ${contact.role}`.toLowerCase();
+      return !value || haystack.includes(value);
+    });
+  }, [contacts, search]);
+
+  const filteredAnnouncements = useMemo(() => {
+    const value = search.trim().toLowerCase();
+    return announcements.filter((item) => {
+      const haystack = `${item.title} ${item.content} ${item.target_audience ?? ''}`.toLowerCase();
+      return !value || haystack.includes(value);
+    });
+  }, [announcements, search]);
+
+  const unreadCount = threads.filter((thread) => !thread.is_read).length;
+
+  if (activeThread) {
     return (
       <SafeAreaView style={styles.safe}>
-        <View style={styles.header}>
-          <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}>
-            <Text style={styles.backIcon}>?</Text>
-          </TouchableOpacity>
-          <Text style={styles.title}>Messages</Text>
-        </View>
+        <ScreenHeader title={activeThread.other_user_name.toUpperCase()} onBack={() => setActiveThread(null)} />
 
-        <View style={styles.searchWrap}>
-          <Text style={styles.searchIcon}>S</Text>
-          <TextInput
-            style={styles.searchInput}
-            placeholder="Search threads or contacts"
-            placeholderTextColor={colors.textMuted}
-            value={search}
-            onChangeText={setSearch}
-          />
-        </View>
-
-        {loading ? (
-          <View style={styles.center}><ActivityIndicator color={colors.primary} /></View>
-        ) : (
-          <FlatList
-            data={filteredThreads}
-            keyExtractor={(item) => item.id}
-            contentContainerStyle={styles.list}
-            showsVerticalScrollIndicator={false}
-            refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); loadThreads(); }} tintColor={colors.primary} />}
-            renderItem={({ item, index }) => (
-              <MotiView from={{ opacity: 0, translateX: -12 }} animate={{ opacity: 1, translateX: 0 }} transition={{ delay: index * 40 }}>
-                <TouchableOpacity style={[styles.threadCard, !item.is_read && styles.unreadCard]} onPress={() => openThread(item)} activeOpacity={0.8}>
-                  <View style={[styles.threadAvatar, { backgroundColor: `${roleColor(item.other_user_role)}33` }]}>
-                    <Text style={[styles.threadAvatarText, { color: roleColor(item.other_user_role) }]}>{item.other_user_name.charAt(0).toUpperCase()}</Text>
-                  </View>
-                  <View style={{ flex: 1 }}>
-                    <View style={styles.threadTopRow}>
-                      <Text style={styles.threadName}>{item.other_user_name}</Text>
-                      <Text style={styles.threadTime}>{timeAgo(item.last_message_at)}</Text>
-                    </View>
-                    {!!item.subject && <Text style={[styles.threadSubject, { color: colors.primary }]}>{item.subject}</Text>}
-                    <Text style={styles.threadPreview} numberOfLines={1}>{item.last_message ?? ''}</Text>
-                  </View>
-                  {!item.is_read && <View style={[styles.unreadDot, { backgroundColor: colors.primary }]} />}
-                </TouchableOpacity>
-              </MotiView>
-            )}
-            ListEmptyComponent={<View style={styles.empty}><Text style={styles.emptyText}>No messages yet</Text></View>}
-            ListHeaderComponent={
-              filteredContacts.length > 0 ? (
-                <View style={styles.contactsSection}>
-                  <Text style={styles.contactsTitle}>Quick Contacts</Text>
-                  <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.contactsRow}>
-                    {filteredContacts.slice(0, 8).map((contact) => (
-                      <TouchableOpacity key={contact.id} style={styles.contactCard} activeOpacity={0.85} onPress={() => openContact(contact)}>
-                        <View style={[styles.contactAvatar, { backgroundColor: `${roleColor(contact.role)}22` }]}>
-                          <Text style={[styles.contactAvatarText, { color: roleColor(contact.role) }]}>{contact.full_name.charAt(0).toUpperCase()}</Text>
-                        </View>
-                        <Text style={styles.contactName} numberOfLines={1}>{contact.full_name}</Text>
-                        <Text style={[styles.contactRole, { color: roleColor(contact.role) }]}>{contact.role}</Text>
-                      </TouchableOpacity>
-                    ))}
-                  </ScrollView>
-                </View>
-              ) : null
-            }
-          />
-        )}
-      </SafeAreaView>
-    );
-  }
-
-  return (
-    <SafeAreaView style={styles.safe}>
-      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1 }}>
-        <View style={styles.header}>
-          <TouchableOpacity onPress={() => setActiveThread(null)} style={styles.backBtn}>
-            <Text style={styles.backIcon}>?</Text>
-          </TouchableOpacity>
-          <View style={{ flex: 1 }}>
-            <Text style={styles.title}>{activeThread.other_user_name}</Text>
-            <Text style={[styles.subtitle, { color: roleColor(activeThread.other_user_role) }]}>{activeThread.other_user_role}</Text>
-          </View>
+        <View style={styles.threadMetaCard}>
+          <Text style={styles.threadRole}>{activeThread.other_user_role.toUpperCase()}</Text>
+          <Text style={styles.threadSubjectText}>{threadSubject.trim() ? threadSubject : 'General conversation'}</Text>
         </View>
 
         <FlatList
           ref={listRef}
           data={messages}
           keyExtractor={(item) => item.id}
-          contentContainerStyle={styles.msgList}
-          showsVerticalScrollIndicator={false}
-          onContentSizeChange={() => listRef.current?.scrollToEnd({ animated: false })}
+          contentContainerStyle={styles.chatList}
           renderItem={({ item }) => {
-            const isMine = item.sender_id === profile?.id;
+            const mine = item.sender_id === profile?.id;
             return (
-              <View style={[styles.bubble, isMine ? styles.bubbleMine : styles.bubbleOther, !isMine && { borderColor: colors.border }]}>
-                <Text style={[styles.bubbleText, isMine ? styles.bubbleTextMine : styles.bubbleTextOther]}>{item.message}</Text>
-                <Text style={[styles.bubbleTime, { color: isMine ? 'rgba(255,255,255,0.75)' : colors.textMuted }]}>{timeAgo(item.created_at)}</Text>
+              <View style={[styles.bubble, mine ? styles.bubbleMine : styles.bubbleOther]}>
+                <Text style={[styles.bubbleText, { color: mine ? colors.white100 : colors.textPrimary }]}>{item.message}</Text>
+                <Text style={[styles.bubbleTime, { color: mine ? colors.white100 : colors.textMuted }]}>{timeAgo(item.created_at)}</Text>
               </View>
             );
           }}
-          ListEmptyComponent={<View style={styles.empty}><Text style={styles.emptyText}>Start the conversation...</Text></View>}
         />
 
-        <View style={[styles.inputRow, { borderTopColor: colors.border, backgroundColor: colors.bg }]}>
+        <View style={styles.composerWrap}>
           <TextInput
-            style={[styles.msgInput, { backgroundColor: colors.bgCard, borderColor: colors.border, color: colors.textPrimary }]}
-            placeholder="Type a message"
+            value={threadSubject}
+            onChangeText={setThreadSubject}
+            placeholder="Subject"
             placeholderTextColor={colors.textMuted}
-            value={newMsg}
-            onChangeText={setNewMsg}
-            multiline
-            maxLength={500}
+            style={styles.subjectInput}
           />
-          <TouchableOpacity style={[styles.sendBtn, { backgroundColor: colors.primary }, (!newMsg.trim() || sending) && styles.sendBtnDisabled]} onPress={sendMessage} disabled={!newMsg.trim() || sending}>
-            <Text style={styles.sendIcon}>{sending ? '...' : '?'}</Text>
-          </TouchableOpacity>
+          <View style={styles.messageRow}>
+            <TextInput
+              value={newMsg}
+              onChangeText={setNewMsg}
+              placeholder="Write a message"
+              placeholderTextColor={colors.textMuted}
+              style={styles.messageInput}
+              multiline
+            />
+            <TouchableOpacity style={styles.sendBtn} onPress={sendMessage} disabled={sending}>
+              <Text style={styles.sendBtnText}>{sending ? '...' : 'SEND'}</Text>
+            </TouchableOpacity>
+          </View>
         </View>
-      </KeyboardAvoidingView>
+      </SafeAreaView>
+    );
+  }
+
+  return (
+    <SafeAreaView style={styles.safe}>
+      <ScreenHeader title="MESSAGES HUB" onBack={() => navigation.goBack()} />
+
+      <View style={styles.summaryRow}>
+        <View style={styles.summaryCard}>
+          <Text style={styles.summaryValue}>{threads.length}</Text>
+          <Text style={styles.summaryLabel}>Threads</Text>
+        </View>
+        <View style={styles.summaryCard}>
+          <Text style={styles.summaryValue}>{unreadCount}</Text>
+          <Text style={styles.summaryLabel}>Unread</Text>
+        </View>
+        <View style={styles.summaryCard}>
+          <Text style={styles.summaryValue}>{announcements.length}</Text>
+          <Text style={styles.summaryLabel}>Board</Text>
+        </View>
+      </View>
+
+      <View style={styles.searchWrap}>
+        <TextInput
+          value={search}
+          onChangeText={setSearch}
+          placeholder="Search threads, contacts, or board posts"
+          placeholderTextColor={colors.textMuted}
+          style={styles.searchInput}
+        />
+      </View>
+
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.tabRow}>
+        {[
+          { key: 'inbox', label: 'INBOX' },
+          { key: 'directory', label: 'DIRECTORY' },
+          { key: 'board', label: 'BOARD' },
+        ].map((item) => (
+          <TouchableOpacity
+            key={item.key}
+            style={[styles.tabChip, tab === item.key && styles.tabChipActive]}
+            onPress={() => setTab(item.key as Tab)}
+          >
+            <Text style={[styles.tabText, tab === item.key && styles.tabTextActive]}>{item.label}</Text>
+          </TouchableOpacity>
+        ))}
+      </ScrollView>
+
+      {loading ? (
+        <View style={styles.center}>
+          <ActivityIndicator size="large" color={colors.primary} />
+        </View>
+      ) : (
+        <ScrollView
+          showsVerticalScrollIndicator={false}
+          contentContainerStyle={styles.scrollBody}
+          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); load(); }} tintColor={colors.primary} />}
+        >
+          {tab === 'inbox' ? (
+            filteredThreads.length ? (
+              filteredThreads.map((item, index) => (
+                <MotiView key={item.id} from={{ opacity: 0, translateY: 10 }} animate={{ opacity: 1, translateY: 0 }} transition={{ delay: index * 24 }}>
+                  <TouchableOpacity style={[styles.threadCard, !item.is_read && styles.threadUnread]} onPress={() => openThread(item)}>
+                    <View style={styles.threadTop}>
+                      <Text style={styles.threadName}>{item.other_user_name}</Text>
+                      <Text style={styles.threadTime}>{timeAgo(item.last_message_at)}</Text>
+                    </View>
+                    <Text style={styles.threadRole}>{item.other_user_role.toUpperCase()}</Text>
+                    {item.subject ? <Text style={styles.threadSubjectText}>{item.subject}</Text> : null}
+                    <Text style={styles.threadPreview} numberOfLines={2}>{item.last_message ?? 'No messages yet'}</Text>
+                  </TouchableOpacity>
+                </MotiView>
+              ))
+            ) : (
+              <View style={styles.emptyWrap}>
+                <Text style={styles.emptyTitle}>No threads yet</Text>
+                <Text style={styles.emptyText}>Open a contact from the directory to start a conversation.</Text>
+              </View>
+            )
+          ) : null}
+
+          {tab === 'directory' ? (
+            filteredContacts.length ? (
+              filteredContacts.map((item, index) => (
+                <MotiView key={item.id} from={{ opacity: 0, translateY: 10 }} animate={{ opacity: 1, translateY: 0 }} transition={{ delay: index * 20 }}>
+                  <TouchableOpacity style={styles.contactCard} onPress={() => openContact(item)}>
+                    <Text style={styles.contactName}>{item.full_name}</Text>
+                    <Text style={styles.contactRole}>{item.role.toUpperCase()}</Text>
+                  </TouchableOpacity>
+                </MotiView>
+              ))
+            ) : (
+              <View style={styles.emptyWrap}>
+                <Text style={styles.emptyTitle}>No contacts found</Text>
+                <Text style={styles.emptyText}>Try a different search or wait for more users to be assigned.</Text>
+              </View>
+            )
+          ) : null}
+
+          {tab === 'board' ? (
+            <>
+              {isStaff ? (
+                <View style={styles.boardComposer}>
+                  <Text style={styles.sectionTitle}>POST ANNOUNCEMENT</Text>
+                  <TextInput
+                    value={announcementTitle}
+                    onChangeText={setAnnouncementTitle}
+                    placeholder="Announcement title"
+                    placeholderTextColor={colors.textMuted}
+                    style={styles.subjectInput}
+                  />
+                  <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.audienceRow}>
+                    {['all', 'student', 'teacher', 'school', 'parent'].map((item) => (
+                      <TouchableOpacity
+                        key={item}
+                        style={[styles.tabChip, announcementAudience === item && styles.tabChipActive]}
+                        onPress={() => setAnnouncementAudience(item)}
+                      >
+                        <Text style={[styles.tabText, announcementAudience === item && styles.tabTextActive]}>{item.toUpperCase()}</Text>
+                      </TouchableOpacity>
+                    ))}
+                  </ScrollView>
+                  <TextInput
+                    value={announcementContent}
+                    onChangeText={setAnnouncementContent}
+                    placeholder="Write an update for your audience"
+                    placeholderTextColor={colors.textMuted}
+                    multiline
+                    style={[styles.messageInput, styles.announcementInput]}
+                  />
+                  <TouchableOpacity style={styles.secondaryBtn} onPress={applyAnnouncementTemplate}>
+                    <Text style={styles.secondaryBtnText}>LOAD TEMPLATE (board_announcement)</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity style={styles.sendBtn} onPress={postAnnouncement} disabled={posting}>
+                    <Text style={styles.sendBtnText}>{posting ? 'POSTING...' : 'POST TO BOARD'}</Text>
+                  </TouchableOpacity>
+                </View>
+              ) : null}
+
+              {filteredAnnouncements.length ? (
+                filteredAnnouncements.map((item, index) => (
+                  <MotiView key={item.id} from={{ opacity: 0, translateY: 10 }} animate={{ opacity: 1, translateY: 0 }} transition={{ delay: index * 24 }}>
+                    <View style={styles.announcementCard}>
+                      <View style={styles.threadTop}>
+                        <Text style={styles.threadName}>{item.title}</Text>
+                        <Text style={styles.threadTime}>{timeAgo(item.created_at)}</Text>
+                      </View>
+                      <Text style={styles.threadRole}>{(item.target_audience ?? 'all').toUpperCase()}</Text>
+                      <Text style={styles.threadPreview}>{item.content}</Text>
+                    </View>
+                  </MotiView>
+                ))
+              ) : (
+                <View style={styles.emptyWrap}>
+                  <Text style={styles.emptyTitle}>Board is quiet</Text>
+                  <Text style={styles.emptyText}>Announcements and school-wide updates will appear here.</Text>
+                </View>
+              )}
+            </>
+          ) : null}
+        </ScrollView>
+      )}
     </SafeAreaView>
   );
 }
 
-const getStyles = (colors: any) => StyleSheet.create({
-  safe: { flex: 1, backgroundColor: colors.bg },
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: SPACING.base,
-    paddingTop: SPACING.md,
-    paddingBottom: SPACING.base,
-    gap: SPACING.md,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.border,
-  },
-  backBtn: { padding: SPACING.xs },
-  backIcon: { fontSize: 22, color: colors.textPrimary },
-  title: { fontFamily: FONT_FAMILY.display, fontSize: FONT_SIZE['2xl'], color: colors.textPrimary },
-  subtitle: { fontFamily: FONT_FAMILY.body, fontSize: FONT_SIZE.sm, textTransform: 'capitalize', marginTop: 2 },
-  center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
-  list: { padding: SPACING.base, gap: SPACING.sm, paddingBottom: 20 },
-  searchWrap: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: SPACING.sm,
-    marginHorizontal: SPACING.base,
-    marginBottom: SPACING.sm,
-    backgroundColor: colors.bgCard,
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: RADIUS.lg,
-    paddingHorizontal: SPACING.md,
-  },
-  searchIcon: { fontSize: 12, color: colors.textMuted, fontFamily: FONT_FAMILY.bodyBold },
-  searchInput: { flex: 1, color: colors.textPrimary, fontFamily: FONT_FAMILY.body, fontSize: FONT_SIZE.sm, paddingVertical: 11 },
-  contactsSection: { marginBottom: SPACING.md },
-  contactsTitle: { fontFamily: FONT_FAMILY.bodySemi, fontSize: FONT_SIZE.xs, color: colors.textMuted, textTransform: 'uppercase', letterSpacing: 0.6, marginBottom: SPACING.sm },
-  contactsRow: { gap: SPACING.sm, paddingBottom: 4 },
-  contactCard: { width: 110, backgroundColor: colors.bgCard, borderWidth: 1, borderColor: colors.border, borderRadius: RADIUS.lg, padding: SPACING.md, alignItems: 'center', gap: 6 },
-  contactAvatar: { width: 42, height: 42, borderRadius: RADIUS.full, alignItems: 'center', justifyContent: 'center' },
-  contactAvatarText: { fontFamily: FONT_FAMILY.display, fontSize: FONT_SIZE.lg },
-  contactName: { fontFamily: FONT_FAMILY.bodySemi, fontSize: FONT_SIZE.xs, color: colors.textPrimary, textAlign: 'center' },
-  contactRole: { fontFamily: FONT_FAMILY.body, fontSize: FONT_SIZE.xs, textTransform: 'capitalize' },
-  threadCard: { flexDirection: 'row', alignItems: 'center', padding: SPACING.base, gap: SPACING.md, borderWidth: 1, borderColor: colors.border, borderRadius: RADIUS.lg, backgroundColor: colors.bgCard },
-  unreadCard: { borderColor: `${colors.primary}55` },
-  threadAvatar: { width: 46, height: 46, borderRadius: RADIUS.full, alignItems: 'center', justifyContent: 'center' },
-  threadAvatarText: { fontFamily: FONT_FAMILY.display, fontSize: FONT_SIZE.lg },
-  threadTopRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  threadName: { fontFamily: FONT_FAMILY.bodySemi, fontSize: FONT_SIZE.base, color: colors.textPrimary },
-  threadTime: { fontFamily: FONT_FAMILY.body, fontSize: FONT_SIZE.xs, color: colors.textMuted },
-  threadSubject: { fontFamily: FONT_FAMILY.bodyMed, fontSize: FONT_SIZE.sm, marginTop: 1 },
-  threadPreview: { fontFamily: FONT_FAMILY.body, fontSize: FONT_SIZE.sm, color: colors.textMuted, marginTop: 2 },
-  unreadDot: { width: 10, height: 10, borderRadius: RADIUS.full },
-  empty: { alignItems: 'center', paddingTop: 80, gap: SPACING.sm },
-  emptyText: { fontFamily: FONT_FAMILY.bodyMed, fontSize: FONT_SIZE.base, color: colors.textMuted },
-  msgList: { padding: SPACING.base, gap: SPACING.sm, paddingBottom: 20 },
-  bubble: { maxWidth: '75%', padding: SPACING.md, borderRadius: RADIUS.lg, gap: 4 },
-  bubbleMine: { alignSelf: 'flex-end', backgroundColor: colors.primary, borderBottomRightRadius: 4 },
-  bubbleOther: { alignSelf: 'flex-start', backgroundColor: colors.bgCard, borderWidth: 1, borderBottomLeftRadius: 4 },
-  bubbleText: { fontFamily: FONT_FAMILY.body, fontSize: FONT_SIZE.base, lineHeight: FONT_SIZE.base * 1.5 },
-  bubbleTextMine: { color: colors.white100 },
-  bubbleTextOther: { color: colors.textPrimary },
-  bubbleTime: { fontFamily: FONT_FAMILY.body, fontSize: FONT_SIZE.xs },
-  inputRow: { flexDirection: 'row', alignItems: 'flex-end', padding: SPACING.base, borderTopWidth: 1, gap: SPACING.sm },
-  msgInput: { flex: 1, borderWidth: 1, borderRadius: RADIUS.lg, paddingHorizontal: SPACING.md, paddingVertical: SPACING.sm, fontFamily: FONT_FAMILY.body, fontSize: FONT_SIZE.base, maxHeight: 100 },
-  sendBtn: { width: 44, height: 44, borderRadius: RADIUS.full, alignItems: 'center', justifyContent: 'center' },
-  sendBtnDisabled: { opacity: 0.4 },
-  sendIcon: { fontSize: 18, color: colors.white100 },
-});
+const getStyles = (colors: any) =>
+  StyleSheet.create({
+    safe: { flex: 1, backgroundColor: colors.bg },
+    summaryRow: { flexDirection: 'row', gap: SPACING.sm, paddingHorizontal: SPACING.xl, marginBottom: SPACING.md },
+    summaryCard: { flex: 1, borderWidth: 1, borderColor: colors.border, borderRadius: RADIUS.lg, backgroundColor: colors.bgCard, padding: SPACING.md },
+    summaryValue: { color: colors.textPrimary, fontFamily: FONT_FAMILY.display, fontSize: FONT_SIZE.xl },
+    summaryLabel: { color: colors.textMuted, fontFamily: FONT_FAMILY.bodyBold, fontSize: 10, letterSpacing: LETTER_SPACING.wider, marginTop: 4 },
+    searchWrap: { paddingHorizontal: SPACING.xl, marginBottom: SPACING.md },
+    searchInput: { borderWidth: 1, borderColor: colors.border, backgroundColor: colors.bgCard, borderRadius: RADIUS.lg, paddingHorizontal: SPACING.md, paddingVertical: 12, color: colors.textPrimary, fontFamily: FONT_FAMILY.body, fontSize: FONT_SIZE.sm },
+    tabRow: { paddingHorizontal: SPACING.xl, paddingBottom: SPACING.md, gap: SPACING.sm },
+    tabChip: { borderWidth: 1, borderColor: colors.border, backgroundColor: colors.bgCard, borderRadius: RADIUS.full, paddingHorizontal: 14, paddingVertical: 8 },
+    tabChipActive: { borderColor: colors.primary, backgroundColor: colors.primaryPale },
+    tabText: { color: colors.textMuted, fontFamily: FONT_FAMILY.bodyBold, fontSize: 10, letterSpacing: LETTER_SPACING.wider },
+    tabTextActive: { color: colors.primary },
+    center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
+    scrollBody: { paddingHorizontal: SPACING.xl, paddingBottom: SPACING.xl, gap: SPACING.sm },
+    threadCard: { borderWidth: 1, borderColor: colors.border, backgroundColor: colors.bgCard, borderRadius: RADIUS.lg, padding: SPACING.md, marginBottom: SPACING.sm, gap: 6 },
+    threadUnread: { borderColor: colors.primaryGlow, backgroundColor: colors.primaryPale },
+    threadTop: { flexDirection: 'row', justifyContent: 'space-between', gap: SPACING.md, alignItems: 'center' },
+    threadName: { color: colors.textPrimary, fontFamily: FONT_FAMILY.bodyBold, fontSize: FONT_SIZE.base, flex: 1 },
+    threadTime: { color: colors.textMuted, fontFamily: FONT_FAMILY.body, fontSize: FONT_SIZE.xs },
+    threadRole: { color: colors.primary, fontFamily: FONT_FAMILY.bodyBold, fontSize: 10, letterSpacing: LETTER_SPACING.wider },
+    threadSubjectText: { color: colors.textSecondary, fontFamily: FONT_FAMILY.bodyBold, fontSize: FONT_SIZE.sm },
+    threadPreview: { color: colors.textMuted, fontFamily: FONT_FAMILY.body, fontSize: FONT_SIZE.sm, lineHeight: 20 },
+    contactCard: { borderWidth: 1, borderColor: colors.border, backgroundColor: colors.bgCard, borderRadius: RADIUS.lg, padding: SPACING.md, marginBottom: SPACING.sm, gap: 4 },
+    contactName: { color: colors.textPrimary, fontFamily: FONT_FAMILY.bodyBold, fontSize: FONT_SIZE.base },
+    contactRole: { color: colors.textMuted, fontFamily: FONT_FAMILY.bodyBold, fontSize: 10, letterSpacing: LETTER_SPACING.wider },
+    boardComposer: { borderWidth: 1, borderColor: colors.primaryGlow, backgroundColor: colors.primaryPale, borderRadius: RADIUS.lg, padding: SPACING.md, gap: SPACING.sm, marginBottom: SPACING.sm },
+    sectionTitle: { color: colors.textPrimary, fontFamily: FONT_FAMILY.bodyBold, fontSize: 11, letterSpacing: LETTER_SPACING.wider },
+    audienceRow: { gap: SPACING.sm },
+    announcementCard: { borderWidth: 1, borderColor: colors.border, backgroundColor: colors.bgCard, borderRadius: RADIUS.lg, padding: SPACING.md, marginBottom: SPACING.sm, gap: 8 },
+    emptyWrap: { paddingVertical: 70, alignItems: 'center', gap: SPACING.sm },
+    emptyTitle: { color: colors.textPrimary, fontFamily: FONT_FAMILY.display, fontSize: FONT_SIZE.xl },
+    emptyText: { color: colors.textMuted, fontFamily: FONT_FAMILY.body, fontSize: FONT_SIZE.sm, textAlign: 'center' },
+    chatList: { paddingHorizontal: SPACING.xl, paddingBottom: SPACING.md, gap: SPACING.sm },
+    bubble: { maxWidth: '84%', borderRadius: RADIUS.lg, paddingHorizontal: SPACING.md, paddingVertical: 12, marginBottom: SPACING.sm },
+    bubbleMine: { alignSelf: 'flex-end', backgroundColor: colors.primary },
+    bubbleOther: { alignSelf: 'flex-start', backgroundColor: colors.bgCard, borderWidth: 1, borderColor: colors.border },
+    bubbleText: { fontFamily: FONT_FAMILY.body, fontSize: FONT_SIZE.sm, lineHeight: 20 },
+    bubbleTime: { marginTop: 6, fontFamily: FONT_FAMILY.body, fontSize: 10 },
+    threadMetaCard: { marginHorizontal: SPACING.xl, marginBottom: SPACING.md, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.bgCard, borderRadius: RADIUS.lg, padding: SPACING.md, gap: 4 },
+    composerWrap: { paddingHorizontal: SPACING.xl, paddingBottom: SPACING.lg, gap: SPACING.sm },
+    subjectInput: { borderWidth: 1, borderColor: colors.border, backgroundColor: colors.bgCard, borderRadius: RADIUS.lg, paddingHorizontal: SPACING.md, paddingVertical: 12, color: colors.textPrimary, fontFamily: FONT_FAMILY.body, fontSize: FONT_SIZE.sm },
+    messageRow: { flexDirection: 'row', alignItems: 'flex-end', gap: SPACING.sm },
+    messageInput: { flex: 1, minHeight: 52, maxHeight: 130, textAlignVertical: 'top', borderWidth: 1, borderColor: colors.border, backgroundColor: colors.bgCard, borderRadius: RADIUS.lg, paddingHorizontal: SPACING.md, paddingVertical: 12, color: colors.textPrimary, fontFamily: FONT_FAMILY.body, fontSize: FONT_SIZE.sm },
+    announcementInput: { minHeight: 120 },
+    secondaryBtn: {
+      minHeight: 44,
+      borderRadius: RADIUS.lg,
+      borderWidth: 1,
+      borderColor: colors.border,
+      backgroundColor: colors.bgCard,
+      alignItems: 'center',
+      justifyContent: 'center',
+      paddingHorizontal: SPACING.md,
+    },
+    secondaryBtnText: { color: colors.textSecondary, fontFamily: FONT_FAMILY.bodyBold, fontSize: 9, letterSpacing: LETTER_SPACING.wider },
+    sendBtn: { minWidth: 92, minHeight: 48, borderRadius: RADIUS.lg, backgroundColor: colors.primary, alignItems: 'center', justifyContent: 'center', paddingHorizontal: SPACING.md },
+    sendBtnText: { color: colors.white100, fontFamily: FONT_FAMILY.bodyBold, fontSize: 10, letterSpacing: LETTER_SPACING.wider },
+  });

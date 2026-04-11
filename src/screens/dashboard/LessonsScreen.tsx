@@ -16,11 +16,12 @@ import { MotiView } from 'moti';
 import { LinearGradient } from 'expo-linear-gradient';
 
 import { useAuth } from '../../contexts/AuthContext';
-import { supabase } from '../../lib/supabase';
+import { courseService } from '../../services/course.service';
 import { useTheme } from '../../contexts/ThemeContext';
 import { ScreenHeader } from '../../components/ui/ScreenHeader';
 import { FONT_FAMILY, FONT_SIZE } from '../../constants/typography';
 import { SPACING, RADIUS } from '../../constants/spacing';
+import { ROUTES } from '../../navigation/routes';
 
 interface LessonListItem {
   id: string;
@@ -68,38 +69,12 @@ export default function LessonsScreen({ navigation }: any) {
 
   const loadLessons = useCallback(async () => {
     try {
-      let query = supabase
-        .from('lessons')
-        .select(`
-          id,
-          title,
-          lesson_type,
-          course_id,
-          duration_minutes,
-          order_index,
-          status,
-          created_at,
-          created_by,
-          courses (
-            title,
-            programs (
-              name
-            )
-          )
-        `)
-        .order('order_index', { ascending: true, nullsFirst: false })
-        .order('created_at', { ascending: false });
-
-      if (!isStaff) {
-        query = query.eq('status', 'active');
-      }
-
-      if (profile?.role === 'teacher' && profile.id) {
-        query = query.eq('created_by', profile.id);
-      }
-
-      const { data, error } = await query.limit(120);
-      if (error) throw error;
+      const data = await courseService.listLessonsDirectory({
+        isStaff,
+        role: profile?.role ?? '',
+        userId: profile?.id,
+        limit: 120,
+      });
       setLessons((data as LessonListItem[]) ?? []);
     } catch (error: any) {
       Alert.alert('Lessons', error.message || 'Unable to load lessons.');
@@ -132,15 +107,14 @@ export default function LessonsScreen({ navigation }: any) {
   }, [lessons, search, typeFilter]);
 
   const activeCount = lessons.filter((lesson) => lesson.status === 'active').length;
+  const courseCount = new Set(lessons.map((lesson) => lesson.courses?.title).filter(Boolean)).size;
+  const programCount = new Set(lessons.map((lesson) => lesson.courses?.programs?.name).filter(Boolean)).size;
+  const totalMinutes = lessons.reduce((sum, lesson) => sum + (lesson.duration_minutes ?? 0), 0);
 
   const onToggleStatus = async (lesson: LessonListItem) => {
     const nextStatus = lesson.status === 'active' ? 'draft' : 'active';
     try {
-      const { error } = await supabase
-        .from('lessons')
-        .update({ status: nextStatus, updated_at: new Date().toISOString() })
-        .eq('id', lesson.id);
-      if (error) throw error;
+      await courseService.updateLessonStatus(lesson.id, nextStatus);
       setLessons((prev) =>
         prev.map((item) => (item.id === lesson.id ? { ...item, status: nextStatus } : item)),
       );
@@ -161,9 +135,37 @@ export default function LessonsScreen({ navigation }: any) {
     <SafeAreaView style={styles.safe}>
       <ScreenHeader
         title="Lesson Engine"
-        subtitle={`${lessons.length} lessons · ${activeCount} active`}
+        subtitle={`${lessons.length} lessons Â· ${activeCount} active`}
         onBack={() => navigation.goBack()}
+        rightAction={
+          isStaff
+            ? {
+                label: 'New',
+                onPress: () => navigation.navigate(ROUTES.LessonEditor, undefined),
+                color: colors.primary,
+              }
+            : undefined
+        }
       />
+
+      <View style={styles.statsRow}>
+        <View style={[styles.statCard, { backgroundColor: colors.bgCard, borderColor: colors.border }]}>
+          <Text style={[styles.statValue, { color: colors.primary }]}>{lessons.length}</Text>
+          <Text style={[styles.statLabel, { color: colors.textMuted }]}>Lessons</Text>
+        </View>
+        <View style={[styles.statCard, { backgroundColor: colors.bgCard, borderColor: colors.border }]}>
+          <Text style={[styles.statValue, { color: colors.success }]}>{activeCount}</Text>
+          <Text style={[styles.statLabel, { color: colors.textMuted }]}>Live</Text>
+        </View>
+        <View style={[styles.statCard, { backgroundColor: colors.bgCard, borderColor: colors.border }]}>
+          <Text style={[styles.statValue, { color: colors.info }]}>{courseCount}</Text>
+          <Text style={[styles.statLabel, { color: colors.textMuted }]}>Courses</Text>
+        </View>
+        <View style={[styles.statCard, { backgroundColor: colors.bgCard, borderColor: colors.border }]}>
+          <Text style={[styles.statValue, { color: colors.accent }]}>{programCount || Math.ceil(totalMinutes / 60)}</Text>
+          <Text style={[styles.statLabel, { color: colors.textMuted }]}>{programCount ? 'Programs' : 'Hours'}</Text>
+        </View>
+      </View>
 
       <View style={styles.searchWrap}>
         <Text style={[styles.searchIcon, { color: colors.textMuted }]}>S</Text>
@@ -247,7 +249,7 @@ export default function LessonsScreen({ navigation }: any) {
               >
                 <TouchableOpacity
                   activeOpacity={0.88}
-                  onPress={() => navigation.navigate('LessonDetail', { lessonId: lesson.id })}
+                  onPress={() => navigation.navigate(ROUTES.LessonDetail, { lessonId: lesson.id })}
                   style={[styles.card, { backgroundColor: colors.bgCard, borderColor: colors.border }]}
                 >
                   <LinearGradient
@@ -290,7 +292,7 @@ export default function LessonsScreen({ navigation }: any) {
                     </View>
 
                     <Text style={[styles.cardMeta, { color: colors.textMuted }]}>
-                      {(lesson.courses?.programs?.name ?? 'Program').toUpperCase()} · {(lesson.courses?.title ?? 'Course').toUpperCase()}
+                      {(lesson.courses?.programs?.name ?? 'Program').toUpperCase()} Â· {(lesson.courses?.title ?? 'Course').toUpperCase()}
                     </Text>
 
                     <View style={styles.tagRow}>
@@ -312,7 +314,7 @@ export default function LessonsScreen({ navigation }: any) {
                     </View>
 
                     <Text style={[styles.cardFooter, { color: colors.textMuted }]}>
-                      {active ? 'Active for learners' : 'Hidden from learners'} · {lesson.created_at ? new Date(lesson.created_at).toLocaleDateString() : 'No date'}
+                      {active ? 'Active for learners' : 'Hidden from learners'} Â· {lesson.created_at ? new Date(lesson.created_at).toLocaleDateString() : 'No date'}
                     </Text>
                   </View>
                 </TouchableOpacity>
@@ -335,12 +337,36 @@ const getStyles = (colors: any) =>
       alignItems: 'center',
       justifyContent: 'center',
     },
+    statsRow: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: SPACING.sm,
+      paddingHorizontal: SPACING.xl,
+      marginTop: SPACING.md,
+    },
+    statCard: {
+      width: '48%',
+      borderWidth: 1,
+      borderRadius: RADIUS.lg,
+      padding: SPACING.md,
+    },
+    statValue: {
+      fontFamily: FONT_FAMILY.display,
+      fontSize: FONT_SIZE.xl,
+    },
+    statLabel: {
+      fontFamily: FONT_FAMILY.body,
+      fontSize: FONT_SIZE.xs,
+      marginTop: 4,
+      textTransform: 'uppercase',
+      letterSpacing: 0.8,
+    },
     searchWrap: {
       flexDirection: 'row',
       alignItems: 'center',
       gap: SPACING.sm,
       marginHorizontal: SPACING.xl,
-      marginTop: SPACING.sm,
+      marginTop: SPACING.lg,
       marginBottom: SPACING.md,
       backgroundColor: colors.bgCard,
       borderWidth: 1,

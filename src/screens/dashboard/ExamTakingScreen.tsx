@@ -8,35 +8,18 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { MotiView } from 'moti';
 import * as Print from 'expo-print';
 import * as Sharing from 'expo-sharing';
+import { Ionicons } from '@expo/vector-icons';
+import { IconBackButton } from '../../components/ui/IconBackButton';
 import { useAuth } from '../../contexts/AuthContext';
-import { supabase } from '../../lib/supabase';
+import { ROUTES } from '../../navigation/routes';
+import { cbtService, CBTExam, Question } from '../../services/cbt.service';
 import { COLORS } from '../../constants/colors';
 import { FONT_FAMILY, FONT_SIZE } from '../../constants/typography';
 import { SPACING, RADIUS } from '../../constants/spacing';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
-interface Exam {
-  id: string;
-  title: string;
-  description: string | null;
-  duration_minutes: number | null;
-  passing_score: number | null;
-  is_active: boolean;
-  program_id: string | null;
-  metadata: any;
-}
-
-interface Question {
-  id: string;
-  question_text: string;
-  question_type: 'multiple_choice' | 'true_false' | 'fill_blank' | 'essay' | 'coding_blocks';
-  options: string[] | null;
-  correct_answer: string | null;
-  points: number;
-  metadata: any | null;
-  order_index: number | null;
-}
+type CodingMeta = { logic_sentence?: string; logic_blocks?: string[] };
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -57,8 +40,9 @@ function CodingBlocksInput({
   value: string;
   onChange: (v: string) => void;
 }) {
-  const sentence: string = question.metadata?.logic_sentence ?? '';
-  const blocks: string[] = question.metadata?.logic_blocks ?? [];
+  const meta = question.metadata as CodingMeta | null | undefined;
+  const sentence: string = meta?.logic_sentence ?? '';
+  const blocks: string[] = meta?.logic_blocks ?? [];
   const parts = sentence.split('[BLANK]');
   const filled = value ? value.split(',') : [];
 
@@ -138,7 +122,7 @@ export default function ExamTakingScreen({ navigation, route }: any) {
   const { examId, examTitle } = route.params as { examId: string; examTitle: string };
   const { profile } = useAuth();
 
-  const [exam, setExam] = useState<Exam | null>(null);
+  const [exam, setExam] = useState<CBTExam | null>(null);
   const [questions, setQuestions] = useState<Question[]>([]);
   const [answers, setAnswers] = useState<Record<string, string>>({});
   const [current, setCurrent] = useState(0);
@@ -158,6 +142,7 @@ export default function ExamTakingScreen({ navigation, route }: any) {
   const [exporting, setExporting] = useState(false);
 
   const startTimeRef = useRef(new Date());
+  const sessionIdRef = useRef<string | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const submittedRef = useRef(false);
 
@@ -173,61 +158,21 @@ export default function ExamTakingScreen({ navigation, route }: any) {
 
   const loadExam = async () => {
     try {
-      // Check already attempted
-      const { data: existing } = await supabase
-        .from('cbt_sessions')
-        .select('id, score, status')
-        .eq('exam_id', examId)
-        .eq('user_id', profile!.id)
-        .maybeSingle();
+      const prep = await cbtService.prepareStudentExamAttempt(examId, profile!.id);
 
-      if (existing) {
-        setAlreadyAttempted({ score: existing.score ?? 0, status: existing.status ?? 'completed' });
+      if (prep.type === 'blocked') {
+        setAlreadyAttempted({ score: prep.score, status: prep.status });
         setLoading(false);
         return;
       }
 
-      // Load exam + questions
-      const { data, error } = await supabase
-        .from('cbt_exams')
-        .select('*, cbt_questions(*)')
-        .eq('id', examId)
-        .single();
+      sessionIdRef.current = prep.sessionId;
+      startTimeRef.current = new Date(prep.startTimeIso);
+      setExam(prep.exam);
+      setQuestions(prep.questions);
+      setAnswers(prep.answers);
 
-      if (error || !data) throw error ?? new Error('Exam not found');
-
-      const mappedExam: Exam = {
-        id: data.id,
-        title: data.title,
-        description: data.description ?? null,
-        duration_minutes: data.duration_minutes ?? null,
-        passing_score: data.passing_score ?? null,
-        is_active: data.is_active ?? true,
-        program_id: data.program_id ?? null,
-        metadata: data.metadata ?? null,
-      };
-
-      const sortedQuestions: Question[] = ((data.cbt_questions ?? []) as any[])
-        .map((question) => ({
-          id: question.id,
-          question_text: question.question_text,
-          question_type: (question.question_type ?? 'multiple_choice') as Question['question_type'],
-          options: Array.isArray(question.options)
-            ? question.options
-            : Array.isArray(question.options?.options)
-            ? question.options.options
-            : null,
-          correct_answer: question.correct_answer ?? null,
-          points: question.points ?? 1,
-          metadata: question.metadata ?? null,
-          order_index: question.order_index ?? null,
-        }))
-        .sort((a, b) => (a.order_index ?? 0) - (b.order_index ?? 0));
-
-      setExam(mappedExam);
-      setQuestions(sortedQuestions);
-
-      const totalSecs = (data.duration_minutes ?? 60) * 60;
+      const totalSecs = (prep.exam.duration_minutes ?? 60) * 60;
       setTimeLeft(totalSecs);
     } catch (err: any) {
       Alert.alert('Error', err?.message ?? 'Failed to load exam');
@@ -286,52 +231,23 @@ export default function ExamTakingScreen({ navigation, route }: any) {
     setSubmitting(true);
 
     try {
-      let autoPoints = 0;
-      let totalPoints = 0;
-      let manualGradingRequired = false;
-
-      questions.forEach(q => {
-        totalPoints += q.points ?? 0;
-        if (q.question_type === 'essay') {
-          manualGradingRequired = true;
-          return;
-        }
-        const userAns = (answers[q.id] ?? '').trim().toLowerCase();
-        const correct = (q.correct_answer ?? '').trim().toLowerCase();
-        if (userAns === correct) autoPoints += q.points ?? 0;
-      });
-
-      const score = totalPoints > 0 ? Math.round((autoPoints / totalPoints) * 100) : 0;
-      const passingPct = exam?.passing_score ?? 70;
-      const passed = score >= passingPct;
-      const finalStatus = manualGradingRequired
-        ? 'pending_grading'
-        : passed
-        ? 'passed'
-        : 'failed';
-
-      const { error } = await supabase.from('cbt_sessions').insert({
-        exam_id: exam!.id,
-        user_id: profile!.id,
-        score,
-        status: finalStatus,
+      const { result } = await cbtService.submitExam({
+        examId: exam!.id,
+        userId: profile!.id,
+        startTime: startTimeRef.current.toISOString(),
         answers,
-        needs_grading: manualGradingRequired,
-        start_time: startTimeRef.current.toISOString(),
-        end_time: new Date().toISOString(),
-        grading_notes: manualGradingRequired ? 'Awaiting manual review' : null,
-        manual_scores: manualGradingRequired ? { raw_score: autoPoints, total_points: totalPoints } : null,
+        questions,
+        passingScore: exam?.passing_score || 70,
+        sessionId: sessionIdRef.current ?? undefined,
       });
-
-      if (error) throw error;
 
       setResult({
-        score,
-        rawScore: autoPoints,
-        totalPoints,
-        passed,
-        status: finalStatus,
-        manualGradingRequired,
+        score: result.percentage,
+        rawScore: result.score,
+        totalPoints: result.totalPoints,
+        passed: result.passed,
+        status: result.needsManualGrading ? 'pending_grading' : (result.passed ? 'passed' : 'failed'),
+        manualGradingRequired: result.needsManualGrading,
       });
       setSubmitted(true);
     } catch (err: any) {
@@ -430,7 +346,8 @@ export default function ExamTakingScreen({ navigation, route }: any) {
               </Text>
             </View>
             <TouchableOpacity style={styles.backBtnFull} onPress={() => navigation.goBack()} activeOpacity={0.8}>
-              <Text style={styles.backBtnFullText}>← Back to CBT</Text>
+              <Ionicons name="chevron-back" size={18} color={COLORS.textPrimary} />
+              <Text style={styles.backBtnFullText}>Back to CBT</Text>
             </TouchableOpacity>
           </MotiView>
         </View>
@@ -493,7 +410,8 @@ export default function ExamTakingScreen({ navigation, route }: any) {
             {/* Action buttons */}
             <View style={styles.resultBtns}>
               <TouchableOpacity style={styles.resultBtnSecondary} onPress={() => navigation.goBack()} activeOpacity={0.8}>
-                <Text style={styles.resultBtnSecondaryText}>← Back to CBT</Text>
+                <Ionicons name="chevron-back" size={18} color={COLORS.textPrimary} />
+                <Text style={styles.resultBtnSecondaryText}>Back to CBT</Text>
               </TouchableOpacity>
               <TouchableOpacity
                 style={[styles.resultBtnPrimary, { backgroundColor: COLORS.accent }]}
@@ -507,7 +425,7 @@ export default function ExamTakingScreen({ navigation, route }: any) {
               {result.passed && (
                 <TouchableOpacity
                   style={[styles.resultBtnPrimary, { backgroundColor: COLORS.success }]}
-                  onPress={() => navigation.navigate('Certificates')}
+                  onPress={() => navigation.navigate(ROUTES.Certificates)}
                   activeOpacity={0.8}
                 >
                   <LinearGradient colors={[COLORS.success, COLORS.success + 'cc']} style={StyleSheet.absoluteFill} />
@@ -530,7 +448,8 @@ export default function ExamTakingScreen({ navigation, route }: any) {
           <Text style={styles.emptyEmoji}>📭</Text>
           <Text style={styles.emptyText}>No questions found for this exam.</Text>
           <TouchableOpacity style={styles.backBtnFull} onPress={() => navigation.goBack()}>
-            <Text style={styles.backBtnFullText}>← Go Back</Text>
+            <Ionicons name="chevron-back" size={18} color={COLORS.textPrimary} />
+            <Text style={styles.backBtnFullText}>Go Back</Text>
           </TouchableOpacity>
         </View>
       </SafeAreaView>
@@ -546,7 +465,8 @@ export default function ExamTakingScreen({ navigation, route }: any) {
     <SafeAreaView style={styles.safe}>
       {/* Header */}
       <View style={styles.header}>
-        <TouchableOpacity
+        <IconBackButton
+          color={COLORS.textPrimary}
           style={styles.backBtn}
           onPress={() => {
             Alert.alert(
@@ -558,10 +478,7 @@ export default function ExamTakingScreen({ navigation, route }: any) {
               ]
             );
           }}
-          activeOpacity={0.8}
-        >
-          <Text style={styles.backArrow}>←</Text>
-        </TouchableOpacity>
+        />
 
         <View style={{ flex: 1, alignItems: 'center' }}>
           <Text style={styles.headerQ} numberOfLines={1}>
@@ -746,7 +663,14 @@ export default function ExamTakingScreen({ navigation, route }: any) {
           disabled={current === 0}
           activeOpacity={0.8}
         >
-          <Text style={[styles.navBtnText, current === 0 && styles.navBtnTextDisabled]}>← Prev</Text>
+          <View style={styles.navBtnInner}>
+            <Ionicons
+              name="chevron-back"
+              size={16}
+              color={current === 0 ? COLORS.textMuted : COLORS.textSecondary}
+            />
+            <Text style={[styles.navBtnText, current === 0 && styles.navBtnTextDisabled]}>Prev</Text>
+          </View>
         </TouchableOpacity>
 
         <TouchableOpacity
@@ -771,9 +695,23 @@ export default function ExamTakingScreen({ navigation, route }: any) {
           disabled={current === questions.length - 1}
           activeOpacity={0.8}
         >
-          <Text style={[styles.navBtnText, current === questions.length - 1 && styles.navBtnTextDisabled]}>
-            Next →
-          </Text>
+          <View style={styles.navBtnInner}>
+            <Text
+              style={[
+                styles.navBtnText,
+                current === questions.length - 1 && styles.navBtnTextDisabled,
+              ]}
+            >
+              Next
+            </Text>
+            <Ionicons
+              name="chevron-forward"
+              size={16}
+              color={
+                current === questions.length - 1 ? COLORS.textMuted : COLORS.textSecondary
+              }
+            />
+          </View>
         </TouchableOpacity>
       </View>
     </SafeAreaView>
@@ -799,7 +737,6 @@ const styles = StyleSheet.create({
     borderWidth: 1, borderColor: COLORS.border,
     alignItems: 'center', justifyContent: 'center', flexShrink: 0,
   },
-  backArrow: { fontSize: 18, color: COLORS.textPrimary },
   headerQ: { fontFamily: FONT_FAMILY.bodySemi, fontSize: FONT_SIZE.sm, color: COLORS.textPrimary },
   headerTitle: { fontFamily: FONT_FAMILY.body, fontSize: FONT_SIZE.xs, color: COLORS.textMuted, marginTop: 1 },
   timerWrap: {
@@ -918,6 +855,7 @@ const styles = StyleSheet.create({
     borderWidth: 1, borderColor: COLORS.border, borderRadius: RADIUS.md,
     backgroundColor: COLORS.bgCard,
   },
+  navBtnInner: { flexDirection: 'row', alignItems: 'center', gap: 2 },
   navBtnDisabled: { opacity: 0.35 },
   navBtnText: { fontFamily: FONT_FAMILY.bodySemi, fontSize: FONT_SIZE.sm, color: COLORS.textSecondary },
   navBtnTextDisabled: { color: COLORS.textMuted },
@@ -950,6 +888,10 @@ const styles = StyleSheet.create({
   statusPillText: { fontFamily: FONT_FAMILY.bodySemi, fontSize: FONT_SIZE.sm },
 
   backBtnFull: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
     marginTop: SPACING.md, paddingHorizontal: SPACING.xl, paddingVertical: 12,
     borderWidth: 1, borderColor: COLORS.border, borderRadius: RADIUS.lg,
     backgroundColor: COLORS.bgCard,
@@ -978,6 +920,10 @@ const styles = StyleSheet.create({
   pendingNoteText: { fontFamily: FONT_FAMILY.body, fontSize: FONT_SIZE.sm, color: COLORS.warning, textAlign: 'center' },
   resultBtns: { flexDirection: 'row', flexWrap: 'wrap', gap: SPACING.sm, marginTop: SPACING.sm, justifyContent: 'center' },
   resultBtnSecondary: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
     paddingHorizontal: SPACING.lg, paddingVertical: 12,
     borderWidth: 1, borderColor: COLORS.border, borderRadius: RADIUS.lg,
     backgroundColor: COLORS.bgCard,

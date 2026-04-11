@@ -5,10 +5,11 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { MotiView } from 'moti';
-import { supabase } from '../../lib/supabase';
+import { certificateService } from '../../services/certificate.service';
 import { COLORS } from '../../constants/colors';
 import { FONT_FAMILY, FONT_SIZE } from '../../constants/typography';
 import { SPACING, RADIUS } from '../../constants/spacing';
+import { IconBackButton } from '../../components/ui/IconBackButton';
 
 interface Certificate {
   id: string;
@@ -28,34 +29,19 @@ export default function ParentCertificatesScreen({ navigation, route }: any) {
 
   const load = async () => {
     try {
-      const { data: student } = await supabase
-        .from('students')
-        .select('user_id')
-        .eq('id', studentId)
-        .maybeSingle();
-
-      if (!student?.user_id) {
+      if (!studentId) {
         setNoPortalAccount(true);
         setCerts([]);
         return;
       }
-
+      const { hasPortal, rows } = await certificateService.listCertificatesForParentByRegistrationId(studentId);
+      if (!hasPortal) {
+        setNoPortalAccount(true);
+        setCerts([]);
+        return;
+      }
       setNoPortalAccount(false);
-
-      const { data } = await supabase
-        .from('certificates')
-        .select('id, certificate_number, verification_code, issued_date, pdf_url, courses(title)')
-        .eq('portal_user_id', student.user_id)
-        .order('issued_date', { ascending: false });
-
-      setCerts((data ?? []).map((c: any) => ({
-        id: c.id,
-        certificate_number: c.certificate_number,
-        verification_code: c.verification_code,
-        issued_date: c.issued_date,
-        pdf_url: c.pdf_url,
-        course_title: c.courses?.title ?? null,
-      })));
+      setCerts(rows);
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -76,9 +62,7 @@ export default function ParentCertificatesScreen({ navigation, route }: any) {
   return (
     <SafeAreaView style={styles.safe}>
       <View style={styles.header}>
-        <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}>
-          <Text style={styles.backIcon}>←</Text>
-        </TouchableOpacity>
+        <IconBackButton onPress={() => navigation.goBack()} color={COLORS.textPrimary} style={styles.backBtn} />
         <View>
           <Text style={styles.title}>Certificates</Text>
           {studentName && <Text style={styles.subtitle}>{studentName}</Text>}
@@ -175,7 +159,6 @@ const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: COLORS.bg },
   header: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: SPACING.base, paddingTop: SPACING.md, paddingBottom: SPACING.base, gap: SPACING.md },
   backBtn: { padding: SPACING.xs },
-  backIcon: { fontSize: 22, color: COLORS.textPrimary },
   title: { fontFamily: FONT_FAMILY.display, fontSize: FONT_SIZE['2xl'], color: COLORS.textPrimary, flex: 1 },
   subtitle: { fontFamily: FONT_FAMILY.body, fontSize: FONT_SIZE.sm, color: COLORS.textMuted, marginTop: 2 },
   countBadge: { width: 28, height: 28, borderRadius: 14, backgroundColor: COLORS.primaryPale, alignItems: 'center', justifyContent: 'center' },

@@ -7,10 +7,12 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { MotiView } from 'moti';
 import { StatusBar } from 'expo-status-bar';
-import { supabase } from '../../lib/supabase';
+import { Ionicons } from '@expo/vector-icons';
+import { studentService } from '../../services/student.service';
 import { COLORS } from '../../constants/colors';
 import { FONT_FAMILY, FONT_SIZE } from '../../constants/typography';
 import { SPACING, RADIUS } from '../../constants/spacing';
+import { ROUTES } from '../../navigation/routes';
 
 // ── Data ─────────────────────────────────────────────────────────────────────
 
@@ -206,7 +208,7 @@ export default function PublicStudentRegistrationScreen({ navigation }: any) {
     }
     setSubmitting(true);
     try {
-      const { error } = await supabase.from('students').insert({
+      await studentService.insertPublicStudentInterestRow({
         name: fullName.trim(),
         full_name: fullName.trim(),
         student_email: parentEmail.trim() || null,
@@ -219,12 +221,11 @@ export default function PublicStudentRegistrationScreen({ navigation }: any) {
         date_of_birth: dateOfBirth.trim() || null,
         gender: gender || null,
         state: state || null,
-        notes: message.trim() || null,
+        goals: message.trim() || null,
         status: 'pending',
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
       });
-      if (error) throw error;
       setSuccessVisible(true);
     } catch (err: any) {
       Alert.alert('Submission Failed', err.message || 'Please try again.');
@@ -257,12 +258,13 @@ export default function PublicStudentRegistrationScreen({ navigation }: any) {
           >
             {/* Header */}
             <MotiView from={{ opacity: 0, translateY: -10 }} animate={{ opacity: 1, translateY: 0 }}>
-              <TouchableOpacity onPress={goBack} style={styles.backBtn}>
-                <Text style={styles.backText}>← {step === 0 ? 'Back to Login' : 'Back'}</Text>
+              <TouchableOpacity onPress={goBack} style={styles.backBtn} activeOpacity={0.7}>
+                <Ionicons name="chevron-back" size={20} color={COLORS.primaryLight} />
+                <Text style={styles.backText}>{step === 0 ? 'Back to Login' : 'Back'}</Text>
               </TouchableOpacity>
 
               <View style={styles.brandRow}>
-                <Image source={require('../../../assets/rillcod-icon.png')} style={styles.brandLogo} resizeMode="cover" />
+                <Image source={require('../../../assets/rillcod-icon.png')} style={styles.brandLogo} resizeMode="contain" />
                 <Text style={styles.brandName}>Rillcod Academy</Text>
               </View>
 
@@ -501,7 +503,7 @@ export default function PublicStudentRegistrationScreen({ navigation }: any) {
 
             <TouchableOpacity
               style={styles.primaryBtn}
-              onPress={() => { setSuccessVisible(false); navigation.navigate('Login'); }}
+              onPress={() => { setSuccessVisible(false); navigation.navigate(ROUTES.Login); }}
             >
               <LinearGradient colors={COLORS.gradPrimary as any} style={styles.primaryBtnGrad}>
                 <Text style={styles.primaryBtnText}>Back to Login</Text>
@@ -522,7 +524,7 @@ const styles = StyleSheet.create({
   glow2: { position: 'absolute', bottom: 100, left: -80, width: 200, height: 200, borderRadius: 100, backgroundColor: 'rgba(91,33,182,0.08)' },
   scroll: { padding: SPACING.xl, paddingBottom: 60 },
 
-  backBtn: { marginBottom: SPACING.md },
+  backBtn: { flexDirection: 'row', alignItems: 'center', gap: 4, marginBottom: SPACING.md },
   backText: { fontFamily: FONT_FAMILY.bodySemi, fontSize: FONT_SIZE.sm, color: COLORS.primaryLight },
   brandRow: { flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: SPACING.lg },
   brandLogo: { width: 44, height: 44, borderRadius: 12, overflow: 'hidden' },

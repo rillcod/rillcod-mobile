@@ -8,11 +8,12 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { MotiView } from 'moti';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useAuth } from '../../contexts/AuthContext';
-import { supabase } from '../../lib/supabase';
-import type { Database } from '../../types/supabase';
+import { liveSessionService, type LiveSessionInsert } from '../../services/live-session.service';
+import { programService } from '../../services/program.service';
 import { COLORS } from '../../constants/colors';
 import { FONT_FAMILY, FONT_SIZE } from '../../constants/typography';
 import { SPACING, RADIUS } from '../../constants/spacing';
+import { IconBackButton } from '../../components/ui/IconBackButton';
 
 type SessionStatus = 'scheduled' | 'live' | 'completed' | 'cancelled';
 type FilterTab = 'upcoming' | 'live' | 'past' | 'all';
@@ -83,14 +84,10 @@ export default function LiveSessionsScreen({ navigation }: any) {
 
   const load = useCallback(async () => {
     try {
-      const { data, error } = await supabase
-        .from('live_sessions')
-        .select('id, title, description, scheduled_at, status, program_id, session_url, platform, duration_minutes, recording_url, host_id, created_at, programs(name)')
-        .order('scheduled_at', { ascending: false });
-      if (error) throw error;
+      const data = await liveSessionService.listSessionsForScreen();
       setSessions((data ?? []) as unknown as LiveSession[]);
-      const { data: progs } = await supabase.from('programs').select('id, name').order('name');
-      setPrograms((progs ?? []) as Program[]);
+      const { data: progRows } = await programService.listPrograms({});
+      setPrograms((progRows ?? []).map((p) => ({ id: p.id, name: p.name })) as Program[]);
     } catch (e: any) {
       Alert.alert('Error', e.message);
     } finally {
@@ -104,21 +101,21 @@ export default function LiveSessionsScreen({ navigation }: any) {
   const onRefresh = () => { setRefreshing(true); load(); };
 
   const updateSessionStatus = async (sessionId: string, status: SessionStatus) => {
-    const { error } = await supabase.from('live_sessions').update({ status }).eq('id', sessionId);
-    if (error) {
-      Alert.alert('Update failed', error.message);
-      return;
+    try {
+      await liveSessionService.updateSessionStatus(sessionId, status);
+      load();
+    } catch (e: any) {
+      Alert.alert('Update failed', e.message);
     }
-    load();
   };
 
   const deleteSession = async (sessionId: string) => {
-    const { error } = await supabase.from('live_sessions').delete().eq('id', sessionId);
-    if (error) {
-      Alert.alert('Delete failed', error.message);
-      return;
+    try {
+      await liveSessionService.deleteSession(sessionId);
+      load();
+    } catch (e: any) {
+      Alert.alert('Delete failed', e.message);
     }
-    load();
   };
 
   const filtered = sessions.filter(s => {
@@ -147,7 +144,7 @@ export default function LiveSessionsScreen({ navigation }: any) {
 
     setSaving(true);
     try {
-      const payload: Database['public']['Tables']['live_sessions']['Insert'] = {
+      const payload: LiveSessionInsert = {
         title: formTitle.trim(),
         description: formDesc.trim() || null,
         scheduled_at: scheduledAt,
@@ -159,8 +156,7 @@ export default function LiveSessionsScreen({ navigation }: any) {
         host_id: profile.id,
         school_id: profile?.school_id || null,
       };
-      const { error } = await supabase.from('live_sessions').insert(payload);
-      if (error) throw error;
+      await liveSessionService.insertSession(payload);
       setShowModal(false);
       setFormTitle(''); setFormDesc(''); setFormDate(''); setFormProgramId(''); setFormPlatform('zoom'); setFormUrl(''); setFormDuration('60');
       load();
@@ -270,9 +266,7 @@ export default function LiveSessionsScreen({ navigation }: any) {
   return (
     <SafeAreaView style={styles.safe}>
       <View style={styles.header}>
-        <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}>
-          <Text style={styles.backArrow}>←</Text>
-        </TouchableOpacity>
+        <IconBackButton onPress={() => navigation.goBack()} color={COLORS.textPrimary} style={styles.backBtn} />
         <Text style={styles.headerTitle}>Live Sessions</Text>
         {isStaff && (
           <TouchableOpacity style={styles.addBtn} onPress={() => setShowModal(true)}>
@@ -414,7 +408,6 @@ const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: COLORS.bg },
   header: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: SPACING.base, paddingVertical: SPACING.md, gap: SPACING.sm },
   backBtn: { width: 36, height: 36, borderRadius: RADIUS.md, borderWidth: 1, borderColor: COLORS.border, alignItems: 'center', justifyContent: 'center' },
-  backArrow: { fontSize: 18, color: COLORS.textPrimary },
   headerTitle: { flex: 1, fontSize: FONT_SIZE.lg, fontFamily: FONT_FAMILY.heading, color: COLORS.textPrimary },
   addBtn: { borderRadius: RADIUS.md, overflow: 'hidden' },
   addBtnInner: { paddingHorizontal: SPACING.md, paddingVertical: SPACING.sm },

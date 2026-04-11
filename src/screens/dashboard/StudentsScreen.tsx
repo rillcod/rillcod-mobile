@@ -1,4 +1,4 @@
-﻿import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity,
   TextInput, RefreshControl, ActivityIndicator, Platform,
@@ -7,12 +7,14 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { MotiView } from 'moti';
 import { useAuth } from '../../contexts/AuthContext';
-import { supabase } from '../../lib/supabase';
+import { studentService } from '../../services/student.service';
 import { COLORS } from '../../constants/colors';
 import { FONT_FAMILY, FONT_SIZE, LETTER_SPACING } from '../../constants/typography';
 import { SPACING, RADIUS } from '../../constants/spacing';
 import { Alert } from 'react-native';
 import { AdminCollectionHeader } from '../../components/ui/AdminCollectionHeader';
+import { ROUTES } from '../../navigation/routes';
+import { shareCsv } from '../../lib/csv';
 
 interface Student {
   id: string;
@@ -44,26 +46,35 @@ export default function StudentsScreen({ navigation }: any) {
   const isAdmin = profile?.role === 'admin';
   const canAdd = isAdmin || profile?.role === 'teacher';
 
+  const isTeacher = profile?.role === 'teacher';
+
   const load = useCallback(async () => {
-    let q = supabase
-      .from('portal_users')
-      .select('id, full_name, email, school_name, is_active, created_at, section_class')
-      .eq('role', 'student')
-      .order('created_at', { ascending: false })
-      .limit(100);
+    try {
+      if (isTeacher && profile?.id) {
+        const { rows, total } = await studentService.listStudentsByTeacherClasses(profile.id);
+        setStudents(rows as Student[]);
+        setFiltered(rows as Student[]);
+        setTotal(total);
+        return;
+      }
 
-    if (!isAdmin && profile?.school_id) {
-      q = q.eq('school_id', profile.school_id);
+      const { rows, total } = await studentService.listStudentsDirectory({
+        isAdmin,
+        schoolId: profile?.school_id,
+        limit: 100,
+      });
+      setStudents(rows as Student[]);
+      setFiltered(rows as Student[]);
+      setTotal(total);
+    } catch (e) {
+      console.warn('StudentsScreen load', e);
+      setStudents([]);
+      setFiltered([]);
+      setTotal(0);
+    } finally {
+      setLoading(false);
     }
-
-    const { data, count } = await q;
-    if (data) {
-      setStudents(data as Student[]);
-      setFiltered(data as Student[]);
-      setTotal(count ?? data.length);
-    }
-    setLoading(false);
-  }, [profile, isAdmin]);
+  }, [profile, isAdmin, isTeacher]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -86,6 +97,30 @@ export default function StudentsScreen({ navigation }: any) {
     setRefreshing(false);
   };
 
+  const exportStudentsCsv = async () => {
+    if (filtered.length === 0) {
+      Alert.alert('Export', 'No rows to export.');
+      return;
+    }
+    const rows: string[][] = [
+      ['id', 'full_name', 'email', 'school_name', 'section_class', 'is_active', 'created_at'],
+      ...filtered.map((s) => [
+        s.id,
+        s.full_name,
+        s.email,
+        s.school_name ?? '',
+        s.section_class ?? '',
+        s.is_active ? 'true' : 'false',
+        s.created_at,
+      ]),
+    ];
+    try {
+      await shareCsv('students-export.csv', rows);
+    } catch (e: any) {
+      Alert.alert('Export', e?.message ?? 'Could not share CSV.');
+    }
+  };
+
   const handleDelete = (studentId: string, name: string) => {
     Alert.alert(
       'Delete Student',
@@ -97,12 +132,11 @@ export default function StudentsScreen({ navigation }: any) {
           style: 'destructive',
           onPress: async () => {
             try {
-              const { error } = await supabase.from('portal_users').delete().eq('id', studentId);
-              if (error) throw error;
+              await studentService.deleteStudent(studentId);
               setStudents((prev) => prev.filter((s) => s.id !== studentId));
               Alert.alert('Deleted', 'Student removed successfully.');
             } catch (err: any) {
-              Alert.alert('Error', err.message);
+              Alert.alert('Error', err.message ?? 'Remove failed');
             }
           },
         },
@@ -125,8 +159,8 @@ export default function StudentsScreen({ navigation }: any) {
         title="Students"
         subtitle={`${total} registered learners`}
         onBack={() => navigation.goBack()}
-        secondaryAction={canAdd ? { label: 'Bulk', onPress: () => navigation.navigate('BulkRegister') } : undefined}
-        primaryAction={canAdd ? { label: 'Add', onPress: () => navigation.navigate('AddStudent') } : undefined}
+        secondaryAction={canAdd ? { label: 'Bulk reg.', onPress: () => navigation.navigate(ROUTES.BulkRegister) } : undefined}
+        primaryAction={canAdd ? { label: 'Add', onPress: () => navigation.navigate(ROUTES.AddStudent) } : undefined}
         colors={COLORS}
       />
 
@@ -144,6 +178,19 @@ export default function StudentsScreen({ navigation }: any) {
             <Text style={styles.clearBtn}>Clear</Text>
           </TouchableOpacity>
         )}
+        <TouchableOpacity onPress={() => void exportStudentsCsv()}>
+          <Text style={styles.clearBtn}>CSV</Text>
+        </TouchableOpacity>
+        {canAdd ? (
+          <TouchableOpacity onPress={() => navigation.navigate(ROUTES.StudentImport)}>
+            <Text style={styles.clearBtn}>Import</Text>
+          </TouchableOpacity>
+        ) : null}
+        {canAdd ? (
+          <TouchableOpacity onPress={() => navigation.navigate(ROUTES.EnrolStudents)}>
+            <Text style={styles.clearBtn}>Enrol</Text>
+          </TouchableOpacity>
+        ) : null}
       </View>
 
       <ScrollView
@@ -164,7 +211,7 @@ export default function StudentsScreen({ navigation }: any) {
               animate={{ opacity: 1, translateX: 0 }}
               transition={{ type: 'spring', delay: i * 40 }}
             >
-              <TouchableOpacity style={styles.card} activeOpacity={0.82} onPress={() => navigation.navigate('StudentDetail', { studentId: s.id })}>
+              <TouchableOpacity style={styles.card} activeOpacity={0.82} onPress={() => navigation.navigate(ROUTES.StudentDetail, { studentId: s.id })}>
                 <LinearGradient colors={[COLORS.admin + '08', 'transparent']} style={StyleSheet.absoluteFill} />
                 <Avatar name={s.full_name} color={COLORS.admin} />
                 <View style={styles.cardContent}>

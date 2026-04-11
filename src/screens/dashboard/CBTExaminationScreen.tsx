@@ -12,22 +12,15 @@ import * as Print from 'expo-print';
 import * as Sharing from 'expo-sharing';
 import { useAuth } from '../../contexts/AuthContext';
 import { useTheme } from '../../contexts/ThemeContext';
-import { supabase } from '../../lib/supabase';
-import { FONT_FAMILY, FONT_SIZE, LETTER_SPACING } from '../../constants/typography';
-import { SPACING, RADIUS, SHADOW } from '../../constants/spacing';
+import { ROUTES } from '../../navigation/routes';
 import { useHaptics } from '../../hooks/useHaptics';
+import { cbtService, Question } from '../../services/cbt.service';
+import { FONT_FAMILY, FONT_SIZE, LETTER_SPACING } from '../../constants/typography';
+import { SPACING, RADIUS } from '../../constants/spacing';
 
 const { width } = Dimensions.get('window');
 
-interface Question {
-  id: string;
-  question_text: string;
-  question_type: 'multiple_choice' | 'true_false' | 'fill_blank' | 'essay' | 'coding_blocks';
-  options: string[] | null;
-  correct_answer: string | null;
-  points: number;
-  metadata: any;
-}
+// Question interface is now imported from cbtService
 
 export default function CBTExaminationScreen({ route, navigation }: any) {
   const { examId } = route.params;
@@ -46,49 +39,45 @@ export default function CBTExaminationScreen({ route, navigation }: any) {
   const [submitted, setSubmitted] = useState(false);
   const [result, setResult] = useState<any>(null);
   const [exporting, setExporting] = useState(false);
+  const [alreadyAttempted, setAlreadyAttempted] = useState<{ score: number; status: string } | null>(null);
 
   const startTimeRef = useRef(new Date());
+  const sessionIdRef = useRef<string | null>(null);
 
   // Fetch Exam Data
   useEffect(() => {
     const fetchData = async () => {
-      const { data: examData, error } = await supabase
-        .from('cbt_exams')
-        .select(`
-          *,
-          cbt_questions (*)
-        `)
-        .eq('id', examId)
-        .single();
-
-      if (error || !examData) {
+      try {
+        if (!profile?.id) {
+          setLoading(false);
+          return;
+        }
+        const prep = await cbtService.prepareStudentExamAttempt(examId, profile.id);
+        if (prep.type === 'blocked') {
+          setAlreadyAttempted({ score: prep.score, status: prep.status });
+          setLoading(false);
+          return;
+        }
+        sessionIdRef.current = prep.sessionId;
+        startTimeRef.current = new Date(prep.startTimeIso);
+        setExam(prep.exam);
+        setQuestions(prep.questions);
+        setAnswers(prep.answers);
+        setTimeLeft((prep.exam.duration_minutes || 60) * 60);
+      } catch (error) {
         Alert.alert('Error', 'Could not load exam data.');
         navigation.goBack();
-        return;
+      } finally {
+        setLoading(false);
       }
-
-      setExam(examData);
-      setQuestions(
-        ((examData.cbt_questions ?? []) as any[]).map((question) => ({
-          id: question.id,
-          question_text: question.question_text,
-          question_type: (question.question_type ?? 'multiple_choice') as Question['question_type'],
-          options: Array.isArray(question.options) ? question.options : Array.isArray(question.options?.options) ? question.options.options : null,
-          correct_answer: question.correct_answer,
-          points: question.points ?? 1,
-          metadata: question.metadata ?? null,
-        }))
-      );
-      setTimeLeft((examData.duration_minutes || 60) * 60);
-      setLoading(false);
     };
 
     fetchData();
-  }, [examId]);
+  }, [examId, profile?.id]);
 
   // Timer Logic
   useEffect(() => {
-    if (loading || submitted || questions.length === 0) return;
+    if (loading || submitted || alreadyAttempted || questions.length === 0) return;
 
     const timer = setInterval(() => {
       setTimeLeft(prev => {
@@ -102,7 +91,7 @@ export default function CBTExaminationScreen({ route, navigation }: any) {
     }, 1000);
 
     return () => clearInterval(timer);
-  }, [loading, submitted, questions.length]);
+  }, [loading, submitted, alreadyAttempted, questions.length]);
 
   const handleSubmit = async (auto = false) => {
     if (submitting || submitted) return;
@@ -115,46 +104,17 @@ export default function CBTExaminationScreen({ route, navigation }: any) {
     await light();
 
     try {
-      let score = 0;
-      let totalPoints = 0;
-      let manualGradingRequired = false;
-
-      questions.forEach(q => {
-        totalPoints += q.points || 0;
-        if (q.question_type === 'essay') {
-          manualGradingRequired = true;
-        } else {
-          const studentAns = (answers[q.id] || '').trim().toLowerCase();
-          const correctAns = (q.correct_answer || '').trim().toLowerCase();
-          if (studentAns === correctAns) {
-            score += q.points || 0;
-          }
-        }
+      const { result } = await cbtService.submitExam({
+        examId,
+        userId: profile!.id,
+        startTime: startTimeRef.current.toISOString(),
+        answers,
+        questions,
+        passingScore: exam?.passing_score || 70,
+        sessionId: sessionIdRef.current ?? undefined,
       });
 
-      const percentage = totalPoints > 0 ? Math.round((score / totalPoints) * 100) : 0;
-      const passed = percentage >= (exam?.passing_score || 70);
-
-      const { data: session, error } = await supabase
-        .from('cbt_sessions')
-        .insert({
-          exam_id: examId,
-          user_id: profile!.id,
-          start_time: startTimeRef.current.toISOString(),
-          end_time: new Date().toISOString(),
-          score: percentage,
-          status: manualGradingRequired ? 'pending_grading' : (passed ? 'passed' : 'failed'),
-          needs_grading: manualGradingRequired,
-          answers,
-          grading_notes: manualGradingRequired ? 'Awaiting manual review' : null,
-          manual_scores: manualGradingRequired ? { raw_score: score, total_points: totalPoints } : null,
-        })
-        .select()
-        .single();
-
-      if (error) throw error;
-
-      setResult({ score, totalPoints, percentage, passed, manualGradingRequired });
+      setResult(result);
       setSubmitted(true);
       await hapticSuccess();
     } catch (err: any) {
@@ -225,6 +185,41 @@ export default function CBTExaminationScreen({ route, navigation }: any) {
     );
   }
 
+  if (alreadyAttempted) {
+    const scoreColor =
+      alreadyAttempted.status === 'passed'
+        ? colors.success
+        : alreadyAttempted.status === 'pending_grading'
+          ? colors.warning
+          : colors.error;
+    return (
+      <SafeAreaView style={styles.safe}>
+        <View style={[styles.center, { padding: SPACING.xl }]}>
+          <Text style={[styles.examTitle, { color: colors.textPrimary, marginBottom: SPACING.md }]}>Already completed</Text>
+          <Text style={[styles.resultDetailed, { color: colors.textSecondary, textAlign: 'center', marginBottom: SPACING.lg }]}>
+            You already submitted this exam. Scores below reflect your recorded attempt.
+          </Text>
+          <View style={[styles.timerBox, { borderColor: scoreColor, marginBottom: SPACING.md }]}>
+            <Text style={[styles.timerText, { color: scoreColor }]}>{alreadyAttempted.score}%</Text>
+          </View>
+          <Text style={[styles.progressText, { color: colors.textMuted }]}>
+            {alreadyAttempted.status === 'pending_grading'
+              ? 'Pending instructor review'
+              : alreadyAttempted.status === 'passed'
+                ? 'Passed'
+                : 'Recorded'}
+          </Text>
+          <TouchableOpacity
+            style={[styles.finishBtn, { backgroundColor: colors.primary, marginTop: SPACING.xl }]}
+            onPress={() => navigation.navigate(ROUTES.CBT)}
+          >
+            <Text style={styles.finishBtnText}>BACK TO HUB</Text>
+          </TouchableOpacity>
+        </View>
+      </SafeAreaView>
+    );
+  }
+
   if (submitted && result) {
     return (
       <SafeAreaView style={styles.safe}>
@@ -252,7 +247,7 @@ export default function CBTExaminationScreen({ route, navigation }: any) {
 
             <TouchableOpacity 
               style={[styles.finishBtn, { backgroundColor: colors.primary }]}
-              onPress={() => navigation.navigate('CBT')}
+              onPress={() => navigation.navigate(ROUTES.CBT)}
             >
               <Text style={styles.finishBtnText}>RETURN TO HUB</Text>
             </TouchableOpacity>

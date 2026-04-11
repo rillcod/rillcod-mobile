@@ -7,20 +7,28 @@ const { width } = Dimensions.get('window');
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { MotiView } from 'moti';
 import { LinearGradient } from 'expo-linear-gradient';
-import { supabase } from '../../lib/supabase';
+import { portalUserAdminService } from '../../services/portal-user-admin.service';
+import { schoolService } from '../../services/school.service';
 import { COLORS } from '../../constants/colors';
 import { FONT_FAMILY, FONT_SIZE } from '../../constants/typography';
 import { SPACING, RADIUS } from '../../constants/spacing';
+import { IconBackButton } from '../../components/ui/IconBackButton';
+import { RoleGuard } from '../../components/ui/RoleGuard';
+import { ROUTES } from '../../navigation/routes';
 
 interface User {
   id: string;
   full_name: string;
   email: string;
   role: string;
+  phone: string | null;
+  school_id: string | null;
   school_name: string | null;
   is_active: boolean;
   created_at: string;
   section_class: string | null;
+  last_login: string | null;
+  linked_school_count?: number;
 }
 
 const ROLE_COLORS: Record<string, string> = {
@@ -59,19 +67,18 @@ export default function UsersScreen({ navigation }: any) {
   const [createForm, setCreateForm] = useState({ email: '', password: '', full_name: '', role: 'student' });
 
   const load = useCallback(async () => {
-    const { data } = await supabase
-      .from('portal_users')
-      .select('id, full_name, email, role, school_name, school_id, is_active, created_at, section_class, phone')
-      .order('created_at', { ascending: false })
-      .limit(200);
-    if (data) { setUsers(data as User[]); setFiltered(data as User[]); }
-    setLoading(false);
+    try {
+      const nextUsers = (await portalUserAdminService.listUsersForAdminScreen()) as User[];
+      setUsers(nextUsers);
+      setFiltered(nextUsers);
+    } finally {
+      setLoading(false);
+    }
   }, []);
 
   const [schools, setSchools] = useState<{ id: string; name: string }[]>([]);
   useEffect(() => {
-    supabase.from('schools').select('id, name').eq('status', 'approved').limit(100)
-      .then(({ data }) => { if (data) setSchools(data as any[]); });
+    schoolService.listApprovedSchoolOptions(100).then((data) => setSchools(data as { id: string; name: string }[]));
   }, []);
 
   useEffect(() => { load(); }, [load]);
@@ -99,8 +106,12 @@ export default function UsersScreen({ navigation }: any) {
         {
           text: user.is_active ? 'Deactivate' : 'Activate',
           onPress: async () => {
-            const { error } = await supabase.from('portal_users').update({ is_active: !user.is_active }).eq('id', user.id);
-            if (!error) load();
+            try {
+              await portalUserAdminService.setPortalUserActive(user.id, !user.is_active);
+              load();
+            } catch {
+              /* ignore */
+            }
           },
         },
       ]
@@ -117,9 +128,12 @@ export default function UsersScreen({ navigation }: any) {
           text: 'Delete Permanently',
           style: 'destructive',
           onPress: async () => {
-            const { error } = await supabase.from('portal_users').delete().eq('id', u.id);
-            if (error) Alert.alert('Error', error.message);
-            else load();
+            try {
+              await portalUserAdminService.hardDeletePortalUser(u.id);
+              load();
+            } catch (err: any) {
+              Alert.alert('Error', err?.message ?? 'Delete failed');
+            }
           },
         },
       ]
@@ -142,17 +156,14 @@ export default function UsersScreen({ navigation }: any) {
     if (!editing) return;
     setSaving(true);
     try {
-      const { error } = await supabase
-        .from('portal_users')
-        .update({
-          full_name: editForm.full_name,
-          role: editForm.role,
-          is_active: editForm.is_active,
-          school_id: editForm.school_id || null,
-          school_name: editForm.school_name || null,
-        })
-        .eq('id', editing.id);
-      if (error) throw error;
+      await portalUserAdminService.updatePortalUserAdminEdit(editing.id, {
+        full_name: editForm.full_name,
+        role: editForm.role,
+        phone: editForm.phone || null,
+        is_active: editForm.is_active,
+        school_id: editForm.school_id || null,
+        school_name: editForm.school_name || null,
+      });
       setEditing(null);
       load();
     } catch (e: any) {
@@ -163,26 +174,22 @@ export default function UsersScreen({ navigation }: any) {
   };
 
   const handleCreate = async () => {
-    if (!createForm.email || !createForm.password || !createForm.full_name) {
-      Alert.alert('Missing Fields', 'All fields are required');
-      return;
-    }
-    setSaving(true);
-    try {
-      // Direct insert for portal_users (assumes backend handles auth or Admin can create rows)
-      // On web we use /api/auth/signup. On mobile direct signup creates a user but might auto-login?
-      // Supabase direct signup usually logs you in. Admin creation should use a service role on backend.
-      // I'll remind the user that specialized user-creation might need an API call.
-      Alert.alert('Notice', 'Admin user creation is best handled via the web portal or a dedicated API to manage Auth accounts securely.');
-    } finally {
-      setSaving(false);
-    }
+    setShowCreate(false);
+    Alert.alert('Provision User', 'Choose the closest workflow for the user you want to create.', [
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Student', onPress: () => navigation.navigate(ROUTES.AddStudent) },
+      { text: 'Teacher', onPress: () => navigation.navigate(ROUTES.AddTeacher) },
+      { text: 'School', onPress: () => navigation.navigate(ROUTES.AddSchool) },
+    ]);
   };
 
   const roleCounts = ALL_ROLES.slice(1).reduce((acc, r) => {
     acc[r] = users.filter(u => u.role === r).length;
     return acc;
   }, {} as Record<string, number>);
+  const activeUsers = users.filter((user) => user.is_active).length;
+  const inactiveUsers = users.length - activeUsers;
+  const recentLogins = users.filter((user) => user.last_login).length;
 
   if (loading) return (
     <View style={styles.loadWrap}>
@@ -191,15 +198,32 @@ export default function UsersScreen({ navigation }: any) {
   );
 
   return (
+    <RoleGuard allow={['admin']} navigation={navigation}>
     <SafeAreaView style={styles.safe}>
       {/* Header */}
       <View style={styles.header}>
-        <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}>
-          <Text style={styles.backArrow}>←</Text>
-        </TouchableOpacity>
+          <IconBackButton onPress={() => navigation.goBack()} color={COLORS.textPrimary} style={styles.backBtn} />
         <View style={{ flex: 1 }}>
           <Text style={styles.title}>Users</Text>
           <Text style={styles.subtitle}>{users.length} portal accounts</Text>
+        </View>
+        <TouchableOpacity onPress={() => setShowCreate(true)} style={styles.createBtn}>
+          <Text style={styles.createBtnText}>+ Create</Text>
+        </TouchableOpacity>
+      </View>
+
+      <View style={styles.summaryRow}>
+        <View style={styles.summaryCard}>
+          <Text style={styles.summaryValue}>{activeUsers}</Text>
+          <Text style={styles.summaryLabel}>Active</Text>
+        </View>
+        <View style={styles.summaryCard}>
+          <Text style={styles.summaryValue}>{inactiveUsers}</Text>
+          <Text style={styles.summaryLabel}>Inactive</Text>
+        </View>
+        <View style={styles.summaryCard}>
+          <Text style={styles.summaryValue}>{recentLogins}</Text>
+          <Text style={styles.summaryLabel}>Seen</Text>
         </View>
       </View>
 
@@ -240,8 +264,8 @@ export default function UsersScreen({ navigation }: any) {
             <MotiView key={u.id} from={{ opacity: 0, translateX: -10 }} animate={{ opacity: 1, translateX: 0 }} transition={{ delay: i * 30 }}>
               <TouchableOpacity style={styles.card} activeOpacity={0.8}
                 onPress={() => {
-                  if (u.role === 'student') navigation.navigate('StudentDetail', { studentId: u.id });
-                  else if (u.role === 'teacher') navigation.navigate('TeacherDetail', { teacherId: u.id });
+                  if (u.role === 'student') navigation.navigate(ROUTES.StudentDetail, { studentId: u.id });
+                  else if (u.role === 'teacher') navigation.navigate(ROUTES.TeacherDetail, { teacherId: u.id });
                 }}>
                 <LinearGradient colors={[rc + '12', 'transparent']} style={StyleSheet.absoluteFill} />
                 <View style={[styles.avatar, { backgroundColor: rc + '22' }]}>
@@ -250,6 +274,14 @@ export default function UsersScreen({ navigation }: any) {
                 <View style={styles.cardContent}>
                   <Text style={styles.cardName} numberOfLines={1}>{u.full_name}</Text>
                   <Text style={styles.cardEmail} numberOfLines={1}>{u.email}</Text>
+                  {u.phone ? <Text style={styles.cardMeta} numberOfLines={1}>{u.phone}</Text> : null}
+                  {u.last_login ? (
+                    <Text style={styles.cardMeta}>
+                      Last login {new Date(u.last_login).toLocaleDateString()}
+                    </Text>
+                  ) : (
+                    <Text style={styles.cardMeta}>No login recorded yet</Text>
+                  )}
                   <View style={{ flexDirection: 'row', gap: 6, marginTop: 4, flexWrap: 'wrap' }}>
                     <View style={[styles.roleBadge, { backgroundColor: rc + '22', borderColor: rc + '44' }]}>
                       <Text style={[styles.roleBadgeText, { color: rc }]}>{u.role}</Text>
@@ -257,6 +289,11 @@ export default function UsersScreen({ navigation }: any) {
                     {u.school_name && (
                       <View style={styles.schoolChip}>
                         <Text style={styles.schoolChipText}>🏫 {u.school_name}</Text>
+                      </View>
+                    )}
+                    {u.role === 'teacher' && (u.linked_school_count ?? 0) > 1 && (
+                      <View style={styles.schoolChip}>
+                        <Text style={styles.schoolChipText}>🔗 {u.linked_school_count} schools</Text>
                       </View>
                     )}
                     {u.section_class && (
@@ -312,6 +349,24 @@ export default function UsersScreen({ navigation }: any) {
               </View>
 
               <View style={styles.inputWrap}>
+                <Text style={styles.label}>PHONE</Text>
+                <TextInput style={styles.input} value={editForm.phone} onChangeText={t => setEditForm(p => ({ ...p, phone: t }))} placeholder="Phone number" placeholderTextColor={COLORS.textMuted} />
+              </View>
+
+              <View style={styles.inputWrap}>
+                <Text style={styles.label}>ACTIVE STATUS</Text>
+                <TouchableOpacity
+                  onPress={() => setEditForm(p => ({ ...p, is_active: !p.is_active }))}
+                  style={[styles.statusToggle, { borderColor: editForm.is_active ? COLORS.success : COLORS.error }]}
+                >
+                  <View style={[styles.activeDot, { backgroundColor: editForm.is_active ? COLORS.success : COLORS.error }]} />
+                  <Text style={[styles.statusToggleText, { color: editForm.is_active ? COLORS.success : COLORS.error }]}>
+                    {editForm.is_active ? 'ACTIVE' : 'INACTIVE'}
+                  </Text>
+                </TouchableOpacity>
+              </View>
+
+              <View style={styles.inputWrap}>
                 <Text style={styles.label}>ASSIGNED SCHOOL</Text>
                 <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginTop: 4 }}>
                   <View style={{ flexDirection: 'row', gap: 6 }}>
@@ -345,9 +400,39 @@ export default function UsersScreen({ navigation }: any) {
             </MotiView>
           </View>
         )}
+        {showCreate && (
+          <View style={styles.modalOverlay}>
+            <MotiView from={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} style={styles.modalContent}>
+              <Text style={styles.modalTitle}>Provision User</Text>
+              <Text style={styles.modalSub}>Choose the closest admin workflow.</Text>
+
+              <TouchableOpacity style={styles.quickActionCard} onPress={() => { setShowCreate(false); navigation.navigate(ROUTES.AddStudent); }}>
+                <Text style={styles.quickActionTitle}>Student intake</Text>
+                <Text style={styles.quickActionText}>Create a student profile and keep onboarding inside the admin student flow.</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity style={styles.quickActionCard} onPress={() => { setShowCreate(false); navigation.navigate(ROUTES.AddTeacher); }}>
+                <Text style={styles.quickActionTitle}>Teacher provisioning</Text>
+                <Text style={styles.quickActionText}>Create a teacher account, then assign that teacher to schools and classes.</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity style={styles.quickActionCard} onPress={() => { setShowCreate(false); navigation.navigate(ROUTES.AddSchool); }}>
+                <Text style={styles.quickActionTitle}>School onboarding</Text>
+                <Text style={styles.quickActionText}>Create a school and continue through the school admin workflow.</Text>
+              </TouchableOpacity>
+
+              <View style={styles.modalButtons}>
+                <TouchableOpacity onPress={() => setShowCreate(false)} style={styles.cancelBtn}>
+                  <Text style={styles.cancelText}>Close</Text>
+                </TouchableOpacity>
+              </View>
+            </MotiView>
+          </View>
+        )}
         <View style={{ height: 32 }} />
       </ScrollView>
     </SafeAreaView>
+    </RoleGuard>
   );
 }
 
@@ -356,9 +441,14 @@ const styles = StyleSheet.create({
   loadWrap: { flex: 1, backgroundColor: COLORS.bg, alignItems: 'center', justifyContent: 'center' },
   header: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: SPACING.xl, paddingTop: SPACING.md, paddingBottom: SPACING.sm, gap: SPACING.md },
   backBtn: { width: 36, height: 36, borderRadius: RADIUS.md, borderWidth: 1, borderColor: COLORS.border, alignItems: 'center', justifyContent: 'center' },
-  backArrow: { fontSize: 18, color: COLORS.textPrimary },
   title: { fontFamily: FONT_FAMILY.display, fontSize: FONT_SIZE['2xl'], color: COLORS.textPrimary },
   subtitle: { fontFamily: FONT_FAMILY.body, fontSize: FONT_SIZE.xs, color: COLORS.textMuted, marginTop: 2 },
+  createBtn: { paddingHorizontal: 14, paddingVertical: 10, borderRadius: RADIUS.md, backgroundColor: COLORS.primary },
+  createBtnText: { fontFamily: FONT_FAMILY.bodySemi, fontSize: FONT_SIZE.xs, color: '#fff', textTransform: 'uppercase', letterSpacing: 0.8 },
+  summaryRow: { flexDirection: 'row', gap: SPACING.sm, paddingHorizontal: SPACING.xl, marginBottom: SPACING.md },
+  summaryCard: { flex: 1, borderWidth: 1, borderColor: COLORS.border, borderRadius: RADIUS.md, backgroundColor: COLORS.bgCard, paddingVertical: SPACING.md, alignItems: 'center' },
+  summaryValue: { fontFamily: FONT_FAMILY.display, fontSize: FONT_SIZE.xl, color: COLORS.textPrimary },
+  summaryLabel: { fontFamily: FONT_FAMILY.bodySemi, fontSize: 10, color: COLORS.textMuted, textTransform: 'uppercase', letterSpacing: 0.8, marginTop: 2 },
   statsScroll: { flexGrow: 0 },
   statChip: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 12, paddingVertical: 7, backgroundColor: COLORS.bgCard, borderWidth: 1, borderRadius: RADIUS.full },
   statChipLabel: { fontFamily: FONT_FAMILY.bodySemi, fontSize: FONT_SIZE.xs, color: COLORS.textSecondary, textTransform: 'capitalize' },
@@ -373,6 +463,7 @@ const styles = StyleSheet.create({
   cardContent: { flex: 1, gap: 2 },
   cardName: { fontFamily: FONT_FAMILY.bodySemi, fontSize: FONT_SIZE.sm, color: COLORS.textPrimary },
   cardEmail: { fontFamily: FONT_FAMILY.body, fontSize: FONT_SIZE.xs, color: COLORS.textMuted },
+  cardMeta: { fontFamily: FONT_FAMILY.body, fontSize: 10, color: COLORS.textMuted },
   roleBadge: { borderWidth: 1, borderRadius: RADIUS.full, paddingHorizontal: 7, paddingVertical: 2 },
   roleBadgeText: { fontFamily: FONT_FAMILY.bodySemi, fontSize: 10, textTransform: 'capitalize' },
   schoolChip: { backgroundColor: COLORS.border, borderRadius: RADIUS.full, paddingHorizontal: 7, paddingVertical: 2 },
@@ -392,11 +483,16 @@ const styles = StyleSheet.create({
   rolePicker: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
   roleOption: { paddingHorizontal: 10, paddingVertical: 5, borderRadius: RADIUS.full, borderWidth: 1, borderColor: COLORS.border },
   roleOptionText: { fontFamily: FONT_FAMILY.bodySemi, fontSize: 10, color: COLORS.textSecondary, textTransform: 'uppercase' },
+  statusToggle: { flexDirection: 'row', alignItems: 'center', gap: 8, borderWidth: 1, borderRadius: RADIUS.full, paddingHorizontal: 12, paddingVertical: 9, alignSelf: 'flex-start' },
+  statusToggleText: { fontFamily: FONT_FAMILY.bodySemi, fontSize: 10, letterSpacing: 0.8 },
   modalButtons: { flexDirection: 'row', gap: SPACING.md, marginTop: SPACING.md },
   cancelBtn: { flex: 1, paddingVertical: 12, alignItems: 'center', borderRadius: RADIUS.md, borderWidth: 1, borderColor: COLORS.border },
   cancelText: { fontFamily: FONT_FAMILY.bodySemi, fontSize: FONT_SIZE.sm, color: COLORS.textMuted },
   saveBtn: { flex: 2, paddingVertical: 12, alignItems: 'center', borderRadius: RADIUS.md, backgroundColor: COLORS.primary },
   saveText: { fontFamily: FONT_FAMILY.bodySemi, fontSize: FONT_SIZE.sm, color: '#fff' },
+  quickActionCard: { borderWidth: 1, borderColor: COLORS.border, borderRadius: RADIUS.md, backgroundColor: COLORS.bg, padding: SPACING.lg, gap: 6 },
+  quickActionTitle: { fontFamily: FONT_FAMILY.bodySemi, fontSize: FONT_SIZE.sm, color: COLORS.textPrimary },
+  quickActionText: { fontFamily: FONT_FAMILY.body, fontSize: FONT_SIZE.xs, color: COLORS.textMuted, lineHeight: 18 },
   emptyWrap: { alignItems: 'center', paddingVertical: 60, gap: 12 },
   emptyEmoji: { fontSize: 40 },
   emptyText: { fontFamily: FONT_FAMILY.body, fontSize: FONT_SIZE.sm, color: COLORS.textMuted },

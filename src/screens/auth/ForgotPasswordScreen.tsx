@@ -5,30 +5,45 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { MotiView } from 'moti';
-import { supabase } from '../../lib/supabase';
+import { Ionicons } from '@expo/vector-icons';
+import { authService } from '../../services/auth.service';
 import { COLORS } from '../../constants/colors';
 import { FONT_FAMILY, FONT_SIZE } from '../../constants/typography';
 import { SPACING, RADIUS } from '../../constants/spacing';
 import { PremiumButton } from '../../components/ui/PremiumButton';
 import { PremiumInput } from '../../components/ui/PremiumInput';
+import { ROUTES } from '../../navigation/routes';
 
 export default function ForgotPasswordScreen({ navigation }: any) {
   const [email, setEmail] = useState('');
   const [loading, setLoading] = useState(false);
   const [sent, setSent] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const updateEmail = (value: string) => {
+    setEmail(value);
+    if (error) setError(null);
+  };
 
   const handleReset = async () => {
-    if (!email.trim()) {
-      Alert.alert('Error', 'Please enter your email address.');
+    const normalizedEmail = email.trim().toLowerCase();
+
+    if (!normalizedEmail) {
+      setError('Please enter your email address.');
       return;
     }
+
+    if (!/\S+@\S+\.\S+/.test(normalizedEmail)) {
+      setError('Enter a valid email address.');
+      return;
+    }
+
     setLoading(true);
-    const { error } = await supabase.auth.resetPasswordForEmail(email.trim(), {
-      redirectTo: 'rillcod://reset-password',
-    });
+    setError(null);
+    const { error: resetError } = await authService.resetPasswordForEmail(normalizedEmail);
     setLoading(false);
-    if (error) {
-      Alert.alert('Error', error.message);
+    if (resetError) {
+      setError(resetError.message);
     } else {
       setSent(true);
     }
@@ -43,8 +58,9 @@ export default function ForgotPasswordScreen({ navigation }: any) {
         <ScrollView contentContainerStyle={styles.scroll} keyboardShouldPersistTaps="handled">
 
           {/* Back */}
-          <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}>
-            <Text style={styles.backText}>← Back to Login</Text>
+          <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn} activeOpacity={0.7}>
+            <Ionicons name="chevron-back" size={22} color={COLORS.textMuted} />
+            <Text style={styles.backText}>Back to Login</Text>
           </TouchableOpacity>
 
           {/* Logo mark */}
@@ -77,11 +93,12 @@ export default function ForgotPasswordScreen({ navigation }: any) {
                     label="Email Address"
                     icon="✉️"
                     value={email}
-                    onChangeText={setEmail}
+                    onChangeText={updateEmail}
                     keyboardType="email-address"
                     autoCapitalize="none"
                     autoComplete="email"
                     placeholder="your@email.com"
+                    error={error ?? undefined}
                   />
 
                   <PremiumButton
@@ -104,7 +121,7 @@ export default function ForgotPasswordScreen({ navigation }: any) {
                 </Text>
                 <PremiumButton
                   label="Back to Login"
-                  onPress={() => navigation.replace('Login')}
+                  onPress={() => navigation.replace(ROUTES.Login)}
                   variant="secondary"
                   size="md"
                 />
@@ -120,7 +137,13 @@ export default function ForgotPasswordScreen({ navigation }: any) {
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: COLORS.bg },
   scroll: { flexGrow: 1, paddingHorizontal: SPACING.lg, paddingBottom: SPACING.xl },
-  backBtn: { paddingTop: SPACING.md, paddingBottom: SPACING.base },
+  backBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingTop: SPACING.md,
+    paddingBottom: SPACING.base,
+  },
   backText: {
     fontFamily: FONT_FAMILY.bodyMed,
     fontSize: FONT_SIZE.base,

@@ -7,17 +7,18 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { MotiView } from 'moti';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useAuth } from '../../contexts/AuthContext';
-import { supabase } from '../../lib/supabase';
+import { certificateService } from '../../services/certificate.service';
 import { COLORS } from '../../constants/colors';
 import { FONT_FAMILY, FONT_SIZE } from '../../constants/typography';
 import { SPACING, RADIUS, SHADOW } from '../../constants/spacing';
+import { IconBackButton } from '../../components/ui/IconBackButton';
 
 interface Certificate {
   id: string;
   certificate_number: string;
   title: string;
   course_name: string | null;
-  issue_date: string;
+  issued_date: string;
   issued_by: string | null;
   certificate_url: string | null;
 }
@@ -31,12 +32,10 @@ export default function CertificatesScreen({ navigation }: any) {
   const load = useCallback(async () => {
     if (!profile) return;
     try {
-      const { data } = await supabase
-        .from('certificates')
-        .select('id, certificate_number, title, course_name, issue_date, issued_by, certificate_url')
-        .eq('portal_user_id', profile.id)
-        .order('issue_date', { ascending: false });
-      setCerts(data ?? []);
+      const data = await certificateService.listCertificates(profile.id);
+      setCerts(data as any[]);
+    } catch (error: any) {
+      console.error('Error loading certificates:', error.message);
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -82,7 +81,7 @@ export default function CertificatesScreen({ navigation }: any) {
             <View style={styles.certMeta}>
               <Text style={styles.certNum}>#{item.certificate_number}</Text>
               <Text style={styles.certDate}>
-                {new Date(item.issue_date).toLocaleDateString('en-GB', {
+                {new Date(item.issued_date).toLocaleDateString('en-GB', {
                   day: 'numeric', month: 'long', year: 'numeric',
                 })}
               </Text>
@@ -105,9 +104,7 @@ export default function CertificatesScreen({ navigation }: any) {
     <SafeAreaView style={styles.safe}>
       {/* Header */}
       <View style={styles.header}>
-        <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}>
-          <Text style={styles.backIcon}>←</Text>
-        </TouchableOpacity>
+        <IconBackButton onPress={() => navigation.goBack()} color={COLORS.textPrimary} style={styles.backBtn} />
         <View>
           <Text style={styles.title}>Certificates</Text>
           {certs.length > 0 && (
@@ -160,7 +157,6 @@ const styles = StyleSheet.create({
     gap: SPACING.md,
   },
   backBtn: { padding: SPACING.xs },
-  backIcon: { fontSize: 22, color: COLORS.textPrimary },
   title: { fontFamily: FONT_FAMILY.display, fontSize: FONT_SIZE['2xl'], color: COLORS.textPrimary },
   subtitle: { fontFamily: FONT_FAMILY.body, fontSize: FONT_SIZE.sm, color: COLORS.gold },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center' },

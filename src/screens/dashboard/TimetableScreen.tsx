@@ -7,10 +7,11 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { MotiView } from 'moti';
 import { useAuth } from '../../contexts/AuthContext';
-import { supabase } from '../../lib/supabase';
+import { timetableService } from '../../services/timetable.service';
 import { COLORS } from '../../constants/colors';
 import { FONT_FAMILY, FONT_SIZE } from '../../constants/typography';
 import { SPACING, RADIUS } from '../../constants/spacing';
+import { IconBackButton } from '../../components/ui/IconBackButton';
 
 interface TimetableSlot {
   id: string;
@@ -49,15 +50,7 @@ export default function TimetableScreen({ navigation }: any) {
   const isStudent = profile?.role === 'student';
 
   const loadTimetables = useCallback(async () => {
-    let q = supabase
-      .from('timetables')
-      .select('id, title, academic_year, term, is_active, section')
-      .order('is_active', { ascending: false })
-      .limit(20);
-
-    if (profile?.school_id) q = q.eq('school_id', profile.school_id);
-
-    const { data } = await q;
+    const data = await timetableService.listTimetablesForSchoolScope(profile?.school_id ?? null);
     if (data && data.length > 0) {
       setTimetables(data as Timetable[]);
       const active = (data as Timetable[]).find(t => t.is_active);
@@ -67,17 +60,8 @@ export default function TimetableScreen({ navigation }: any) {
   }, [profile]);
 
   const loadSlots = useCallback(async (timetableId: string) => {
-    const { data } = await supabase
-      .from('timetable_slots')
-      .select('id, day_of_week, start_time, end_time, subject, room, notes, portal_users:teacher_id(full_name)')
-      .eq('timetable_id', timetableId)
-      .order('start_time');
-    if (data) {
-      setSlots((data as any[]).map(s => ({
-        ...s,
-        teacher_name: s.portal_users?.full_name ?? null,
-      })));
-    }
+    const data = await timetableService.listSlotsForTimetable(timetableId);
+    setSlots(data as TimetableSlot[]);
   }, []);
 
   useEffect(() => { loadTimetables(); }, [loadTimetables]);
@@ -108,9 +92,7 @@ export default function TimetableScreen({ navigation }: any) {
     return (
       <SafeAreaView style={styles.safe}>
         <View style={styles.header}>
-          <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}>
-            <Text style={styles.backArrow}>←</Text>
-          </TouchableOpacity>
+          <IconBackButton onPress={() => navigation.goBack()} color={COLORS.textPrimary} style={styles.backBtn} />
           <Text style={styles.title}>Timetable</Text>
         </View>
         <View style={styles.emptyWrap}>
@@ -124,9 +106,7 @@ export default function TimetableScreen({ navigation }: any) {
   return (
     <SafeAreaView style={styles.safe}>
       <View style={styles.header}>
-        <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}>
-          <Text style={styles.backArrow}>←</Text>
-        </TouchableOpacity>
+        <IconBackButton onPress={() => navigation.goBack()} color={COLORS.textPrimary} style={styles.backBtn} />
         <View style={{ flex: 1 }}>
           <Text style={styles.title}>Timetable</Text>
           {activeTimetable && (
@@ -245,7 +225,6 @@ const styles = StyleSheet.create({
 
   header: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: SPACING.xl, paddingTop: SPACING.md, paddingBottom: SPACING.sm, gap: SPACING.md },
   backBtn: { width: 36, height: 36, borderRadius: RADIUS.md, borderWidth: 1, borderColor: COLORS.border, alignItems: 'center', justifyContent: 'center' },
-  backArrow: { fontSize: 18, color: COLORS.textPrimary },
   title: { fontFamily: FONT_FAMILY.display, fontSize: FONT_SIZE['2xl'], color: COLORS.textPrimary },
   subtitle: { fontFamily: FONT_FAMILY.body, fontSize: FONT_SIZE.xs, color: COLORS.textMuted, marginTop: 2 },
   summaryRow: { flexDirection: 'row', gap: SPACING.sm, paddingHorizontal: SPACING.xl, paddingBottom: SPACING.sm },

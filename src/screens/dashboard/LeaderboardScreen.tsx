@@ -7,10 +7,11 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { MotiView } from 'moti';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useAuth } from '../../contexts/AuthContext';
-import { supabase } from '../../lib/supabase';
+import { gamificationService } from '../../services/gamification.service';
 import { COLORS } from '../../constants/colors';
 import { FONT_FAMILY, FONT_SIZE } from '../../constants/typography';
 import { SPACING, RADIUS } from '../../constants/spacing';
+import { IconBackButton } from '../../components/ui/IconBackButton';
 
 interface RankedStudent {
   portal_user_id: string;
@@ -42,33 +43,8 @@ export default function LeaderboardScreen({ navigation }: any) {
 
   const load = useCallback(async () => {
     try {
-      const { data, error } = await supabase
-        .from('assignment_submissions')
-        .select('portal_user_id, grade, status, portal_users!assignment_submissions_portal_user_id_fkey(full_name, school_name, section_class)')
-        .eq('status', 'graded')
-        .limit(500);
-      if (error) throw error;
-
-      const map: Record<string, { full_name: string; school_name: string | null; xp: number }> = {};
-      (data ?? []).forEach((row: any) => {
-        const uid = row.portal_user_id;
-        if (!uid) return;
-        if (!map[uid]) {
-          map[uid] = {
-            full_name: row.portal_users?.full_name ?? 'Unknown',
-            school_name: row.portal_users?.school_name ?? null,
-            xp: 0,
-          };
-        }
-        map[uid].xp += row.grade ?? 0;
-      });
-
-      const ranked: RankedStudent[] = Object.entries(map)
-        .map(([id, val]) => ({ portal_user_id: id, ...val, rank: 0 }))
-        .sort((a, b) => b.xp - a.xp)
-        .map((s, i) => ({ ...s, rank: i + 1 }));
-
-      setStudents(ranked);
+      const ranked = await gamificationService.getGradedSubmissionScoreLeaderboard(500);
+      setStudents(ranked as RankedStudent[]);
     } catch (e: any) {
       Alert.alert('Error', e.message);
     } finally {
@@ -154,9 +130,7 @@ export default function LeaderboardScreen({ navigation }: any) {
   return (
     <SafeAreaView style={styles.safe}>
       <View style={styles.header}>
-        <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}>
-          <Text style={styles.backArrow}>←</Text>
-        </TouchableOpacity>
+        <IconBackButton onPress={() => navigation.goBack()} color={COLORS.textPrimary} style={styles.backBtn} />
         <Text style={styles.headerTitle}>Leaderboard</Text>
         {(isSchool || profile?.role === 'student') && (
           <TouchableOpacity
@@ -215,7 +189,6 @@ const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: COLORS.bg },
   header: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: SPACING.base, paddingVertical: SPACING.md, gap: SPACING.sm },
   backBtn: { width: 36, height: 36, borderRadius: RADIUS.md, borderWidth: 1, borderColor: COLORS.border, alignItems: 'center', justifyContent: 'center' },
-  backArrow: { fontSize: 18, color: COLORS.textPrimary },
   headerTitle: { flex: 1, fontSize: FONT_SIZE.lg, fontFamily: FONT_FAMILY.heading, color: COLORS.textPrimary },
   filterToggle: { borderRadius: RADIUS.full, borderWidth: 1, borderColor: COLORS.border, paddingHorizontal: SPACING.md, paddingVertical: 6 },
   filterToggleActive: { borderColor: COLORS.primary, backgroundColor: COLORS.primaryPale },

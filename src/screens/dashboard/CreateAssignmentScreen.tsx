@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity,
   TextInput, ActivityIndicator, Alert, Platform,
@@ -7,11 +7,13 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { MotiView } from 'moti';
 import { useAuth } from '../../contexts/AuthContext';
-import { supabase } from '../../lib/supabase';
+import { assignmentService } from '../../services/assignment.service';
+import { courseService } from '../../services/course.service';
 import { ScreenHeader } from '../../components/ui/ScreenHeader';
 import { COLORS } from '../../constants/colors';
 import { FONT_FAMILY, FONT_SIZE } from '../../constants/typography';
 import { SPACING, RADIUS } from '../../constants/spacing';
+import { ROUTES } from '../../navigation/routes';
 
 const ASSIGNMENT_TYPES = [
   { key: 'theory', label: 'Theory', emoji: '📖', color: COLORS.info },
@@ -42,9 +44,17 @@ function Field({ label, value, onChangeText, placeholder, keyboardType = 'defaul
 }
 
 export default function CreateAssignmentScreen({ navigation, route }: any) {
-  const { classId, className } = route.params as { classId: string; className: string };
+  const { classId: paramClassId, className: paramClassName, assignmentId: paramAssignmentId } =
+    (route.params ?? {}) as { classId?: string; className?: string; assignmentId?: string };
+  const isEditMode = !!paramAssignmentId;
   const { profile } = useAuth();
   const [saving, setSaving] = useState(false);
+  const [bootLoading, setBootLoading] = useState(!!paramAssignmentId);
+  const [resolvedClassId, setResolvedClassId] = useState<string | null>(paramClassId ?? null);
+  const [resolvedClassName, setResolvedClassName] = useState(paramClassName ?? '');
+  const [programId, setProgramId] = useState<string | null>(null);
+  const [courses, setCourses] = useState<{ id: string; title: string }[]>([]);
+  const [lessons, setLessons] = useState<{ id: string; title: string; course_id: string | null }[]>([]);
 
   const [form, setForm] = useState({
     title: '',
@@ -56,55 +66,212 @@ export default function CreateAssignmentScreen({ navigation, route }: any) {
     due_time: '23:59',
     passing_score: '50',
     allow_late: true,
+    course_id: '',
+    lesson_id: '',
   });
 
   const set = (key: string) => (val: any) => setForm(f => ({ ...f, [key]: val }));
 
+  useEffect(() => {
+    if (!paramAssignmentId) return;
+    let cancelled = false;
+    (async () => {
+      let data: Awaited<ReturnType<typeof assignmentService.getAssignmentForEditor>> | null = null;
+      try {
+        data = await assignmentService.getAssignmentForEditor(paramAssignmentId);
+      } catch {
+        data = null;
+      }
+      if (cancelled) return;
+      if (!data?.class_id) {
+        Alert.alert('Error', 'Could not load assignment.');
+        navigation.goBack();
+        return;
+      }
+      const row = data as any;
+      setResolvedClassId(row.class_id);
+      setResolvedClassName(row.classes?.name ?? 'Class');
+      const due = row.due_date as string | null;
+      let due_date = '';
+      let due_time = '23:59';
+      if (due && typeof due === 'string') {
+        const [d, rest] = due.split('T');
+        due_date = d ?? '';
+        if (rest) due_time = rest.slice(0, 5) || '23:59';
+      }
+      const meta = row.metadata ?? {};
+      const typeKey = ASSIGNMENT_TYPES.some((t) => t.key === row.assignment_type)
+        ? row.assignment_type
+        : 'theory';
+      setForm({
+        title: row.title ?? '',
+        description: row.description ?? '',
+        instructions: row.instructions ?? '',
+        type: typeKey,
+        max_score: String(row.max_points ?? 100),
+        due_date,
+        due_time,
+        passing_score: String(meta.passing_score ?? 50),
+        allow_late: meta.allow_late !== false,
+        course_id: row.course_id ?? '',
+        lesson_id: row.lesson_id ?? '',
+      });
+      setBootLoading(false);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [paramAssignmentId, navigation]);
+
+  useEffect(() => {
+    const loadClassContext = async () => {
+      if (!resolvedClassId) {
+        setProgramId(null);
+        setCourses([]);
+        return;
+      }
+      const nextProgramId = await courseService.getClassProgramId(resolvedClassId);
+      setProgramId(nextProgramId);
+      if (!nextProgramId) return;
+
+      const courseRows = await courseService.listCourseTitlesForProgram(nextProgramId);
+      setCourses((courseRows ?? []) as { id: string; title: string }[]);
+    };
+
+    loadClassContext();
+  }, [resolvedClassId]);
+
+  useEffect(() => {
+    const loadLessons = async () => {
+      if (!form.course_id) {
+        setLessons([]);
+        return;
+      }
+
+      const lessonRows = await courseService.listLessonsMinimalForCourse(form.course_id);
+      setLessons((lessonRows ?? []) as { id: string; title: string; course_id: string | null }[]);
+    };
+
+    loadLessons();
+  }, [form.course_id]);
+
+  const selectedCourse = useMemo(
+    () => courses.find((course) => course.id === form.course_id) ?? null,
+    [courses, form.course_id]
+  );
+
   const submit = async () => {
-    if (!form.title.trim()) { Alert.alert('Title is required'); return; }
+    if (!form.title.trim()) {
+      Alert.alert('Title is required');
+      return;
+    }
+    if (!resolvedClassId) {
+      Alert.alert('Missing class', 'Open this screen from a class or assignment.');
+      return;
+    }
 
     setSaving(true);
-    const dueDateTime = form.due_date
-      ? `${form.due_date}T${form.due_time}:00`
-      : null;
+    const dueDateTime = form.due_date ? `${form.due_date}T${form.due_time}:00` : null;
 
-    const { error } = await supabase.from('assignments').insert({
-      class_id: classId,
-      title: form.title.trim(),
-      description: form.description.trim() || null,
-      instructions: form.instructions.trim() || null,
-      assignment_type: form.type,
-      max_points: parseInt(form.max_score) || 100,
-      due_date: dueDateTime,
-      metadata: {
-        passing_score: parseInt(form.passing_score) || 50,
-        allow_late: form.allow_late,
-      },
-      created_by: profile?.id,
-      school_id: profile?.school_id ?? null,
-      school_name: profile?.school_name ?? null,
-      is_active: true,
-    });
+    if (isEditMode && paramAssignmentId) {
+      try {
+        await assignmentService.updateAssignment(paramAssignmentId, {
+          course_id: form.course_id || null,
+          lesson_id: form.lesson_id || null,
+          title: form.title.trim(),
+          description: form.description.trim() || null,
+          instructions: form.instructions.trim() || null,
+          assignment_type: form.type,
+          max_points: parseInt(form.max_score, 10) || 100,
+          due_date: dueDateTime,
+          metadata: {
+            passing_score: parseInt(form.passing_score, 10) || 50,
+            allow_late: form.allow_late,
+          },
+        });
+      } catch (error: any) {
+        Alert.alert('Error', error.message);
+        setSaving(false);
+        return;
+      }
 
-    if (error) {
+      Alert.alert('Saved', `"${form.title}" was updated.`, [{ text: 'Done', onPress: () => navigation.goBack() }]);
+      setSaving(false);
+      return;
+    }
+
+    try {
+      await assignmentService.createAssignment({
+        class_id: resolvedClassId,
+        course_id: form.course_id || null,
+        lesson_id: form.lesson_id || null,
+        title: form.title.trim(),
+        description: form.description.trim() || null,
+        instructions: form.instructions.trim() || null,
+        assignment_type: form.type,
+        max_points: parseInt(form.max_score, 10) || 100,
+        due_date: dueDateTime,
+        metadata: {
+          passing_score: parseInt(form.passing_score, 10) || 50,
+          allow_late: form.allow_late,
+        },
+        created_by: profile?.id,
+        school_id: profile?.school_id ?? null,
+        school_name: profile?.school_name ?? null,
+        is_active: true,
+      });
+    } catch (error: any) {
       Alert.alert('Error', error.message);
       setSaving(false);
       return;
     }
 
-    Alert.alert('Assignment Created!', `"${form.title}" has been posted to ${className}.`, [
+    Alert.alert('Assignment Created!', `"${form.title}" has been posted to ${resolvedClassName}.`, [
       { text: 'Done', onPress: () => navigation.goBack() },
     ]);
     setSaving(false);
   };
 
-  const selectedType = ASSIGNMENT_TYPES.find(t => t.key === form.type)!;
+  const selectedType = ASSIGNMENT_TYPES.find((t) => t.key === form.type) ?? ASSIGNMENT_TYPES[0];
+
+  if (bootLoading) {
+    return (
+      <SafeAreaView style={[styles.safe, { justifyContent: 'center', alignItems: 'center' }]}>
+        <ActivityIndicator color={COLORS.primary} size="large" />
+      </SafeAreaView>
+    );
+  }
+
+  if (!isEditMode && !resolvedClassId) {
+    return (
+      <SafeAreaView style={styles.safe}>
+        <ScreenHeader title="New Assignment" onBack={() => navigation.goBack()} />
+        <View style={{ paddingHorizontal: SPACING.xl, paddingTop: SPACING.lg, gap: SPACING.md }}>
+          <Text style={{ fontFamily: FONT_FAMILY.body, fontSize: FONT_SIZE.sm, color: COLORS.textSecondary }}>
+            Assignments are created from a class. Open Classes, pick a class, then use New Assignment.
+          </Text>
+          <TouchableOpacity
+            onPress={() => navigation.navigate(ROUTES.Classes)}
+            style={{
+              alignSelf: 'flex-start',
+              paddingVertical: 12,
+              paddingHorizontal: SPACING.lg,
+              borderRadius: RADIUS.lg,
+              backgroundColor: COLORS.primary,
+            }}
+          >
+            <Text style={{ fontFamily: FONT_FAMILY.bodySemi, color: COLORS.white100 }}>Go to Classes</Text>
+          </TouchableOpacity>
+        </View>
+      </SafeAreaView>
+    );
+  }
 
   return (
     <SafeAreaView style={styles.safe}>
       <ScreenHeader
-        title="New Assignment"
-        subtitle={className}
+        title={isEditMode ? 'Edit Assignment' : 'New Assignment'}
+        subtitle={resolvedClassName || undefined}
         onBack={() => navigation.goBack()}
         accentColor={selectedType.color}
       />
@@ -138,6 +305,52 @@ export default function CreateAssignmentScreen({ navigation, route }: any) {
             <Field label="Assignment Title" value={form.title} onChangeText={set('title')} placeholder="e.g. Introduction to Variables" required />
             <Field label="Description" value={form.description} onChangeText={set('description')} placeholder="Brief overview for students…" multiline />
             <Field label="Instructions" value={form.instructions} onChangeText={set('instructions')} placeholder="Step-by-step instructions…" multiline />
+
+            {programId && courses.length > 0 ? (
+              <>
+                <Text style={styles.pickerLabel}>Course Link</Text>
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.linkPills}>
+                  <TouchableOpacity
+                    onPress={() => setForm((f) => ({ ...f, course_id: '', lesson_id: '' }))}
+                    style={[styles.linkPill, !form.course_id && styles.linkPillActive]}
+                  >
+                    <Text style={[styles.linkPillText, !form.course_id && styles.linkPillTextActive]}>None</Text>
+                  </TouchableOpacity>
+                  {courses.map((course) => (
+                    <TouchableOpacity
+                      key={course.id}
+                      onPress={() => setForm((f) => ({ ...f, course_id: course.id, lesson_id: '' }))}
+                      style={[styles.linkPill, form.course_id === course.id && styles.linkPillActive]}
+                    >
+                      <Text style={[styles.linkPillText, form.course_id === course.id && styles.linkPillTextActive]}>{course.title}</Text>
+                    </TouchableOpacity>
+                  ))}
+                </ScrollView>
+              </>
+            ) : null}
+
+            {selectedCourse && lessons.length > 0 ? (
+              <>
+                <Text style={styles.pickerLabel}>Lesson Link</Text>
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.linkPills}>
+                  <TouchableOpacity
+                    onPress={() => set('lesson_id')('')}
+                    style={[styles.linkPill, !form.lesson_id && styles.linkPillActive]}
+                  >
+                    <Text style={[styles.linkPillText, !form.lesson_id && styles.linkPillTextActive]}>None</Text>
+                  </TouchableOpacity>
+                  {lessons.map((lesson) => (
+                    <TouchableOpacity
+                      key={lesson.id}
+                      onPress={() => set('lesson_id')(lesson.id)}
+                      style={[styles.linkPill, form.lesson_id === lesson.id && styles.linkPillActive]}
+                    >
+                      <Text style={[styles.linkPillText, form.lesson_id === lesson.id && styles.linkPillTextActive]}>{lesson.title}</Text>
+                    </TouchableOpacity>
+                  ))}
+                </ScrollView>
+              </>
+            ) : null}
           </View>
 
           <View style={styles.section}>
@@ -189,9 +402,11 @@ export default function CreateAssignmentScreen({ navigation, route }: any) {
 
           <TouchableOpacity onPress={submit} disabled={saving} style={[styles.submitBtn, saving && styles.btnDisabled]}>
             <LinearGradient colors={[selectedType.color, selectedType.color + 'cc']} style={styles.submitGrad}>
-              {saving
-                ? <ActivityIndicator color={COLORS.white100} />
-                : <Text style={styles.submitText}>Post Assignment</Text>}
+              {saving ? (
+                <ActivityIndicator color={COLORS.white100} />
+              ) : (
+                <Text style={styles.submitText}>{isEditMode ? 'Save changes' : 'Post Assignment'}</Text>
+              )}
             </LinearGradient>
           </TouchableOpacity>
 
@@ -219,6 +434,12 @@ const styles = StyleSheet.create({
   scroll: { paddingHorizontal: SPACING.xl, paddingTop: SPACING.sm },
   section: { marginBottom: SPACING.xl },
   sectionTitle: { fontFamily: FONT_FAMILY.display, fontSize: FONT_SIZE.sm, color: COLORS.textPrimary, textTransform: 'uppercase', letterSpacing: 1.2, marginBottom: SPACING.md },
+  pickerLabel: { fontFamily: FONT_FAMILY.bodySemi, fontSize: FONT_SIZE.xs, color: COLORS.textSecondary, textTransform: 'uppercase', letterSpacing: 1, marginBottom: 8 },
+  linkPills: { gap: SPACING.sm, paddingBottom: SPACING.sm },
+  linkPill: { borderWidth: 1, borderColor: COLORS.border, backgroundColor: COLORS.bgCard, borderRadius: RADIUS.full, paddingHorizontal: 12, paddingVertical: 8 },
+  linkPillActive: { borderColor: COLORS.primary, backgroundColor: COLORS.primaryPale },
+  linkPillText: { fontFamily: FONT_FAMILY.bodySemi, fontSize: FONT_SIZE.xs, color: COLORS.textMuted },
+  linkPillTextActive: { color: COLORS.primaryLight },
 
   typePills: { gap: SPACING.sm, paddingBottom: 4 },
   typePill: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 14, paddingVertical: 8, borderRadius: RADIUS.full, borderWidth: 1, borderColor: COLORS.border, backgroundColor: COLORS.bgCard },

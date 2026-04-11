@@ -8,10 +8,12 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { MotiView } from 'moti';
 import { useAuth } from '../../contexts/AuthContext';
 import { useTheme } from '../../contexts/ThemeContext';
-import { supabase } from '../../lib/supabase';
+import { cbtService } from '../../services/cbt.service';
 import { FONT_FAMILY, FONT_SIZE, LETTER_SPACING } from '../../constants/typography';
 import { SPACING, RADIUS } from '../../constants/spacing';
 import { useHaptics } from '../../hooks/useHaptics';
+import { IconBackButton } from '../../components/ui/IconBackButton';
+import { ROUTES } from '../../navigation/routes';
 
 interface CBTExam {
   id: string;
@@ -30,6 +32,13 @@ interface MySession {
   exam_title: string;
   score: number | null;
   status: string | null;
+  completed_at: string | null;
+}
+
+interface PendingGradeSession {
+  id: string;
+  exam_title: string;
+  student_name: string;
   completed_at: string | null;
 }
 
@@ -54,56 +63,33 @@ export default function CBTScreen({ navigation }: any) {
   const [typeFilter, setTypeFilter] = useState<'all' | 'examination' | 'evaluation' | 'quiz' | 'practice'>('all');
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [pendingGrades, setPendingGrades] = useState<PendingGradeSession[]>([]);
 
   const isStudent = profile?.role === 'student';
+  const isTeacherRole = profile?.role === 'teacher';
+  const isAdmin = profile?.role === 'admin';
+  const canAuthorCbt = profile?.role === 'admin' || profile?.role === 'teacher';
 
   const load = useCallback(async () => {
-    const { data: examData } = await supabase
-      .from('cbt_exams')
-      .select('id, title, description, duration_minutes, passing_score, metadata, created_at')
-      .order('created_at', { ascending: false })
-      .limit(50);
-
-    if (examData) {
-      const mappedExams = (examData as any[]).map((exam) => ({
-        id: exam.id,
-        title: exam.title,
-        description: exam.description,
-        exam_type: exam.metadata?.exam_type ?? 'examination',
-        difficulty: exam.metadata?.difficulty ?? null,
-        duration_minutes: exam.duration_minutes ?? null,
-        pass_mark: exam.passing_score ?? null,
-        created_at: exam.created_at ?? null,
-      })) as CBTExam[];
-      setExams(mappedExams);
-      setFiltered(mappedExams);
+    if (!profile?.id) {
+      setLoading(false);
+      return;
     }
-
-    if (isStudent) {
-      const { data: sessions } = await supabase
-        .from('cbt_sessions')
-        .select(`
-          id, score, status, end_time, exam_id,
-          cbt_exams:exam_id(title)
-        `)
-        .eq('user_id', profile!.id)
-        .order('created_at', { ascending: false })
-        .limit(30);
-
-      if (sessions) {
-        setMySessions((sessions as any[]).map(s => ({
-          id: s.id,
-          exam_id: s.exam_id,
-          score: s.score,
-          status: s.status,
-          completed_at: s.end_time,
-          exam_title: s.cbt_exams?.title ?? 'Unknown Exam',
-        })));
-      }
+    try {
+      const { exams: mappedExams, pendingGrades: pend, mySessions: sessions } = await cbtService.loadCbtHubBundle({
+        userId: profile.id,
+        isStudent,
+        isTeacherRole,
+        isAdmin,
+      });
+      setExams(mappedExams as CBTExam[]);
+      setFiltered(mappedExams as CBTExam[]);
+      setPendingGrades(pend);
+      setMySessions(isStudent ? (sessions as MySession[]) : []);
+    } finally {
+      setLoading(false);
     }
-
-    setLoading(false);
-  }, [profile, isStudent]);
+  }, [profile?.id, isStudent, isTeacherRole, isAdmin]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -148,13 +134,25 @@ export default function CBTScreen({ navigation }: any) {
   return (
     <SafeAreaView style={styles.safe}>
       <View style={styles.header}>
-        <TouchableOpacity onPress={() => navigation.goBack()} style={[styles.backBtn, { borderColor: colors.border }]}>
-          <Text style={[styles.backArrow, { color: colors.textPrimary }]}>←</Text>
-        </TouchableOpacity>
+        <IconBackButton
+          onPress={() => navigation.goBack()}
+          color={colors.textPrimary}
+          size={22}
+          style={[styles.backBtn, { borderColor: colors.border }]}
+        />
         <View style={{ flex: 1 }}>
           <Text style={[styles.title, { color: colors.textPrimary }]}>CBT TERMINAL</Text>
           <Text style={[styles.subtitle, { color: colors.textMuted }]}>{exams.length} OPERATIONAL MODULES</Text>
         </View>
+        {canAuthorCbt ? (
+          <TouchableOpacity
+            onPress={() => { light(); navigation.navigate(ROUTES.CBTExamEditor, {}); }}
+            style={[styles.newExamBtn, { borderColor: colors.primary, backgroundColor: colors.primary + '18' }]}
+            activeOpacity={0.85}
+          >
+            <Text style={[styles.newExamBtnText, { color: colors.primary }]}>+ NEW</Text>
+          </TouchableOpacity>
+        ) : null}
       </View>
 
       {/* Tabs for students */}
@@ -253,7 +251,36 @@ export default function CBTScreen({ navigation }: any) {
         contentContainerStyle={styles.list}
       >
         {tab === 'exams' && (
-          filtered.length === 0 ? (
+          <>
+            {canAuthorCbt && pendingGrades.length > 0 ? (
+              <View style={styles.pendingBlock}>
+                <Text style={[styles.pendingHeading, { color: colors.warning }]}>AWAITING MANUAL GRADE</Text>
+                <Text style={[styles.pendingHint, { color: colors.textMuted }]}>
+                  Essay submissions — tap a row to score and finalize the session.
+                </Text>
+                {pendingGrades.map((p, i) => (
+                  <MotiView key={p.id} from={{ opacity: 0, translateX: -8 }} animate={{ opacity: 1, translateX: 0 }} transition={{ delay: i * 40 }}>
+                    <TouchableOpacity
+                      style={[styles.pendingRow, { borderColor: colors.border, backgroundColor: colors.bgCard }]}
+                      onPress={() => { light(); navigation.navigate(ROUTES.CBTGrading, { sessionId: p.id }); }}
+                      activeOpacity={0.85}
+                    >
+                      <View style={{ flex: 1 }}>
+                        <Text style={[styles.pendingExamTitle, { color: colors.textPrimary }]} numberOfLines={1}>{p.exam_title}</Text>
+                        <Text style={[styles.pendingMeta, { color: colors.textMuted }]}>{p.student_name}</Text>
+                        {p.completed_at ? (
+                          <Text style={[styles.pendingMeta, { color: colors.textMuted }]}>
+                            {new Date(p.completed_at).toLocaleString()}
+                          </Text>
+                        ) : null}
+                      </View>
+                      <Text style={[styles.pendingCta, { color: colors.primary }]}>GRADE</Text>
+                    </TouchableOpacity>
+                  </MotiView>
+                ))}
+              </View>
+            ) : null}
+            {filtered.length === 0 ? (
             <View style={styles.emptyWrap}>
               <Text style={styles.emptyEmoji}>🌑</Text>
               <Text style={[styles.emptyText, { color: colors.textMuted }]}>NO MODULES DETECTED</Text>
@@ -262,55 +289,88 @@ export default function CBTScreen({ navigation }: any) {
             filtered.map((exam, i) => {
               const cfg = TYPE_CONFIG[exam.exam_type] ?? { color: colors.info, emoji: '📝' };
               const diffColor = getDifficultyColor(exam.difficulty || 'Easy');
+              const cardInner = (
+                <>
+                  <View style={styles.cardTop}>
+                    <View style={[styles.examIcon, { backgroundColor: cfg.color + '15' }]}>
+                      <Text style={{ fontSize: 24 }}>{cfg.emoji}</Text>
+                    </View>
+                    <View style={{ flex: 1 }}>
+                      <Text style={[styles.examTitle, { color: colors.textPrimary }]}>{exam.title}</Text>
+                      {exam.description ? (
+                        <Text style={[styles.examDesc, { color: colors.textMuted }]} numberOfLines={2}>
+                          {exam.description}
+                        </Text>
+                      ) : null}
+                    </View>
+                  </View>
+
+                  <View style={styles.cardMeta}>
+                    <View style={[styles.metaChip, { backgroundColor: cfg.color + '20' }]}>
+                      <Text style={[styles.metaChipText, { color: cfg.color }]}>{exam.exam_type.toUpperCase()}</Text>
+                    </View>
+                    {exam.difficulty ? (
+                      <View style={[styles.metaChip, { backgroundColor: diffColor + '20' }]}>
+                        <Text style={[styles.metaChipText, { color: diffColor }]}>{exam.difficulty.toUpperCase()}</Text>
+                      </View>
+                    ) : null}
+                    {exam.duration_minutes ? (
+                      <View style={[styles.metaChip, { backgroundColor: colors.border }]}>
+                        <Text style={[styles.metaChipText, { color: colors.textSecondary }]}>
+                          {exam.duration_minutes}M
+                        </Text>
+                      </View>
+                    ) : null}
+                  </View>
+
+                  {isStudent ? (
+                    <View style={[styles.startBtn, { backgroundColor: colors.primary }]}>
+                      <Text style={styles.startBtnText}>INITIALIZE MODULE →</Text>
+                    </View>
+                  ) : canAuthorCbt ? (
+                    <View style={[styles.startBtn, { backgroundColor: colors.primary }]}>
+                      <Text style={styles.startBtnText}>OPEN EDITOR →</Text>
+                    </View>
+                  ) : null}
+                </>
+              );
+
               return (
                 <MotiView key={exam.id} from={{ opacity: 0, translateY: 10 }} animate={{ opacity: 1, translateY: 0 }} transition={{ delay: i * 50 }}>
-                  <TouchableOpacity 
-                    style={[styles.card, { borderColor: colors.border, backgroundColor: colors.bgCard }]} 
-                    activeOpacity={0.8}
-                    onPress={() => isStudent && navigation.navigate('CBTExamination', { examId: exam.id })}
-                  >
-                    <View style={styles.cardTop}>
-                      <View style={[styles.examIcon, { backgroundColor: cfg.color + '15' }]}>
-                        <Text style={{ fontSize: 24 }}>{cfg.emoji}</Text>
-                      </View>
-                      <View style={{ flex: 1 }}>
-                        <Text style={[styles.examTitle, { color: colors.textPrimary }]}>{exam.title}</Text>
-                        {exam.description ? (
-                          <Text style={[styles.examDesc, { color: colors.textMuted }]} numberOfLines={2}>
-                            {exam.description}
-                          </Text>
-                        ) : null}
-                      </View>
+                  {isStudent ? (
+                    <TouchableOpacity
+                      style={[styles.card, { borderColor: colors.border, backgroundColor: colors.bgCard }]}
+                      activeOpacity={0.8}
+                      onPress={() => navigation.navigate(ROUTES.CBTExamination, { examId: exam.id })}
+                    >
+                      {cardInner}
+                    </TouchableOpacity>
+                  ) : canAuthorCbt ? (
+                    <View style={[styles.card, { borderColor: colors.border, backgroundColor: colors.bgCard }]}>
+                      <TouchableOpacity
+                        activeOpacity={0.85}
+                        onPress={() => navigation.navigate(ROUTES.CBTExamEditor, { examId: exam.id })}
+                      >
+                        {cardInner}
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        onPress={() => navigation.navigate(ROUTES.CBTExamination, { examId: exam.id })}
+                        style={[styles.staffPreviewBtn, { borderColor: colors.border, backgroundColor: colors.bg }]}
+                        activeOpacity={0.85}
+                      >
+                        <Text style={[styles.staffPreviewBtnText, { color: colors.textSecondary }]}>PREVIEW AS LEARNER</Text>
+                      </TouchableOpacity>
                     </View>
-                    
-                    <View style={styles.cardMeta}>
-                      <View style={[styles.metaChip, { backgroundColor: cfg.color + '20' }]}>
-                        <Text style={[styles.metaChipText, { color: cfg.color }]}>{exam.exam_type.toUpperCase()}</Text>
-                      </View>
-                      {exam.difficulty ? (
-                        <View style={[styles.metaChip, { backgroundColor: diffColor + '20' }]}>
-                          <Text style={[styles.metaChipText, { color: diffColor }]}>{exam.difficulty.toUpperCase()}</Text>
-                        </View>
-                      ) : null}
-                      {exam.duration_minutes ? (
-                        <View style={[styles.metaChip, { backgroundColor: colors.border }]}>
-                          <Text style={[styles.metaChipText, { color: colors.textSecondary }]}>
-                            {exam.duration_minutes}M
-                          </Text>
-                        </View>
-                      ) : null}
+                  ) : (
+                    <View style={[styles.card, { borderColor: colors.border, backgroundColor: colors.bgCard }]}>
+                      {cardInner}
                     </View>
-
-                    {isStudent && (
-                      <View style={[styles.startBtn, { backgroundColor: colors.primary }]}>
-                        <Text style={styles.startBtnText}>INITIALIZE MODULE →</Text>
-                      </View>
-                    )}
-                  </TouchableOpacity>
+                  )}
                 </MotiView>
               );
             })
-          )
+          )}
+          </>
         )}
 
         {tab === 'results' && (
@@ -362,8 +422,9 @@ const getStyles = (colors: any) => StyleSheet.create({
   loadText: { fontFamily: FONT_FAMILY.mono, fontSize: 10, letterSpacing: 2 },
 
   header: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: SPACING.xl, paddingTop: SPACING.md, paddingBottom: SPACING.lg, gap: SPACING.md },
+  newExamBtn: { paddingHorizontal: 14, paddingVertical: 10, borderRadius: RADIUS.sm, borderWidth: 1 },
+  newExamBtnText: { fontFamily: FONT_FAMILY.bodyBold, fontSize: 10, letterSpacing: 1 },
   backBtn: { width: 40, height: 40, borderRadius: RADIUS.sm, borderWidth: 1, alignItems: 'center', justifyContent: 'center' },
-  backArrow: { fontSize: 20 },
   title: { fontFamily: FONT_FAMILY.display, fontSize: FONT_SIZE.xl, letterSpacing: LETTER_SPACING.tight },
   subtitle: { fontFamily: FONT_FAMILY.mono, fontSize: 9, letterSpacing: 1, marginTop: 2 },
 
@@ -389,6 +450,21 @@ const getStyles = (colors: any) => StyleSheet.create({
   filterChipText: { fontFamily: FONT_FAMILY.bodyBold, fontSize: 10, letterSpacing: 1 },
 
   list: { paddingHorizontal: SPACING.xl },
+  pendingBlock: { marginBottom: SPACING.lg },
+  pendingHeading: { fontFamily: FONT_FAMILY.bodyBold, fontSize: 11, letterSpacing: 1.5, marginBottom: 6 },
+  pendingHint: { fontFamily: FONT_FAMILY.body, fontSize: FONT_SIZE.sm, marginBottom: SPACING.md },
+  pendingRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderRadius: RADIUS.sm,
+    padding: SPACING.md,
+    marginBottom: SPACING.sm,
+    gap: SPACING.md,
+  },
+  pendingExamTitle: { fontFamily: FONT_FAMILY.bodyBold, fontSize: FONT_SIZE.base, textTransform: 'uppercase' },
+  pendingMeta: { fontFamily: FONT_FAMILY.mono, fontSize: 10, marginTop: 4 },
+  pendingCta: { fontFamily: FONT_FAMILY.bodyBold, fontSize: 10, letterSpacing: 1 },
   card: { borderWidth: 1, borderRadius: RADIUS.sm, padding: SPACING.lg, marginBottom: SPACING.lg, overflow: 'hidden', gap: SPACING.lg },
   cardTop: { flexDirection: 'row', gap: SPACING.lg, alignItems: 'flex-start' },
   examIcon: { width: 56, height: 56, borderRadius: RADIUS.sm, alignItems: 'center', justifyContent: 'center' },
@@ -399,6 +475,8 @@ const getStyles = (colors: any) => StyleSheet.create({
   metaChipText: { fontFamily: FONT_FAMILY.bodyBold, fontSize: 9, letterSpacing: 1 },
   startBtn: { paddingVertical: 14, borderRadius: RADIUS.sm, alignItems: 'center', marginTop: 8 },
   startBtnText: { fontFamily: FONT_FAMILY.bodyBold, fontSize: 11, color: '#fff', letterSpacing: 2 },
+  staffPreviewBtn: { paddingVertical: 12, borderRadius: RADIUS.sm, alignItems: 'center', marginTop: 10, borderWidth: 1 },
+  staffPreviewBtnText: { fontFamily: FONT_FAMILY.bodyBold, fontSize: 10, letterSpacing: 1.5 },
 
   resultCard: { flexDirection: 'row', alignItems: 'center', gap: SPACING.md, borderWidth: 1, borderRadius: RADIUS.sm, padding: SPACING.lg, marginBottom: SPACING.md },
   resultTitle: { fontFamily: FONT_FAMILY.bodyBold, fontSize: FONT_SIZE.base, textTransform: 'uppercase' },

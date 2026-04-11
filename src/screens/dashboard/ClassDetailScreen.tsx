@@ -1,5 +1,6 @@
-﻿
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useFocusEffect } from '@react-navigation/native';
 import {
   View,
   Text,
@@ -17,11 +18,16 @@ import * as Print from 'expo-print';
 import * as Sharing from 'expo-sharing';
 import { useAuth } from '../../contexts/AuthContext';
 import { useTheme } from '../../contexts/ThemeContext';
-import { supabase } from '../../lib/supabase';
 import { ScreenHeader } from '../../components/ui/ScreenHeader';
+import { assignmentService } from '../../services/assignment.service';
+import { attendanceService } from '../../services/attendance.service';
+import { cbtService } from '../../services/cbt.service';
+import { classService } from '../../services/class.service';
+import { courseService } from '../../services/course.service';
 import { FONT_FAMILY, FONT_SIZE } from '../../constants/typography';
 import { SPACING, RADIUS } from '../../constants/spacing';
 import { useHaptics } from '../../hooks/useHaptics';
+import { ROUTES } from '../../navigation/routes';
 
 type Tab = 'overview' | 'students' | 'lessons' | 'assignments' | 'cbt' | 'attendance' | 'grades';
 
@@ -82,6 +88,15 @@ interface ClassSession {
   status: string | null;
 }
 
+interface AttendanceSummary {
+  session_id: string;
+  records: number;
+  present: number;
+  late: number;
+  absent: number;
+  excused: number;
+}
+
 interface LessonItem {
   id: string;
   title: string;
@@ -98,8 +113,29 @@ interface CBTExam {
   is_active: boolean | null;
 }
 
+interface ClassEditorState {
+  name: string;
+  description: string;
+  schedule: string;
+  max_students: string;
+  status: string;
+}
+
+/** Matches register statuses from `MarkAttendance` (present / late / absent / excused). */
+function sessionAttendanceSummaryText(sessionId: string, summary: Record<string, AttendanceSummary>): string {
+  const s = summary[sessionId];
+  if (!s) return 'No attendance recorded yet';
+  return `${s.present} present · ${s.late} late · ${s.absent} absent · ${s.excused} excused`;
+}
+
 export default function ClassDetailScreen({ navigation, route }: any) {
-  const { classId } = route.params as { classId: string };
+  const params = (route?.params ?? {}) as { classId?: string; id?: string };
+  const classId =
+    typeof params.classId === 'string' && params.classId.trim()
+      ? params.classId.trim()
+      : typeof params.id === 'string' && params.id.trim()
+        ? params.id.trim()
+        : '';
   const { profile } = useAuth();
   const { colors, isDark } = useTheme();
   const styles = getStyles(colors);
@@ -110,6 +146,7 @@ export default function ClassDetailScreen({ navigation, route }: any) {
   const [assignments, setAssignments] = useState<AssignmentItem[]>([]);
   const [grades, setGrades] = useState<GradeRow[]>([]);
   const [sessions, setSessions] = useState<ClassSession[]>([]);
+  const [attendanceSummary, setAttendanceSummary] = useState<Record<string, AttendanceSummary>>({});
   const [lessons, setLessons] = useState<LessonItem[]>([]);
   const [cbtExams, setCbtExams] = useState<CBTExam[]>([]);
   const [activeTab, setActiveTab] = useState<Tab>('overview');
@@ -117,7 +154,9 @@ export default function ClassDetailScreen({ navigation, route }: any) {
   const [refreshing, setRefreshing] = useState(false);
   const [exportingPDF, setExportingPDF] = useState(false);
   const [showAddSession, setShowAddSession] = useState(false);
+  const [showEditClass, setShowEditClass] = useState(false);
   const [savingSession, setSavingSession] = useState(false);
+  const [savingClass, setSavingClass] = useState(false);
   const [searchStudent, setSearchStudent] = useState('');
   const [showEnrollSearch, setShowEnrollSearch] = useState(false);
   const [enrollSearch, setEnrollSearch] = useState('');
@@ -127,23 +166,30 @@ export default function ClassDetailScreen({ navigation, route }: any) {
     topic: '',
     session_date: new Date().toISOString().slice(0, 10),
     start_time: '',
+    end_time: '',
     description: '',
+  });
+  const [classEditor, setClassEditor] = useState<ClassEditorState>({
+    name: '',
+    description: '',
+    schedule: '',
+    max_students: '',
+    status: 'active',
   });
 
   const isTeacher = profile?.role === 'teacher' || profile?.role === 'admin';
+  const canManageClass = profile?.role === 'admin' || profile?.role === 'teacher';
+  const focusPassRef = useRef(0);
 
-  const load = useCallback(async () => {
-    setLoading(true);
+  useEffect(() => {
+    focusPassRef.current = 0;
+  }, [classId]);
 
-    const classRes = await supabase
-      .from('classes')
-      .select(
-        'id, name, description, schedule, max_students, current_students, color, status, created_at, start_date, end_date, program_id, school_id, school_name, teacher_id, portal_users:teacher_id(full_name, email), programs:program_id(name)'
-      )
-      .eq('id', classId)
-      .single();
+  const load = useCallback(async (opts?: { quiet?: boolean }) => {
+    const quiet = !!opts?.quiet;
+    if (!quiet) setLoading(true);
 
-    if (classRes.error || !classRes.data) {
+    if (!classId) {
       setClassInfo(null);
       setStudents([]);
       setAssignments([]);
@@ -151,11 +197,24 @@ export default function ClassDetailScreen({ navigation, route }: any) {
       setSessions([]);
       setLessons([]);
       setCbtExams([]);
-      setLoading(false);
+      if (!quiet) setLoading(false);
       return;
     }
 
-    const cls = classRes.data as any;
+    let cls: any;
+    try {
+      cls = await classService.getClassDetailWithRelations(classId);
+    } catch {
+      setClassInfo(null);
+      setStudents([]);
+      setAssignments([]);
+      setGrades([]);
+      setSessions([]);
+      setLessons([]);
+      setCbtExams([]);
+      if (!quiet) setLoading(false);
+      return;
+    }
     const nextClassInfo: ClassInfo = {
       id: cls.id,
       name: cls.name,
@@ -163,14 +222,14 @@ export default function ClassDetailScreen({ navigation, route }: any) {
       schedule: cls.schedule,
       max_students: cls.max_students,
       current_students: cls.current_students,
-      color: cls.color,
+      color: cls.color ?? null,
       status: cls.status,
       created_at: cls.created_at,
       start_date: cls.start_date,
       end_date: cls.end_date,
       program_id: cls.program_id,
       school_id: cls.school_id,
-      school_name: cls.school_name,
+      school_name: cls.schools?.name ?? cls.school_name ?? null,
       teacher_id: cls.teacher_id,
       teacher_name: cls.portal_users?.full_name ?? null,
       teacher_email: cls.portal_users?.email ?? null,
@@ -178,33 +237,24 @@ export default function ClassDetailScreen({ navigation, route }: any) {
     };
     setClassInfo(nextClassInfo);
 
-    const [studentRes, assignmentRes, sessionRes] = await Promise.all([
-      supabase
-        .from('portal_users')
-        .select('id, full_name, email, section_class')
-        .eq('role', 'student')
-        .eq('class_id', classId)
-        .eq('is_active', true)
-        .order('full_name', { ascending: true })
-        .limit(300),
-      supabase
-        .from('assignments')
-        .select('id, title, description, due_date, max_points, assignment_type, created_at')
-        .eq('class_id', classId)
-        .order('due_date', { ascending: true }),
-      supabase
-        .from('class_sessions')
-        .select('id, session_date, start_time, end_time, topic, title, description, status')
-        .eq('class_id', classId)
-        .order('session_date', { ascending: false })
-        .limit(12),
-    ]);
-
-    const nextStudents = (studentRes.data ?? []) as EnrolledStudent[];
+    let nextStudents: EnrolledStudent[] = [];
+    let rawAssignments: any[] = [];
+    let nextSessions: ClassSession[] = [];
+    try {
+      const [sRows, aRows, sessRows] = await Promise.all([
+        classService.listActiveStudentsInClass(classId),
+        classService.listAssignmentsForClass(classId),
+        classService.listClassSessionsForDetail(classId),
+      ]);
+      nextStudents = sRows as EnrolledStudent[];
+      rawAssignments = aRows as any[];
+      nextSessions = sessRows as ClassSession[];
+    } catch {
+      /* keep empty — same as ignoring per-query errors in legacy client */
+    }
     setStudents(nextStudents);
-    setSessions((sessionRes.data ?? []) as ClassSession[]);
+    setSessions(nextSessions);
 
-    const rawAssignments = (assignmentRes.data ?? []) as any[];
     const assignmentIds = rawAssignments.map((item) => item.id);
     const assignmentMap: Record<string, number | null> = {};
     rawAssignments.forEach((item) => {
@@ -213,11 +263,11 @@ export default function ClassDetailScreen({ navigation, route }: any) {
 
     let submissionRows: any[] = [];
     if (assignmentIds.length > 0) {
-      const submissionRes = await supabase
-        .from('assignment_submissions')
-        .select('assignment_id, portal_user_id, grade')
-        .in('assignment_id', assignmentIds);
-      submissionRows = submissionRes.data ?? [];
+      try {
+        submissionRows = (await assignmentService.listSubmissionsForGradeAggregation(assignmentIds)) as any[];
+      } catch {
+        submissionRows = [];
+      }
     }
     const submissionCountMap: Record<string, number> = {};
     const gradeMap: Record<string, number[]> = {};
@@ -240,6 +290,41 @@ export default function ClassDetailScreen({ navigation, route }: any) {
       })) as AssignmentItem[]
     );
 
+    if (nextSessions.length > 0) {
+      let attendanceRows: { session_id: string | null; status: string | null }[] = [];
+      try {
+        attendanceRows = await attendanceService.listAttendanceStatusBySessionIds(
+          nextSessions.map((session) => session.id)
+        );
+      } catch {
+        attendanceRows = [];
+      }
+
+      const summaryMap: Record<string, AttendanceSummary> = {};
+      attendanceRows.forEach((row: any) => {
+        if (!row.session_id) return;
+        if (!summaryMap[row.session_id]) {
+          summaryMap[row.session_id] = {
+            session_id: row.session_id,
+            records: 0,
+            present: 0,
+            late: 0,
+            absent: 0,
+            excused: 0,
+          };
+        }
+        const bucket = summaryMap[row.session_id];
+        bucket.records += 1;
+        if (row.status === 'present') bucket.present += 1;
+        else if (row.status === 'late') bucket.late += 1;
+        else if (row.status === 'absent') bucket.absent += 1;
+        else if (row.status === 'excused') bucket.excused += 1;
+      });
+      setAttendanceSummary(summaryMap);
+    } else {
+      setAttendanceSummary({});
+    }
+
     setGrades(
       nextStudents.map((student) => {
         const gradeList = gradeMap[student.id] ?? [];
@@ -253,59 +338,52 @@ export default function ClassDetailScreen({ navigation, route }: any) {
     );
 
     if (nextClassInfo.program_id) {
-      const courseRes = await supabase
-        .from('courses')
-        .select('id, title')
-        .eq('program_id', nextClassInfo.program_id)
-        .order('order_index', { ascending: true });
+      try {
+        const courses = await courseService.listCourseIdsTitlesForProgram(nextClassInfo.program_id);
+        const courseIds = courses.map((course) => course.id);
+        const courseTitleMap = courses.reduce<Record<string, string>>((acc, course) => {
+          acc[course.id] = course.title;
+          return acc;
+        }, {});
 
-      const courses = (courseRes.data ?? []) as { id: string; title: string }[];
-      const courseIds = courses.map((course) => course.id);
-      const courseTitleMap = courses.reduce<Record<string, string>>((acc, course) => {
-        acc[course.id] = course.title;
-        return acc;
-      }, {});
+        const [lessonRows, cbtRows] = await Promise.all([
+          courseIds.length > 0 ? courseService.listLessonsForCourseIds(courseIds) : Promise.resolve([]),
+          cbtService.listExamsForProgram(nextClassInfo.program_id),
+        ]);
 
-      const [lessonRes, cbtRes] = await Promise.all([
-        courseIds.length > 0
-          ? supabase
-              .from('lessons')
-              .select('id, title, lesson_type, status, course_id')
-              .in('course_id', courseIds)
-              .order('order_index', { ascending: true })
-          : Promise.resolve({ data: [], error: null } as any),
-        supabase
-          .from('cbt_exams')
-          .select('id, title, duration_minutes, total_questions, is_active')
-          .eq('program_id', nextClassInfo.program_id)
-          .order('created_at', { ascending: false }),
-      ]);
-
-      setLessons(
-        ((lessonRes.data ?? []) as any[]).map((lesson) => ({
-          id: lesson.id,
-          title: lesson.title,
-          lesson_type: lesson.lesson_type,
-          status: lesson.status,
-          course_title: lesson.course_id ? courseTitleMap[lesson.course_id] ?? null : null,
-        }))
-      );
-      setCbtExams((cbtRes.data ?? []) as CBTExam[]);
+        setLessons(
+          (lessonRows as any[]).map((lesson) => ({
+            id: lesson.id,
+            title: lesson.title,
+            lesson_type: lesson.lesson_type,
+            status: lesson.status,
+            course_title: lesson.course_id ? courseTitleMap[lesson.course_id] ?? null : null,
+          }))
+        );
+        setCbtExams(cbtRows as CBTExam[]);
+      } catch {
+        setLessons([]);
+        setCbtExams([]);
+      }
     } else {
       setLessons([]);
       setCbtExams([]);
     }
 
-    setLoading(false);
+    if (!quiet) setLoading(false);
   }, [classId]);
 
-  useEffect(() => {
-    load();
-  }, [load]);
+  useFocusEffect(
+    useCallback(() => {
+      focusPassRef.current += 1;
+      const quiet = focusPassRef.current > 1;
+      void load(quiet ? { quiet: true } : undefined);
+    }, [load]),
+  );
 
   const onRefresh = async () => {
     setRefreshing(true);
-    await load();
+    await load({ quiet: true });
     setRefreshing(false);
   };
 
@@ -369,6 +447,70 @@ export default function ClassDetailScreen({ navigation, route }: any) {
     }
   };
 
+  const exportRosterPDF = async () => {
+    if (!classInfo || students.length === 0) {
+      Alert.alert('No roster', 'There are no students in this class yet.');
+      return;
+    }
+
+    setExportingPDF(true);
+    await light();
+
+    try {
+      const today = new Date().toLocaleDateString('en-GB');
+      const rowsHtml = students
+        .slice()
+        .sort((a, b) => a.full_name.localeCompare(b.full_name))
+        .map(
+          (student, index) => `
+            <tr>
+              <td style="padding: 10px; border-bottom: 1px solid #ddd;">${index + 1}</td>
+              <td style="padding: 10px; border-bottom: 1px solid #ddd;">${student.full_name}</td>
+              <td style="padding: 10px; border-bottom: 1px solid #ddd;">${student.email}</td>
+              <td style="padding: 10px; border-bottom: 1px solid #ddd;">${student.section_class ?? classInfo.name}</td>
+            </tr>
+          `
+        )
+        .join('');
+
+      const html = `
+        <html>
+          <body style="font-family: Helvetica, Arial, sans-serif; padding: 32px; color: #0f172a;">
+            <h1 style="margin-bottom: 16px;">Class Roster</h1>
+            <p><strong>Class:</strong> ${classInfo.name}</p>
+            <p><strong>Teacher:</strong> ${classInfo.teacher_name ?? 'Unassigned'}</p>
+            <p><strong>Programme:</strong> ${classInfo.program_name ?? 'Not linked'}</p>
+            <p><strong>Date:</strong> ${today}</p>
+            <table style="width: 100%; border-collapse: collapse; margin-top: 24px;">
+              <thead>
+                <tr style="background-color: #f8fafc;">
+                  <th style="padding: 12px; border-bottom: 2px solid #cbd5e1; text-align: left;">#</th>
+                  <th style="padding: 12px; border-bottom: 2px solid #cbd5e1; text-align: left;">Student</th>
+                  <th style="padding: 12px; border-bottom: 2px solid #cbd5e1; text-align: left;">Email</th>
+                  <th style="padding: 12px; border-bottom: 2px solid #cbd5e1; text-align: left;">Section</th>
+                </tr>
+              </thead>
+              <tbody>${rowsHtml}</tbody>
+            </table>
+          </body>
+        </html>
+      `;
+
+      const { uri } = await Print.printToFileAsync({ html });
+      if (await Sharing.isAvailableAsync()) {
+        await Sharing.shareAsync(uri, { UTI: '.pdf', mimeType: 'application/pdf' });
+      } else {
+        Alert.alert('Export Ready', uri);
+      }
+      await hapticSuccess();
+    } catch (error: any) {
+      await hapticError();
+      Alert.alert('Export Failed', error.message || 'Could not export roster.');
+    } finally {
+      setExportingPDF(false);
+    }
+  };
+
   const saveSession = async () => {
     if (!sessionForm.topic.trim()) {
       Alert.alert('Topic required', 'Enter a topic before saving this class session.');
@@ -376,28 +518,30 @@ export default function ClassDetailScreen({ navigation, route }: any) {
     }
 
     setSavingSession(true);
-    const { error } = await supabase.from('class_sessions').insert({
-      class_id: classId,
-      topic: sessionForm.topic.trim(),
-      title: sessionForm.topic.trim(),
-      session_date: sessionForm.session_date,
-      start_time: sessionForm.start_time || null,
-      description: sessionForm.description.trim() || null,
-      status: 'scheduled',
-      is_active: true,
-    });
-    setSavingSession(false);
-
-    if (error) {
-      Alert.alert('Error', error.message);
+    try {
+      await classService.insertClassSession({
+        class_id: classId,
+        topic: sessionForm.topic.trim(),
+        title: sessionForm.topic.trim(),
+        session_date: sessionForm.session_date,
+        start_time: sessionForm.start_time || null,
+        description: sessionForm.description.trim() || null,
+        status: 'scheduled',
+        is_active: true,
+      });
+    } catch (error: any) {
+      setSavingSession(false);
+      Alert.alert('Error', error?.message ?? 'Could not save session.');
       return;
     }
+    setSavingSession(false);
 
     setShowAddSession(false);
     setSessionForm({
       topic: '',
       session_date: new Date().toISOString().slice(0, 10),
       start_time: '',
+      end_time: '',
       description: '',
     });
     await load();
@@ -410,42 +554,34 @@ export default function ClassDetailScreen({ navigation, route }: any) {
       return;
     }
 
-    let request = supabase
-      .from('portal_users')
-      .select('id, full_name, email, section_class')
-      .eq('role', 'student')
-      .eq('is_active', true)
-      .ilike('full_name', `%${query.trim()}%`)
-      .limit(12);
-
-    if (classInfo.school_id) {
-      request = request.eq('school_id', classInfo.school_id);
-    }
-
-    const { data, error } = await request;
-    if (error) {
+    let data: EnrolledStudent[] = [];
+    try {
+      data = (await classService.searchStudentsForEnrollment({
+        query: query.trim(),
+        schoolId: classInfo.school_id,
+        limit: 12,
+      })) as EnrolledStudent[];
+    } catch {
       setEnrollResults([]);
       return;
     }
 
     const existing = new Set(students.map((student) => student.id));
-    setEnrollResults(((data ?? []) as EnrolledStudent[]).filter((student) => !existing.has(student.id)));
+    setEnrollResults(data.filter((student) => !existing.has(student.id)));
   };
   const enrollStudent = async (student: EnrolledStudent) => {
     if (!classInfo) return;
     setEnrolling(true);
 
-    const { error } = await supabase
-      .from('portal_users')
-      .update({ class_id: classId, section_class: classInfo.name })
-      .eq('id', student.id);
-
-    setEnrolling(false);
-
-    if (error) {
-      Alert.alert('Error', error.message);
+    try {
+      await classService.assignStudentToClass(student.id, classId, classInfo.name);
+    } catch (error: any) {
+      setEnrolling(false);
+      Alert.alert('Error', error?.message ?? 'Could not enrol student.');
       return;
     }
+
+    setEnrolling(false);
 
     setStudents((prev) => [...prev, { ...student, section_class: classInfo.name }].sort((a, b) => a.full_name.localeCompare(b.full_name)));
     setEnrollSearch('');
@@ -460,14 +596,10 @@ export default function ClassDetailScreen({ navigation, route }: any) {
         text: 'Remove',
         style: 'destructive',
         onPress: async () => {
-          const { error } = await supabase
-            .from('portal_users')
-            .update({ class_id: null, section_class: null })
-            .eq('id', studentId)
-            .eq('class_id', classId);
-
-          if (error) {
-            Alert.alert('Error', error.message);
+          try {
+            await classService.removeStudentFromClass(studentId, classId);
+          } catch (error: any) {
+            Alert.alert('Error', error?.message ?? 'Could not remove student.');
             return;
           }
 
@@ -484,9 +616,24 @@ export default function ClassDetailScreen({ navigation, route }: any) {
       (student) =>
         student.full_name.toLowerCase().includes(query) ||
         student.email.toLowerCase().includes(query) ||
-        (student.section_class ?? '').toLowerCase().includes(query)
+      (student.section_class ?? '').toLowerCase().includes(query)
     );
   }, [searchStudent, students]);
+
+  const attendanceTotals = useMemo(
+    () =>
+      Object.values(attendanceSummary).reduce(
+        (acc, item) => ({
+          records: acc.records + item.records,
+          present: acc.present + item.present,
+          late: acc.late + item.late,
+          absent: acc.absent + item.absent,
+          excused: acc.excused + item.excused,
+        }),
+        { records: 0, present: 0, late: 0, absent: 0, excused: 0 }
+      ),
+    [attendanceSummary]
+  );
 
   if (loading) {
     return (
@@ -501,7 +648,9 @@ export default function ClassDetailScreen({ navigation, route }: any) {
       <SafeAreaView style={styles.safe}>
         <ScreenHeader title="Class" onBack={() => navigation.goBack()} />
         <View style={styles.center}>
-          <Text style={[styles.emptyText, { color: colors.textMuted }]}>Class not found.</Text>
+          <Text style={[styles.emptyText, { color: colors.textMuted }]}>
+            {!classId ? 'Missing class link. Open the class again from Classes.' : 'Class not found or you may not have access.'}
+          </Text>
         </View>
       </SafeAreaView>
     );
@@ -529,9 +678,9 @@ export default function ClassDetailScreen({ navigation, route }: any) {
         accentColor={accentColor}
         rightAction={
           isTeacher && activeTab === 'assignments'
-            ? { label: '+ New', onPress: () => navigation.navigate('CreateAssignment', { classId, className: classInfo.name }) }
+            ? { label: '+ New', onPress: () => navigation.navigate(ROUTES.CreateAssignment, { classId, className: classInfo.name }) }
             : isTeacher && activeTab === 'students'
-              ? { label: '+ Enrol', onPress: () => navigation.navigate('EnrolStudents', { classId, className: classInfo.name, programId: classInfo.program_id }) }
+              ? { label: '+ Enrol', onPress: () => navigation.navigate(ROUTES.EnrolStudents, { classId, className: classInfo.name, programId: classInfo.program_id }) }
             : undefined
         }
       />
@@ -608,17 +757,37 @@ export default function ClassDetailScreen({ navigation, route }: any) {
             </View>
 
             <View style={styles.actionRow}>
+              {canManageClass ? (
+                <TouchableOpacity
+                  onPress={() => navigation.navigate(ROUTES.AddClass, { classId })}
+                  style={[styles.secondaryBtn, { borderColor: colors.border }]}
+                >
+                  <Text style={[styles.secondaryBtnText, { color: colors.textPrimary }]}>Edit class</Text>
+                </TouchableOpacity>
+              ) : null}
               <TouchableOpacity
-                onPress={() => navigation.navigate('EnrolStudents', { classId, className: classInfo.name, programId: classInfo.program_id })}
+                onPress={() => navigation.navigate(ROUTES.EnrolStudents, { classId, className: classInfo.name, programId: classInfo.program_id })}
                 style={[styles.secondaryBtn, { borderColor: colors.primary }]}
               >
                 <Text style={[styles.secondaryBtnText, { color: colors.primary }]}>Manage Roster</Text>
               </TouchableOpacity>
               <TouchableOpacity
-                onPress={() => navigation.navigate('CreateAssignment', { classId, className: classInfo.name })}
+                onPress={() => navigation.navigate(ROUTES.CreateAssignment, { classId, className: classInfo.name })}
                 style={[styles.secondaryBtn, { borderColor: colors.border }]}
               >
                 <Text style={[styles.secondaryBtnText, { color: colors.textPrimary }]}>New Assignment</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={() => setActiveTab('attendance')}
+                style={[styles.secondaryBtn, { borderColor: colors.border }]}
+              >
+                <Text style={[styles.secondaryBtnText, { color: colors.textPrimary }]}>Attendance</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={() => setActiveTab('grades')}
+                style={[styles.secondaryBtn, { borderColor: colors.border }]}
+              >
+                <Text style={[styles.secondaryBtnText, { color: colors.textPrimary }]}>Gradebook</Text>
               </TouchableOpacity>
             </View>
 
@@ -678,6 +847,9 @@ export default function ClassDetailScreen({ navigation, route }: any) {
                   <Text style={[styles.sessionMeta, { color: colors.textMuted }]}>
                     {new Date(session.session_date).toLocaleDateString()} {session.start_time ? `- ${session.start_time}` : ''}
                   </Text>
+                  <Text style={[styles.sessionMeta, { color: colors.textSecondary }]}>
+                    {sessionAttendanceSummaryText(session.id, attendanceSummary)}
+                  </Text>
                   {session.description ? <Text style={[styles.sessionDesc, { color: colors.textSecondary }]}>{session.description}</Text> : null}
                 </View>
               ))
@@ -687,6 +859,15 @@ export default function ClassDetailScreen({ navigation, route }: any) {
 
         {activeTab === 'students' && (
           <View style={styles.pad}>
+            {students.length > 0 && (
+              <TouchableOpacity
+                onPress={exportRosterPDF}
+                disabled={exportingPDF}
+                style={[styles.exportBtn, { borderColor: colors.primary, backgroundColor: `${colors.primary}14` }]}
+              >
+                {exportingPDF ? <ActivityIndicator size="small" color={colors.primary} /> : <Text style={[styles.exportBtnText, { color: colors.primary }]}>Export Class Roster</Text>}
+              </TouchableOpacity>
+            )}
             <View style={[styles.searchBox, { borderColor: colors.border, backgroundColor: colors.bgCard }]}> 
               <TextInput
                 style={[styles.searchInput, { color: colors.textPrimary }]}
@@ -741,7 +922,7 @@ export default function ClassDetailScreen({ navigation, route }: any) {
                 <TouchableOpacity
                   key={student.id}
                   style={[styles.studentCard, { borderColor: colors.border, backgroundColor: colors.bgCard }]}
-                  onPress={() => navigation.navigate('StudentDetail', { studentId: student.id })}
+                  onPress={() => navigation.navigate(ROUTES.StudentDetail, { studentId: student.id })}
                 >
                   <View style={[styles.avatar, { backgroundColor: `${accentColor}18` }]}> 
                     <Text style={[styles.avatarText, { color: accentColor }]}>{student.full_name.charAt(0).toUpperCase()}</Text>
@@ -777,7 +958,7 @@ export default function ClassDetailScreen({ navigation, route }: any) {
                 <TouchableOpacity
                   key={lesson.id}
                   style={[styles.contentCard, { borderColor: colors.border, backgroundColor: colors.bgCard }]}
-                  onPress={() => navigation.navigate('LessonDetail', { lessonId: lesson.id })}
+                  onPress={() => navigation.navigate(ROUTES.LessonDetail, { lessonId: lesson.id })}
                 >
                   <Text style={[styles.contentTitle, { color: colors.textPrimary }]}>{lesson.title}</Text>
                   <Text style={[styles.contentMeta, { color: colors.textMuted }]}>
@@ -801,7 +982,7 @@ export default function ClassDetailScreen({ navigation, route }: any) {
                 <TouchableOpacity
                   key={assignment.id}
                   style={[styles.contentCard, { borderColor: colors.border, backgroundColor: colors.bgCard }]}
-                  onPress={() => navigation.navigate('AssignmentDetail', { assignmentId: assignment.id, title: assignment.title })}
+                  onPress={() => navigation.navigate(ROUTES.AssignmentDetail, { assignmentId: assignment.id, title: assignment.title })}
                 >
                   <Text style={[styles.contentTitle, { color: colors.textPrimary }]}>{assignment.title}</Text>
                   <Text style={[styles.contentMeta, { color: colors.textMuted }]}> 
@@ -812,14 +993,14 @@ export default function ClassDetailScreen({ navigation, route }: any) {
                   </Text>
                   <View style={styles.actionRow}>
                     <TouchableOpacity
-                      onPress={() => navigation.navigate('AssignmentDetail', { assignmentId: assignment.id, title: assignment.title })}
+                      onPress={() => navigation.navigate(ROUTES.AssignmentDetail, { assignmentId: assignment.id, title: assignment.title })}
                       style={[styles.secondaryBtn, { borderColor: colors.primary }]}
                     >
                       <Text style={[styles.secondaryBtnText, { color: colors.primary }]}>Open</Text>
                     </TouchableOpacity>
                     {isTeacher && (
                       <TouchableOpacity
-                        onPress={() => navigation.navigate('Grades')}
+                        onPress={() => navigation.navigate(ROUTES.Grades)}
                         style={[styles.secondaryBtn, { borderColor: colors.border }]}
                       >
                         <Text style={[styles.secondaryBtnText, { color: colors.textPrimary }]}>Grade Hub</Text>
@@ -858,13 +1039,13 @@ export default function ClassDetailScreen({ navigation, route }: any) {
                   </Text>
                   <View style={styles.actionRow}>
                     <TouchableOpacity
-                      onPress={() => navigation.navigate('CBTExamination', { examId: exam.id })}
+                      onPress={() => navigation.navigate(ROUTES.CBTExamination, { examId: exam.id })}
                       style={[styles.secondaryBtn, { borderColor: colors.primary }]}
                     >
                       <Text style={[styles.secondaryBtnText, { color: colors.primary }]}>Open CBT</Text>
                     </TouchableOpacity>
                     <TouchableOpacity
-                      onPress={() => navigation.navigate('CBT')}
+                      onPress={() => navigation.navigate(ROUTES.CBT)}
                       style={[styles.secondaryBtn, { borderColor: colors.border }]}
                     >
                       <Text style={[styles.secondaryBtnText, { color: colors.textPrimary }]}>CBT Hub</Text>
@@ -877,19 +1058,41 @@ export default function ClassDetailScreen({ navigation, route }: any) {
         )}
         {activeTab === 'attendance' && (
           <View style={styles.pad}>
+            <View style={[styles.kpiRow, styles.kpiRowWrap]}>
+              <View style={[styles.attendanceKpiCard, { borderColor: colors.border, backgroundColor: colors.bgCard }]}>
+                <Text style={[styles.kpiLabel, { color: colors.textMuted }]}>Recorded</Text>
+                <Text style={[styles.kpiValue, { color: colors.textPrimary }]}>{attendanceTotals.records}</Text>
+              </View>
+              <View style={[styles.attendanceKpiCard, { borderColor: colors.border, backgroundColor: colors.bgCard }]}>
+                <Text style={[styles.kpiLabel, { color: colors.textMuted }]}>Present</Text>
+                <Text style={[styles.kpiValue, { color: colors.success }]}>{attendanceTotals.present}</Text>
+              </View>
+              <View style={[styles.attendanceKpiCard, { borderColor: colors.border, backgroundColor: colors.bgCard }]}>
+                <Text style={[styles.kpiLabel, { color: colors.textMuted }]}>Late</Text>
+                <Text style={[styles.kpiValue, { color: colors.warning }]}>{attendanceTotals.late}</Text>
+              </View>
+              <View style={[styles.attendanceKpiCard, { borderColor: colors.border, backgroundColor: colors.bgCard }]}>
+                <Text style={[styles.kpiLabel, { color: colors.textMuted }]}>Absent</Text>
+                <Text style={[styles.kpiValue, { color: colors.error }]}>{attendanceTotals.absent}</Text>
+              </View>
+              <View style={[styles.attendanceKpiCard, { borderColor: colors.border, backgroundColor: colors.bgCard }]}>
+                <Text style={[styles.kpiLabel, { color: colors.textMuted }]}>Excused</Text>
+                <Text style={[styles.kpiValue, { color: colors.info }]}>{attendanceTotals.excused}</Text>
+              </View>
+            </View>
             <View style={[styles.emptyCard, { borderColor: colors.border, backgroundColor: colors.bgCard }]}> 
               <Text style={[styles.contentTitle, { color: colors.textPrimary }]}>Attendance workspace</Text>
-              <Text style={[styles.emptyText, { color: colors.textMuted }]}>Class attendance runs through the dedicated session-based attendance flow.</Text>
+              <Text style={[styles.emptyText, { color: colors.textMuted }]}>Use the session-based register here, then jump into the wider attendance hub when you need school-wide tracking.</Text>
               <View style={styles.actionRow}>
                 {isTeacher && (
                   <TouchableOpacity
-                    onPress={() => navigation.navigate('MarkAttendance', { classId, className: classInfo.name })}
+                    onPress={() => navigation.navigate(ROUTES.MarkAttendance, { classId, className: classInfo.name })}
                     style={[styles.secondaryBtn, { borderColor: colors.primary }]}
                   >
                     <Text style={[styles.secondaryBtnText, { color: colors.primary }]}>Take Register</Text>
                   </TouchableOpacity>
                 )}
-                <TouchableOpacity onPress={() => navigation.navigate('Attendance')} style={[styles.secondaryBtn, { borderColor: colors.border }]}> 
+                <TouchableOpacity onPress={() => navigation.navigate(ROUTES.Attendance)} style={[styles.secondaryBtn, { borderColor: colors.border }]}> 
                   <Text style={[styles.secondaryBtnText, { color: colors.textPrimary }]}>Open Attendance Hub</Text>
                 </TouchableOpacity>
               </View>
@@ -899,6 +1102,9 @@ export default function ClassDetailScreen({ navigation, route }: any) {
               <View key={session.id} style={[styles.contentCard, { borderColor: colors.border, backgroundColor: colors.bgCard }]}> 
                 <Text style={[styles.contentTitle, { color: colors.textPrimary }]}>{session.topic || session.title || 'Class session'}</Text>
                 <Text style={[styles.contentMeta, { color: colors.textMuted }]}>{new Date(session.session_date).toLocaleDateString()}</Text>
+                <Text style={[styles.contentMeta, { color: colors.textSecondary }]}>
+                  {sessionAttendanceSummaryText(session.id, attendanceSummary)}
+                </Text>
               </View>
             ))}
           </View>
@@ -906,6 +1112,31 @@ export default function ClassDetailScreen({ navigation, route }: any) {
 
         {activeTab === 'grades' && (
           <View style={styles.pad}>
+            {grades.length > 0 && (
+              <View style={styles.kpiRow}>
+                <View style={[styles.kpiCard, { borderColor: colors.border, backgroundColor: colors.bgCard }]}>
+                  <Text style={[styles.kpiLabel, { color: colors.textMuted }]}>Top Score</Text>
+                  <Text style={[styles.kpiValue, { color: colors.success }]}>
+                    {Math.max(...grades.map((grade) => grade.avg_grade ?? 0))}%
+                  </Text>
+                </View>
+                <View style={[styles.kpiCard, { borderColor: colors.border, backgroundColor: colors.bgCard }]}>
+                  <Text style={[styles.kpiLabel, { color: colors.textMuted }]}>Class Avg</Text>
+                  <Text style={[styles.kpiValue, { color: colors.textPrimary }]}>
+                    {Math.round(
+                      grades.reduce((sum, grade) => sum + (grade.avg_grade ?? 0), 0) / Math.max(grades.filter((grade) => grade.avg_grade != null).length, 1)
+                    )}
+                    %
+                  </Text>
+                </View>
+                <View style={[styles.kpiCard, { borderColor: colors.border, backgroundColor: colors.bgCard }]}>
+                  <Text style={[styles.kpiLabel, { color: colors.textMuted }]}>Graded</Text>
+                  <Text style={[styles.kpiValue, { color: colors.textPrimary }]}>
+                    {grades.filter((grade) => grade.submissions > 0).length}
+                  </Text>
+                </View>
+              </View>
+            )}
             {isTeacher && grades.length > 0 && (
               <TouchableOpacity
                 onPress={exportGradesPDF}
@@ -937,7 +1168,7 @@ export default function ClassDetailScreen({ navigation, route }: any) {
                       <TouchableOpacity
                         key={grade.student_id}
                         style={[styles.tableRow, index < list.length - 1 && { borderBottomColor: colors.border, borderBottomWidth: 1 }]}
-                        onPress={() => navigation.navigate('StudentReport', { studentId: grade.student_id, studentName: grade.full_name })}
+                        onPress={() => navigation.navigate(ROUTES.StudentReport, { studentId: grade.student_id, studentName: grade.full_name })}
                       >
                         <Text style={[styles.tableValue, { flex: 2, color: colors.textPrimary }]}>{grade.full_name}</Text>
                         <Text style={[styles.tableValue, { color: colors.textSecondary }]}>{grade.submissions}</Text>
@@ -981,6 +1212,15 @@ const getStyles = (colors: any) =>
     infoValue: { fontFamily: FONT_FAMILY.bodyMed, fontSize: FONT_SIZE.sm },
 
     kpiRow: { flexDirection: 'row', gap: SPACING.md, marginBottom: SPACING.lg },
+    kpiRowWrap: { flexWrap: 'wrap', rowGap: SPACING.sm },
+    attendanceKpiCard: {
+      flexGrow: 1,
+      flexBasis: '47%',
+      minWidth: 132,
+      borderWidth: 1,
+      borderRadius: RADIUS.md,
+      padding: SPACING.md,
+    },
     kpiCard: { flex: 1, borderWidth: 1, borderRadius: RADIUS.md, padding: SPACING.lg },
     kpiLabel: { fontFamily: FONT_FAMILY.bodyBold, fontSize: 10, textTransform: 'uppercase', letterSpacing: 1 },
     kpiValue: { fontFamily: FONT_FAMILY.display, fontSize: FONT_SIZE.lg, marginTop: 6 },

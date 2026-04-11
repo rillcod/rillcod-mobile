@@ -6,11 +6,12 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { MotiView } from 'moti';
-import { supabase } from '../../lib/supabase';
 import { ScreenHeader } from '../../components/ui/ScreenHeader';
+import { studentService } from '../../services/student.service';
 import { COLORS } from '../../constants/colors';
 import { FONT_FAMILY, FONT_SIZE } from '../../constants/typography';
 import { SPACING, RADIUS } from '../../constants/spacing';
+import { ROUTES } from '../../navigation/routes';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 interface StudentProfile {
@@ -42,6 +43,23 @@ const STATUS_COLOR: Record<string, string> = {
   present: COLORS.success, absent: COLORS.error,
   late: COLORS.warning, excused: COLORS.info,
 };
+function mapSubmissionRow(row: any): Submission {
+  return {
+    id: row.id,
+    status: row.status,
+    grade: row.grade,
+    feedback: row.feedback,
+    submitted_at: row.submitted_at,
+    assignments: row.assignments
+      ? {
+          title: row.assignments.title,
+          max_score: row.assignments.max_points ?? null,
+          type: row.assignments.assignment_type ?? null,
+        }
+      : null,
+  };
+}
+
 const gradeColor = (g: string | null) => {
   if (!g) return COLORS.textMuted;
   if (g.startsWith('A')) return COLORS.success;
@@ -65,47 +83,48 @@ export default function StudentDetailScreen({ route, navigation }: any) {
   const load = useCallback(async () => {
     if (!studentId) return;
     try {
-      const [profileRes, academicRes, subsRes, enrRes, reportsRes, attRes] = await Promise.all([
-        supabase.from('portal_users')
-          .select('id, full_name, email, phone, school_name, section_class, date_of_birth, is_active, created_at')
-          .eq('id', studentId).single(),
-        supabase.from('students')
-          .select('parent_email, parent_name, grade_level')
-          .eq('user_id', studentId).maybeSingle(),
-        supabase.from('assignment_submissions')
-          .select('id, status, grade, feedback, submitted_at, assignments(title, max_score, type)')
-          .eq('portal_user_id', studentId)
-          .order('submitted_at', { ascending: false }).limit(40),
-        supabase.from('enrollments').select('id', { count: 'exact', head: true }).eq('user_id', studentId),
-        supabase.from('student_progress_reports')
-          .select('id, course_name, report_term, overall_grade, overall_score, report_date, is_published, theory_score, practical_score, attendance_score')
-          .eq('student_id', studentId)
-          .order('report_date', { ascending: false }).limit(20),
-        supabase.from('attendance')
-          .select('id, status, created_at, class_sessions(session_date, classes(name))')
-          .eq('user_id', studentId)
-          .order('created_at', { ascending: false }).limit(60),
+      const [
+        profileRes,
+        academicRes,
+        subsRes,
+        enrRes,
+        reportsRes,
+        attRes,
+      ] = await Promise.allSettled([
+        studentService.getStudentPortalProfileForDetail(studentId),
+        studentService.getStudentRegistrationFieldsByUserId(studentId),
+        studentService.listSubmissionsForStudentDetail(studentId),
+        studentService.countEnrollmentsForUser(studentId),
+        studentService.listProgressReportsForStudentPortalId(studentId),
+        studentService.listAttendanceRowsForStudentDetail(studentId),
       ]);
 
-      if (profileRes.data) {
+      const profile = profileRes.status === 'fulfilled' ? profileRes.value : null;
+      const academic = academicRes.status === 'fulfilled' ? academicRes.value : null;
+      const subsRaw = subsRes.status === 'fulfilled' ? subsRes.value : [];
+      const enrollments = enrRes.status === 'fulfilled' ? enrRes.value : 0;
+      const rpts = (reportsRes.status === 'fulfilled' ? reportsRes.value : []) as Report[];
+      const att = (attRes.status === 'fulfilled' ? attRes.value : []) as unknown as AttendanceRow[];
+
+      if (profile) {
         setStudent({
-          ...(profileRes.data as StudentProfile),
-          parent_email: academicRes.data?.parent_email,
-          parent_name: academicRes.data?.parent_name,
-          grade_level: academicRes.data?.grade_level,
+          ...(profile as StudentProfile),
+          parent_email: academic?.parent_email ?? null,
+          parent_name: academic?.parent_name ?? null,
+          grade_level: academic?.grade_level ?? null,
         });
+      } else {
+        setStudent(null);
       }
-      const subs = (subsRes.data ?? []) as unknown as Submission[];
+      const subs = subsRaw.map(mapSubmissionRow);
       setSubmissions(subs);
-      const rpts = (reportsRes.data ?? []) as Report[];
       setReports(rpts);
-      const att = (attRes.data ?? []) as unknown as AttendanceRow[];
       setAttendance(att);
 
-      const presentCount = att.filter(a => a.status === 'present').length;
-      const scores = rpts.filter(r => r.overall_score != null).map(r => r.overall_score!);
+      const presentCount = att.filter((a) => a.status === 'present').length;
+      const scores = rpts.filter((r) => r.overall_score != null).map((r) => r.overall_score!);
       setStats({
-        enrollments: enrRes.count ?? 0,
+        enrollments,
         submissions: subs.length,
         present: presentCount,
         total: att.length,
@@ -196,6 +215,21 @@ export default function StudentDetailScreen({ route, navigation }: any) {
           ))}
         </View>
 
+        <View style={s.quickActions}>
+          <TouchableOpacity style={s.quickActionBtn} onPress={() => navigation.navigate(ROUTES.StudentReport, { studentId, studentName: student.full_name })}>
+            <Text style={s.quickActionText}>FULL REPORT</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={s.quickActionBtn} onPress={() => setTab('grades')}>
+            <Text style={s.quickActionText}>GRADEBOOK</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={s.quickActionBtn} onPress={() => setTab('attendance')}>
+            <Text style={s.quickActionText}>ATTENDANCE</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={s.quickActionBtn} onPress={() => setTab('work')}>
+            <Text style={s.quickActionText}>SUBMISSIONS</Text>
+          </TouchableOpacity>
+        </View>
+
         {/* ── OVERVIEW ── */}
         {tab === 'overview' && (
           <MotiView from={{ opacity: 0 }} animate={{ opacity: 1 }}>
@@ -240,7 +274,7 @@ export default function StudentDetailScreen({ route, navigation }: any) {
             </View>
 
             <TouchableOpacity style={s.actionBtn} activeOpacity={0.8}
-              onPress={() => navigation.navigate('StudentReport', { studentId, studentName: student.full_name })}>
+              onPress={() => navigation.navigate(ROUTES.StudentReport, { studentId, studentName: student.full_name })}>
               <LinearGradient colors={[COLORS.accent + '18', 'transparent']} style={StyleSheet.absoluteFill} />
               <Text style={s.actionBtnText}>📋  View Full Report</Text>
             </TouchableOpacity>
@@ -431,6 +465,9 @@ const s = StyleSheet.create({
   tabEmoji: { fontSize: 15 },
   tabLabel: { fontFamily: FONT_FAMILY.body, fontSize: 8, color: COLORS.textMuted, textTransform: 'uppercase', letterSpacing: 0.4 },
   tabLabelActive: { color: COLORS.admin, fontFamily: FONT_FAMILY.bodySemi },
+  quickActions: { flexDirection: 'row', flexWrap: 'wrap', gap: SPACING.xs, marginBottom: SPACING.md },
+  quickActionBtn: { width: '48%', alignItems: 'center', paddingVertical: 10, borderWidth: 1, borderColor: COLORS.border, borderRadius: RADIUS.md, backgroundColor: COLORS.bgCard },
+  quickActionText: { fontFamily: FONT_FAMILY.bodySemi, fontSize: FONT_SIZE.xs, color: COLORS.textPrimary, letterSpacing: 0.8 },
 
   card: { borderWidth: 1, borderColor: COLORS.border, borderRadius: RADIUS.xl, overflow: 'hidden', marginBottom: SPACING.md },
   cardTitle: {

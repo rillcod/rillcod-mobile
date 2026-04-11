@@ -1,4 +1,4 @@
-﻿
+
 import React, { useEffect, useState, useCallback } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity,
@@ -8,10 +8,12 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { MotiView } from 'moti';
 import { useAuth } from '../../contexts/AuthContext';
-import { supabase } from '../../lib/supabase';
+import { attendanceService } from '../../services/attendance.service';
 import { COLORS } from '../../constants/colors';
 import { FONT_FAMILY, FONT_SIZE } from '../../constants/typography';
 import { SPACING, RADIUS } from '../../constants/spacing';
+import { IconBackButton } from '../../components/ui/IconBackButton';
+import { ROUTES } from '../../navigation/routes';
 
 interface AttendanceRecord {
   id: string;
@@ -63,42 +65,41 @@ export default function AttendanceScreen({ navigation }: any) {
       return;
     }
 
-    let query = supabase.from('classes').select('id, name').order('name', { ascending: true }).limit(50);
-    if (isTeacher) query = query.eq('teacher_id', profile!.id);
-    else if (profile?.school_id) query = query.eq('school_id', profile.school_id);
-
-    const { data } = await query;
-    setClasses((data ?? []) as ClassItem[]);
+    try {
+      const rows = await attendanceService.listClassesForAttendancePicker({
+        teacherId: isTeacher ? profile!.id : undefined,
+        schoolId: !isTeacher ? profile?.school_id ?? undefined : undefined,
+        limit: 50,
+      });
+      setClasses(rows as ClassItem[]);
+    } catch {
+      setClasses([]);
+    }
     setLoading(false);
   }, [isStudent, isTeacher, profile]);
 
   const loadSessions = useCallback(async (classId: string) => {
-    const { data } = await supabase
-      .from('class_sessions')
-      .select('id, class_id, session_date, topic, start_time, created_at')
-      .eq('class_id', classId)
-      .order('session_date', { ascending: false })
-      .limit(30);
-    setSessions((data ?? []) as AttendanceSession[]);
+    try {
+      const rows = await attendanceService.listSessionsForClass(classId, 30);
+      setSessions(rows as AttendanceSession[]);
+    } catch {
+      setSessions([]);
+    }
   }, []);
 
   const loadRecords = useCallback(async (sessionId: string) => {
     if (isStudent) {
-      const { data } = await supabase
-        .from('attendance')
-        .select('id, user_id, created_at, status, notes')
-        .eq('user_id', profile!.id)
-        .order('created_at', { ascending: false })
-        .limit(50);
-      setRecords(((data ?? []) as any[]).map((row) => ({ ...row, student_name: profile!.full_name })));
+      if (!profile) return;
+      try {
+        const rows = await attendanceService.listAttendanceRowsForStudent(profile.id, 50);
+        setRecords((rows as any[]).map((row) => ({ ...row, student_name: profile.full_name })));
+      } catch {
+        setRecords([]);
+      }
       return;
     }
 
-    const { data } = await supabase
-      .from('attendance')
-      .select('id, user_id, created_at, status, notes, portal_users:user_id(full_name)')
-      .eq('session_id', sessionId)
-      .limit(100);
+    const data = await attendanceService.listAttendance(sessionId, profile?.school_id);
 
     setRecords(
       ((data ?? []) as any[]).map((row) => ({
@@ -153,21 +154,23 @@ export default function AttendanceScreen({ navigation }: any) {
   return (
     <SafeAreaView style={styles.safe}>
       <View style={styles.header}>
-        <TouchableOpacity onPress={() => {
-          if (view === 'records' && !isStudent) {
-            setView('sessions');
-            setSelectedSession('');
-          } else navigation.goBack();
-        }} style={styles.backBtn}>
-          <Text style={styles.backArrow}>{'<'}</Text>
-        </TouchableOpacity>
+        <IconBackButton
+          onPress={() => {
+            if (view === 'records' && !isStudent) {
+              setView('sessions');
+              setSelectedSession('');
+            } else navigation.goBack();
+          }}
+          color={COLORS.textPrimary}
+          style={styles.backBtn}
+        />
         <View style={{ flex: 1 }}>
           <Text style={styles.title}>Attendance</Text>
           <Text style={styles.subtitle}>{isStudent ? 'My attendance records' : view === 'sessions' ? 'Select a session' : `${records.length} records`}</Text>
         </View>
         {isTeacher && view === 'sessions' && selectedClass && (
           <TouchableOpacity
-            onPress={() => navigation.navigate('MarkAttendance', { classId: selectedClass, className: classes.find((c) => c.id === selectedClass)?.name })}
+            onPress={() => navigation.navigate(ROUTES.MarkAttendance, { classId: selectedClass, className: classes.find((c) => c.id === selectedClass)?.name })}
             style={styles.actionBtn}
           >
             <Text style={styles.actionBtnText}>+ Take Register</Text>
@@ -289,7 +292,6 @@ const styles = StyleSheet.create({
   loadText: { fontFamily: FONT_FAMILY.body, fontSize: FONT_SIZE.sm, color: COLORS.textMuted },
   header: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: SPACING.xl, paddingTop: SPACING.md, paddingBottom: SPACING.md, gap: SPACING.md },
   backBtn: { width: 36, height: 36, borderRadius: RADIUS.md, borderWidth: 1, borderColor: COLORS.border, alignItems: 'center', justifyContent: 'center' },
-  backArrow: { fontSize: 18, color: COLORS.textPrimary },
   title: { fontFamily: FONT_FAMILY.display, fontSize: FONT_SIZE['2xl'], color: COLORS.textPrimary },
   subtitle: { fontFamily: FONT_FAMILY.body, fontSize: FONT_SIZE.xs, color: COLORS.textMuted, marginTop: 2 },
   actionBtn: { paddingHorizontal: 12, paddingVertical: 8, borderRadius: RADIUS.sm, backgroundColor: COLORS.primary },

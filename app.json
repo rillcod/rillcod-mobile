@@ -1,15 +1,15 @@
 {
   "expo": {
-    "name": "Rillcod Academy",
+    "name": "Rillcod",
     "slug": "rillcod-academy",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "./assets/logo.png",
+    "icon": "./assets/rillcod-icon.png",
     "userInterfaceStyle": "dark",
     "splash": {
-      "image": "./assets/logo.png",
+      "image": "./assets/rillcod-icon.png",
       "resizeMode": "contain",
-      "backgroundColor": "#ffffff"
+      "backgroundColor": "#0C1624"
     },
     "ios": {
       "supportsTablet": false,
@@ -18,8 +18,8 @@
     "android": {
       "package": "com.rillcod.academy",
       "adaptiveIcon": {
-        "foregroundImage": "./assets/logo.png",
-        "backgroundColor": "#ffffff"
+        "foregroundImage": "./assets/rillcod-icon.png",
+        "backgroundColor": "#0C1624"
       },
       "predictiveBackGestureEnabled": false,
       "permissions": [
@@ -36,8 +36,8 @@
       [
         "expo-image-picker",
         {
-          "photosPermission": "Rillcod Academy needs access to your photos to update your profile picture.",
-          "cameraPermission": "Rillcod Academy needs access to your camera to take a profile photo."
+          "photosPermission": "Rillcod needs access to your photos for your profile picture and to attach assignment work.",
+          "cameraPermission": "Rillcod needs access to your camera for your profile picture and to photograph assignment submissions."
         }
       ],
       [

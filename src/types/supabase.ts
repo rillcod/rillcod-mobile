@@ -162,6 +162,7 @@ export type Database = {
           submitted_at: string | null
           updated_at: string | null
           user_id: string | null
+          weighted_score: number | null
         }
         Insert: {
           answers?: Json | null
@@ -179,6 +180,7 @@ export type Database = {
           submitted_at?: string | null
           updated_at?: string | null
           user_id?: string | null
+          weighted_score?: number | null
         }
         Update: {
           answers?: Json | null
@@ -196,6 +198,7 @@ export type Database = {
           submitted_at?: string | null
           updated_at?: string | null
           user_id?: string | null
+          weighted_score?: number | null
         }
         Relationships: [
           {
@@ -276,6 +279,7 @@ export type Database = {
           school_name: string | null
           title: string
           updated_at: string | null
+          weight: number
         }
         Insert: {
           assignment_type?: string | null
@@ -296,6 +300,7 @@ export type Database = {
           school_name?: string | null
           title: string
           updated_at?: string | null
+          weight?: number
         }
         Update: {
           assignment_type?: string | null
@@ -316,6 +321,7 @@ export type Database = {
           school_name?: string | null
           title?: string
           updated_at?: string | null
+          weight?: number
         }
         Relationships: [
           {
@@ -1183,6 +1189,7 @@ export type Database = {
           duration_hours: number | null
           id: string
           is_active: boolean | null
+          is_locked: boolean
           order_index: number | null
           program_id: string | null
           school_id: string | null
@@ -1198,6 +1205,7 @@ export type Database = {
           duration_hours?: number | null
           id?: string
           is_active?: boolean | null
+          is_locked?: boolean
           order_index?: number | null
           program_id?: string | null
           school_id?: string | null
@@ -1213,6 +1221,7 @@ export type Database = {
           duration_hours?: number | null
           id?: string
           is_active?: boolean | null
+          is_locked?: boolean
           order_index?: number | null
           program_id?: string | null
           school_id?: string | null
@@ -3544,6 +3553,7 @@ export type Database = {
           is_deleted: boolean | null
           is_direct_enrollment: boolean | null
           last_login: string | null
+          metadata: Json | null
           phone: string | null
           photo_url: string | null
           profile_image_url: string | null
@@ -3572,6 +3582,7 @@ export type Database = {
           is_deleted?: boolean | null
           is_direct_enrollment?: boolean | null
           last_login?: string | null
+          metadata?: Json | null
           phone?: string | null
           photo_url?: string | null
           profile_image_url?: string | null
@@ -3600,6 +3611,7 @@ export type Database = {
           is_deleted?: boolean | null
           is_direct_enrollment?: boolean | null
           last_login?: string | null
+          metadata?: Json | null
           phone?: string | null
           photo_url?: string | null
           profile_image_url?: string | null
@@ -3749,6 +3761,145 @@ export type Database = {
         Relationships: [
           {
             foreignKeyName: "programs_school_id_fkey"
+            columns: ["school_id"]
+            isOneToOne: false
+            referencedRelation: "schools"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      project_group_members: {
+        Row: {
+          group_id: string
+          id: string
+          individual_feedback: string | null
+          individual_score: number | null
+          joined_at: string
+          student_id: string
+          task_description: string | null
+        }
+        Insert: {
+          group_id: string
+          id?: string
+          individual_feedback?: string | null
+          individual_score?: number | null
+          joined_at?: string
+          student_id: string
+          task_description?: string | null
+        }
+        Update: {
+          group_id?: string
+          id?: string
+          individual_feedback?: string | null
+          individual_score?: number | null
+          joined_at?: string
+          student_id?: string
+          task_description?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "project_group_members_group_id_fkey"
+            columns: ["group_id"]
+            isOneToOne: false
+            referencedRelation: "project_groups"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "project_group_members_student_id_fkey"
+            columns: ["student_id"]
+            isOneToOne: false
+            referencedRelation: "portal_users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "project_group_members_student_id_fkey"
+            columns: ["student_id"]
+            isOneToOne: false
+            referencedRelation: "student_performance_summary"
+            referencedColumns: ["student_id"]
+          },
+        ]
+      }
+      project_groups: {
+        Row: {
+          assignment_id: string | null
+          class_id: string | null
+          class_name: string | null
+          created_at: string
+          created_by: string | null
+          evaluation_type: string
+          group_feedback: string | null
+          group_score: number | null
+          id: string
+          is_graded: boolean
+          name: string
+          school_id: string | null
+          school_name: string | null
+          updated_at: string
+        }
+        Insert: {
+          assignment_id?: string | null
+          class_id?: string | null
+          class_name?: string | null
+          created_at?: string
+          created_by?: string | null
+          evaluation_type?: string
+          group_feedback?: string | null
+          group_score?: number | null
+          id?: string
+          is_graded?: boolean
+          name: string
+          school_id?: string | null
+          school_name?: string | null
+          updated_at?: string
+        }
+        Update: {
+          assignment_id?: string | null
+          class_id?: string | null
+          class_name?: string | null
+          created_at?: string
+          created_by?: string | null
+          evaluation_type?: string
+          group_feedback?: string | null
+          group_score?: number | null
+          id?: string
+          is_graded?: boolean
+          name?: string
+          school_id?: string | null
+          school_name?: string | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "project_groups_assignment_id_fkey"
+            columns: ["assignment_id"]
+            isOneToOne: false
+            referencedRelation: "assignments"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "project_groups_class_id_fkey"
+            columns: ["class_id"]
+            isOneToOne: false
+            referencedRelation: "classes"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "project_groups_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "portal_users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "project_groups_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "student_performance_summary"
+            referencedColumns: ["student_id"]
+          },
+          {
+            foreignKeyName: "project_groups_school_id_fkey"
             columns: ["school_id"]
             isOneToOne: false
             referencedRelation: "schools"
@@ -5280,6 +5431,55 @@ export type Database = {
             isOneToOne: false
             referencedRelation: "student_performance_summary"
             referencedColumns: ["student_id"]
+          },
+        ]
+      }
+      whatsapp_groups: {
+        Row: {
+          created_at: string
+          created_by: string | null
+          id: string
+          link: string
+          name: string
+          school_id: string | null
+        }
+        Insert: {
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          link: string
+          name: string
+          school_id?: string | null
+        }
+        Update: {
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          link?: string
+          name?: string
+          school_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "whatsapp_groups_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "portal_users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "whatsapp_groups_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "student_performance_summary"
+            referencedColumns: ["student_id"]
+          },
+          {
+            foreignKeyName: "whatsapp_groups_school_id_fkey"
+            columns: ["school_id"]
+            isOneToOne: false
+            referencedRelation: "schools"
+            referencedColumns: ["id"]
           },
         ]
       }

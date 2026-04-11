@@ -1,5 +1,6 @@
 import React from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, Image, Platform } from 'react-native';
+import { IconBackButton } from './IconBackButton';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useTheme } from '../../contexts/ThemeContext';
 import { FONT_FAMILY, FONT_SIZE, LETTER_SPACING } from '../../constants/typography';
@@ -28,12 +29,10 @@ export function ScreenHeader({ title, subtitle, onBack, rightAction, showLogo = 
 
       <View style={styles.row}>
         {onBack ? (
-          <TouchableOpacity onPress={onBack} style={styles.backBtn} activeOpacity={0.7}>
-            <Text style={styles.backArrow}>←</Text>
-          </TouchableOpacity>
+          <IconBackButton onPress={onBack} color={colors.textPrimary} size={22} style={styles.backBtn} />
         ) : showLogo ? (
           <View style={styles.logoWrap}>
-            <Image source={require('../../../assets/rillcod-icon.png')} style={styles.logo} resizeMode="cover" />
+            <Image source={require('../../../assets/rillcod-icon.png')} style={styles.logo} resizeMode="contain" />
           </View>
         ) : null}
 
@@ -84,15 +83,17 @@ const getStyles = (colors: { bgCard: string; border: string; textPrimary: string
     justifyContent: 'center',
     flexShrink: 0,
   },
-  backArrow: { fontSize: 18, color: colors.textPrimary, lineHeight: 22 },
   logoWrap: {
-    width: 36,
-    height: 36,
+    width: 40,
+    height: 40,
     borderRadius: RADIUS.md,
     overflow: 'hidden',
     flexShrink: 0,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)',
   },
-  logo: { width: 36, height: 36 },
+  logo: { width: 34, height: 34 },
   titleWrap: { flex: 1 },
   title: {
     fontFamily: FONT_FAMILY.display,

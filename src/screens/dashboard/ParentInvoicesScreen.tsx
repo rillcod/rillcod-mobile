@@ -1,14 +1,19 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useState } from 'react';
+import { useFocusEffect } from '@react-navigation/native';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity,
   ActivityIndicator, RefreshControl, Linking, Alert,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { MotiView } from 'moti';
-import { supabase } from '../../lib/supabase';
+import { useAuth } from '../../contexts/AuthContext';
+import { paymentService } from '../../services/payment.service';
+import { studentService } from '../../services/student.service';
 import { COLORS } from '../../constants/colors';
 import { FONT_FAMILY, FONT_SIZE } from '../../constants/typography';
 import { SPACING, RADIUS } from '../../constants/spacing';
+import { IconBackButton } from '../../components/ui/IconBackButton';
+import { usePaystack } from '../../hooks/usePaystack';
 
 interface Invoice {
   id: string;
@@ -46,7 +51,8 @@ const STATUS_COLOR: Record<string, string> = {
 };
 
 export default function ParentInvoicesScreen({ navigation, route }: any) {
-  const { studentId, studentName } = route.params ?? {};
+  const { profile } = useAuth();
+  const { studentId: paramStudentId, studentName } = route.params ?? {};
   const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [payments, setPayments] = useState<Payment[]>([]);
   const [loading, setLoading] = useState(true);
@@ -54,51 +60,65 @@ export default function ParentInvoicesScreen({ navigation, route }: any) {
   const [activeTab, setActiveTab] = useState<'invoices' | 'payments'>('invoices');
   const [userId, setUserId] = useState<string | null>(null);
 
-  const load = async () => {
+  const load = useCallback(async () => {
     try {
-      const { data: student } = await supabase
-        .from('students')
-        .select('user_id')
-        .eq('id', studentId)
-        .maybeSingle();
+      let studentId = paramStudentId as string | undefined;
+      if (!studentId && profile?.email) {
+        studentId = (await studentService.getFirstStudentRegistrationIdForParentEmail(profile.email)) ?? undefined;
+      }
+      if (!studentId) {
+        setInvoices([]);
+        setPayments([]);
+        setUserId(null);
+        return;
+      }
 
-      setUserId(student?.user_id ?? null);
+      const portalUserId = await studentService.getPortalUserIdForStudentRegistration(studentId);
+      setUserId(portalUserId);
 
-      const [invRes, payRes] = await Promise.all([
-        student?.user_id
-          ? supabase
-              .from('invoices')
-              .select('id, invoice_number, amount, currency, status, due_date, notes, payment_link, items, created_at')
-              .eq('portal_user_id', student.user_id)
-              .order('created_at', { ascending: false })
-          : Promise.resolve({ data: [] }),
-        supabase
-          .from('payments')
-          .select('id, amount, payment_method, payment_status, transaction_reference, payment_date')
-          .eq('student_id', studentId)
-          .order('payment_date', { ascending: false })
-          .limit(30),
+      const [invoiceRows, paymentRows] = await Promise.all([
+        portalUserId ? paymentService.listInvoicesForPortalUser(portalUserId) : Promise.resolve([]),
+        paymentService.listPaymentsForStudentRegistration(studentId, 30),
       ]);
 
-      setInvoices((invRes as any).data ?? []);
-      setPayments((payRes as any).data ?? []);
+      setInvoices((invoiceRows as Invoice[]) ?? []);
+      setPayments((paymentRows as Payment[]) ?? []);
     } finally {
       setLoading(false);
       setRefreshing(false);
     }
-  };
+  }, [paramStudentId, profile?.email]);
 
-  useEffect(() => { load(); }, [studentId]);
+  const loadRef = React.useRef(load);
+  loadRef.current = load;
+  const { startCheckoutForInvoice, loading: paystackLoading, PaystackCheckoutPortal } = usePaystack({
+    onFulfilled: () => {
+      void loadRef.current();
+    },
+  });
+
+  useFocusEffect(
+    useCallback(() => {
+      void load();
+    }, [load]),
+  );
 
   const totalOwed = invoices.filter(i => i.status === 'pending' || i.status === 'overdue').reduce((s, i) => s + i.amount, 0);
   const totalPaid = payments.filter(p => p.payment_status === 'completed').reduce((s, p) => s + p.amount, 0);
   const currency = invoices[0]?.currency ?? 'NGN';
 
   const handlePay = (inv: Invoice) => {
+    const st = (inv.status || '').toLowerCase();
+    const unpaid = st !== 'paid' && st !== 'cancelled';
+    const ngn = (inv.currency || 'NGN').toUpperCase() === 'NGN';
+    if (unpaid && ngn && userId) {
+      void startCheckoutForInvoice(inv.id);
+      return;
+    }
     if (inv.payment_link) {
       Alert.alert(
         `Pay Invoice #${inv.invoice_number}`,
-        `Amount: ${formatCurrency(inv.amount, inv.currency)}\n\nYou will be redirected to Paystack to complete payment.`,
+        `Amount: ${formatCurrency(inv.amount, inv.currency)}\n\nYou will be redirected to complete payment.`,
         [
           { text: 'Cancel', style: 'cancel' },
           { text: 'Pay Now', onPress: () => Linking.openURL(inv.payment_link!) },
@@ -110,11 +130,10 @@ export default function ParentInvoicesScreen({ navigation, route }: any) {
   };
 
   return (
+    <>
     <SafeAreaView style={styles.safe}>
       <View style={styles.header}>
-        <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}>
-          <Text style={styles.backIcon}>←</Text>
-        </TouchableOpacity>
+        <IconBackButton onPress={() => navigation.goBack()} color={COLORS.textPrimary} style={styles.backBtn} />
         <View>
           <Text style={styles.title}>Invoices & Payments</Text>
           {studentName && <Text style={styles.subtitle}>{studentName}</Text>}
@@ -173,7 +192,12 @@ export default function ParentInvoicesScreen({ navigation, route }: any) {
                 ) : (
                   <View style={styles.list}>
                     {invoices.map((inv, i) => {
-                      const isPayable = inv.status === 'pending' || inv.status === 'overdue';
+                      const st = (inv.status || '').toLowerCase();
+                      const isPayable =
+                        st !== 'paid' &&
+                        st !== 'cancelled' &&
+                        (inv.currency || 'NGN').toUpperCase() === 'NGN' &&
+                        Boolean(userId);
                       const statusColor = STATUS_COLOR[inv.status] ?? COLORS.textMuted;
                       return (
                         <MotiView
@@ -213,8 +237,13 @@ export default function ParentInvoicesScreen({ navigation, route }: any) {
                           {inv.notes && <Text style={styles.invoiceNotes}>{inv.notes}</Text>}
 
                           {isPayable && (
-                            <TouchableOpacity style={styles.payBtn} onPress={() => handlePay(inv)} activeOpacity={0.85}>
-                              <Text style={styles.payBtnText}>💳  Pay {formatCurrency(inv.amount, inv.currency)}</Text>
+                            <TouchableOpacity
+                              style={[styles.payBtn, paystackLoading && { opacity: 0.7 }]}
+                              onPress={() => handlePay(inv)}
+                              disabled={paystackLoading}
+                              activeOpacity={0.85}
+                            >
+                              <Text style={styles.payBtnText}>💳  Pay with Paystack {formatCurrency(inv.amount, inv.currency)}</Text>
                             </TouchableOpacity>
                           )}
 
@@ -280,6 +309,8 @@ export default function ParentInvoicesScreen({ navigation, route }: any) {
         </>
       )}
     </SafeAreaView>
+    <PaystackCheckoutPortal />
+    </>
   );
 }
 
@@ -287,7 +318,6 @@ const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: COLORS.bg },
   header: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: SPACING.base, paddingTop: SPACING.md, paddingBottom: SPACING.base, gap: SPACING.md },
   backBtn: { padding: SPACING.xs },
-  backIcon: { fontSize: 22, color: COLORS.textPrimary },
   title: { fontFamily: FONT_FAMILY.display, fontSize: FONT_SIZE['2xl'], color: COLORS.textPrimary },
   subtitle: { fontFamily: FONT_FAMILY.body, fontSize: FONT_SIZE.sm, color: COLORS.textMuted, marginTop: 2 },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingTop: 80 },

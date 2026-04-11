@@ -3,13 +3,16 @@ import { NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import {
-  Text, ActivityIndicator, View, StyleSheet, Platform,
+  Text, ActivityIndicator, View, StyleSheet, Platform, Alert, TouchableOpacity,
 } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
+import type { ComponentProps } from 'react';
 import { MotiView } from 'moti';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 import { useAuth } from '../contexts/AuthContext';
-import { supabase } from '../lib/supabase';
+import { useInboxUnreadCount } from '../hooks/useInboxUnreadCount';
+import { RoleGuard } from '../components/ui/RoleGuard';
 
 // Auth screens
 import LoginScreen from '../screens/auth/LoginScreen';
@@ -28,7 +31,6 @@ import DashboardScreen from '../screens/dashboard/DashboardScreen';
 import LearnScreen from '../screens/learn/LearnScreen';
 import NotificationsScreen from '../screens/notifications/NotificationsScreen';
 import ProfileScreen from '../screens/dashboard/ProfileScreen';
-import MoreScreen from '../screens/dashboard/MoreScreen';
 
 // Detail / stack screens
 import AssignmentsScreen from '../screens/dashboard/AssignmentsScreen';
@@ -44,15 +46,20 @@ import ParentAttendanceScreen from '../screens/dashboard/ParentAttendanceScreen'
 import ParentGradesScreen from '../screens/dashboard/ParentGradesScreen';
 import ParentInvoicesScreen from '../screens/dashboard/ParentInvoicesScreen';
 import ParentCertificatesScreen from '../screens/dashboard/ParentCertificatesScreen';
+import ParentFeedbackScreen from '../screens/dashboard/ParentFeedbackScreen';
 
 // New admin/shared screens
 import StudentsScreen from '../screens/dashboard/StudentsScreen';
+import StudentImportScreen from '../screens/dashboard/StudentImportScreen';
 import TeachersScreen from '../screens/dashboard/TeachersScreen';
 import SchoolsScreen from '../screens/dashboard/SchoolsScreen';
 import ParentsScreen from '../screens/dashboard/ParentsScreen';
+import ParentDetailScreen from '../screens/dashboard/ParentDetailScreen';
 import ApprovalsScreen from '../screens/dashboard/ApprovalsScreen';
 import AttendanceScreen from '../screens/dashboard/AttendanceScreen';
 import PaymentsScreen from '../screens/dashboard/PaymentsScreen';
+import BulkPaymentsScreen from '../screens/dashboard/BulkPaymentsScreen';
+import TransactionsScreen from '../screens/dashboard/TransactionsScreen';
 import TimetableScreen from '../screens/dashboard/TimetableScreen';
 import ClassesScreen from '../screens/dashboard/ClassesScreen';
 import CBTScreen from '../screens/dashboard/CBTScreen';
@@ -79,6 +86,8 @@ import LeaderboardScreen from '../screens/dashboard/LeaderboardScreen';
 import LiveSessionsScreen from '../screens/dashboard/LiveSessionsScreen';
 import EngageScreen from '../screens/dashboard/EngageScreen';
 import VaultScreen from '../screens/dashboard/VaultScreen';
+import PlaygroundScreen from '../screens/dashboard/PlaygroundScreen';
+import PortfolioScreen from '../screens/dashboard/PortfolioScreen';
 import MissionsScreen from '../screens/dashboard/MissionsScreen';
 import ProtocolScreen from '../screens/dashboard/ProtocolScreen';
 import ManageCertificatesScreen from '../screens/dashboard/ManageCertificatesScreen';
@@ -90,28 +99,137 @@ import WipeStudentsScreen from '../screens/dashboard/WipeStudentsScreen';
 import ProgramsScreen from '../screens/dashboard/ProgramsScreen';
 import LessonsScreen from '../screens/dashboard/LessonsScreen';
 import LessonDetailScreen from '../screens/dashboard/LessonDetailScreen';
+import CourseDiscussionScreen from '../screens/dashboard/CourseDiscussionScreen';
+import DiscussionTopicScreen from '../screens/dashboard/DiscussionTopicScreen';
+import LessonEditorScreen from '../screens/dashboard/LessonEditorScreen';
 import CBTExaminationScreen from '../screens/dashboard/CBTExaminationScreen';
+import CBTExamEditorScreen from '../screens/dashboard/CBTExamEditorScreen';
+import CBTGradingScreen from '../screens/dashboard/CBTGradingScreen';
 import SchoolOverviewScreen from '../screens/dashboard/SchoolOverviewScreen';
+import SchoolBillingScreen from '../screens/dashboard/SchoolBillingScreen';
 import CourseDetailScreen from '../screens/dashboard/CourseDetailScreen';
+import CourseEditorScreen from '../screens/dashboard/CourseEditorScreen';
 import MarkAttendanceScreen from '../screens/dashboard/MarkAttendanceScreen';
+import ProgressScreen from '../screens/dashboard/ProgressScreen';
+import IoTScreen from '../screens/dashboard/IoTScreen';
 
 import { COLORS } from '../constants/colors';
 import { FONT_FAMILY, FONT_SIZE } from '../constants/typography';
 import { RADIUS } from '../constants/spacing';
 
 import type { RootStackParamList, TabParamList } from './types';
+import { ROUTES, TAB_ROUTES, MAIN_STACK_TABS } from './routes';
 
 const Stack = createNativeStackNavigator<any>();
 const Tab   = createBottomTabNavigator<TabParamList>();
 
 const ONBOARDING_KEY = 'rillcod_onboarding_done';
+type Role = 'admin' | 'teacher' | 'school' | 'student' | 'parent';
 
-// ── Animated tab icon ─────────────────────────────────────────────────────────
-function TabIcon({ glyph, focused, badge }: { glyph: string; focused: boolean; badge?: number }) {
+function withRoleGuard(Component: React.ComponentType<any>, allow: Role[]) {
+  return function GuardedScreen(props: any) {
+    return (
+      <RoleGuard allow={allow} navigation={props.navigation}>
+        <Component {...props} />
+      </RoleGuard>
+    );
+  };
+}
+
+const AdminOnlySchoolsScreen = withRoleGuard(SchoolsScreen, ['admin']);
+const StaffParentsScreen = withRoleGuard(ParentsScreen, ['admin', 'teacher']);
+const StaffApprovalsScreen = withRoleGuard(ApprovalsScreen, ['admin', 'teacher']);
+const AdminOnlyUsersScreen = withRoleGuard(UsersScreen, ['admin']);
+const AdminOnlyAddSchoolScreen = withRoleGuard(AddSchoolScreen, ['admin']);
+const AdminOnlyWipeStudentsScreen = withRoleGuard(WipeStudentsScreen, ['admin']);
+const AdminOnlyCardBuilderScreen = withRoleGuard(CardBuilderScreen, ['admin']);
+const AdminOnlyProgramsScreen = withRoleGuard(ProgramsScreen, ['admin']);
+const StaffLessonsScreen = withRoleGuard(LessonsScreen, ['admin', 'teacher']);
+const StaffEnrolStudentsScreen = withRoleGuard(EnrolStudentsScreen, ['admin', 'teacher']);
+const StaffAnalyticsScreen = withRoleGuard(AnalyticsScreen, ['admin', 'school', 'teacher']);
+const StaffTeachersScreen = withRoleGuard(TeachersScreen, ['admin', 'school']);
+const StaffStudentsScreen = withRoleGuard(StudentsScreen, ['admin', 'teacher', 'school']);
+const StaffStudentImportScreen = withRoleGuard(StudentImportScreen, ['admin', 'teacher', 'school']);
+const StaffAttendanceScreen = withRoleGuard(AttendanceScreen, ['admin', 'teacher', 'school', 'student']);
+const StaffPaymentsScreen = withRoleGuard(PaymentsScreen, ['admin', 'school']);
+const StaffBulkPaymentsScreen = withRoleGuard(BulkPaymentsScreen, ['admin', 'school']);
+const StaffTransactionsScreen = withRoleGuard(TransactionsScreen, ['admin', 'school']);
+const ProgressAccessScreen = withRoleGuard(ProgressScreen, ['admin', 'school']);
+const AdminOnlyIoTScreen = withRoleGuard(IoTScreen, ['admin']);
+const StaffReportsScreen = withRoleGuard(ReportsScreen, ['admin', 'teacher', 'school', 'student']);
+const StaffAssignmentsScreen = withRoleGuard(AssignmentsScreen, ['admin', 'teacher', 'student']);
+const StaffGradesScreen = withRoleGuard(GradesScreen, ['admin', 'teacher', 'school', 'student']);
+const StaffClassesScreen = withRoleGuard(ClassesScreen, ['admin', 'teacher', 'school']);
+const StaffCBTScreen = withRoleGuard(CBTScreen, ['admin', 'teacher', 'student']);
+const StaffProjectsScreen = withRoleGuard(ProjectsScreen, ['admin', 'teacher', 'student']);
+const StaffLibraryScreen = withRoleGuard(LibraryScreen, ['admin', 'teacher', 'student']);
+const StaffLiveSessionsScreen = withRoleGuard(LiveSessionsScreen, ['admin', 'teacher', 'school', 'student']);
+const StaffEngageScreen = withRoleGuard(EngageScreen, ['admin', 'teacher', 'student']);
+const StaffVaultScreen = withRoleGuard(VaultScreen, ['admin', 'teacher', 'student']);
+const StaffMissionsScreen = withRoleGuard(MissionsScreen, ['admin', 'teacher', 'student']);
+const StaffProtocolScreen = withRoleGuard(ProtocolScreen, ['admin', 'teacher', 'student']);
+const RoleNewslettersScreen = withRoleGuard(NewslettersScreen, ['admin', 'teacher', 'student', 'parent']);
+const StaffManageCertificatesScreen = withRoleGuard(ManageCertificatesScreen, ['admin', 'teacher']);
+const StaffReportBuilderScreen = withRoleGuard(ReportBuilderScreen, ['admin', 'teacher']);
+const StaffBulkRegisterScreen = withRoleGuard(BulkRegisterScreen, ['admin', 'teacher']);
+const AdminOnlyAddTeacherScreen = withRoleGuard(AddTeacherScreen, ['admin']);
+const StaffAddStudentScreen = withRoleGuard(AddStudentScreen, ['admin', 'teacher', 'school']);
+const StaffAddClassScreen = withRoleGuard(AddClassScreen, ['admin', 'teacher']);
+const StaffCreateAssignmentScreen = withRoleGuard(CreateAssignmentScreen, ['admin', 'teacher']);
+const StaffSchoolOverviewScreen = withRoleGuard(SchoolOverviewScreen, ['school', 'admin']);
+const StaffSchoolBillingScreen = withRoleGuard(SchoolBillingScreen, ['school', 'admin']);
+const ParentResultsOnlyScreen = withRoleGuard(ParentResultsScreen, ['parent']);
+const ParentAttendanceOnlyScreen = withRoleGuard(ParentAttendanceScreen, ['parent']);
+const ParentGradesOnlyScreen = withRoleGuard(ParentGradesScreen, ['parent']);
+const ParentInvoicesOnlyScreen = withRoleGuard(ParentInvoicesScreen, ['parent']);
+const ParentCertificatesOnlyScreen = withRoleGuard(ParentCertificatesScreen, ['parent']);
+const ParentFeedbackScreenGuard = withRoleGuard(ParentFeedbackScreen, ['admin', 'teacher', 'parent']);
+const ParentChildrenOnlyScreen = withRoleGuard(MyChildrenScreen, ['parent']);
+const PlaygroundAccessScreen = withRoleGuard(PlaygroundScreen, ['admin', 'teacher', 'student']);
+const PortfolioAccessScreen = withRoleGuard(PortfolioScreen, ['student']);
+const StaffTimetableScreen = withRoleGuard(TimetableScreen, ['admin', 'teacher', 'school', 'student']);
+const StaffStudentDetailScreen = withRoleGuard(StudentDetailScreen, ['admin', 'teacher', 'school']);
+const StaffAssignmentDetailScreen = withRoleGuard(AssignmentDetailScreen, ['admin', 'teacher', 'student']);
+const StaffTeacherDetailScreen = withRoleGuard(TeacherDetailScreen, ['admin', 'school']);
+const StaffProjectDetailScreen = withRoleGuard(ProjectDetailScreen, ['admin', 'teacher', 'student']);
+const StaffClassDetailScreen = withRoleGuard(ClassDetailScreen, ['admin', 'teacher', 'school']);
+const StaffCourseDetailScreen = withRoleGuard(CourseDetailScreen, ['admin', 'teacher', 'student']);
+const StaffLessonDetailScreen = withRoleGuard(LessonDetailScreen, ['admin', 'teacher', 'student']);
+const StaffCourseDiscussionScreen = withRoleGuard(CourseDiscussionScreen, ['admin', 'teacher', 'student']);
+const StaffDiscussionTopicScreen = withRoleGuard(DiscussionTopicScreen, ['admin', 'teacher', 'student']);
+const StaffLessonEditorScreen = withRoleGuard(LessonEditorScreen, ['admin', 'teacher', 'school']);
+const StaffCourseEditorScreen = withRoleGuard(CourseEditorScreen, ['admin', 'teacher']);
+const StaffMarkAttendanceScreen = withRoleGuard(MarkAttendanceScreen, ['admin', 'teacher', 'school']);
+const StaffParentDetailScreen = withRoleGuard(ParentDetailScreen, ['admin', 'teacher', 'school']);
+const StaffSchoolDetailScreen = withRoleGuard(SchoolDetailScreen, ['admin', 'school']);
+const StaffStudentReportScreen = withRoleGuard(StudentReportScreen, ['admin', 'teacher', 'school']);
+const StaffCBTExaminationScreen = withRoleGuard(CBTExaminationScreen, ['admin', 'teacher', 'student']);
+const StaffCBTExamEditorScreen = withRoleGuard(CBTExamEditorScreen, ['admin', 'teacher']);
+const StaffCBTGradingScreen = withRoleGuard(CBTGradingScreen, ['admin', 'teacher']);
+
+type IoniconName = ComponentProps<typeof Ionicons>['name'];
+
+// ── Tab bar: Ionicons outline (idle) / solid (focused), colors from navigator ─
+function TabIcon({
+  outlineName,
+  solidName,
+  focused,
+  color,
+  size = 22,
+  badge,
+}: {
+  outlineName: IoniconName;
+  solidName: IoniconName;
+  focused: boolean;
+  color: string;
+  size?: number;
+  badge?: number;
+}) {
+  const iconSize = size ?? 22;
   return (
     <MotiView
       animate={{
-        scale: focused ? 1.12 : 1,
+        scale: focused ? 1.06 : 1,
         backgroundColor: focused ? COLORS.primaryPale : 'transparent',
       }}
       transition={{ type: 'spring', damping: 18 }}
@@ -120,11 +238,11 @@ function TabIcon({ glyph, focused, badge }: { glyph: string; focused: boolean; b
       {focused && (
         <MotiView
           from={{ opacity: 0 }}
-          animate={{ opacity: 0.65 }}
+          animate={{ opacity: 0.5 }}
           style={styles.tabGlow}
         />
       )}
-      <Text style={styles.tabGlyph}>{glyph}</Text>
+      <Ionicons name={focused ? solidName : outlineName} size={iconSize} color={color} />
       {!!badge && badge > 0 && (
         <View style={styles.badge}>
           <Text style={styles.badgeText}>{badge > 9 ? '9+' : badge}</Text>
@@ -134,25 +252,16 @@ function TabIcon({ glyph, focused, badge }: { glyph: string; focused: boolean; b
   );
 }
 
+function AdminSignOutTabPlaceholder() {
+  return <View style={{ flex: 1 }} />;
+}
+
 // ── Main bottom tabs ──────────────────────────────────────────────────────────
 function MainTabs() {
-  const { profile } = useAuth();
-  const [unread, setUnread] = useState(0);
-
-  useEffect(() => {
-    if (!profile) return;
-    const fetchUnread = async () => {
-      const { count } = await supabase
-        .from('notifications')
-        .select('id', { count: 'exact', head: true })
-        .eq('user_id', profile.id)
-        .eq('is_read', false);
-      setUnread(count ?? 0);
-    };
-    fetchUnread();
-    const interval = setInterval(fetchUnread, 30000);
-    return () => clearInterval(interval);
-  }, [profile]);
+  const { profile, signOut } = useAuth();
+  const unread = useInboxUnreadCount(profile?.id);
+  const showLearnTab = profile?.role === 'student';
+  const isAdmin = profile?.role === 'admin';
 
   return (
     <Tab.Navigator
@@ -166,45 +275,111 @@ function MainTabs() {
       }}
     >
       <Tab.Screen
-        name="Dashboard"
+        name={TAB_ROUTES.Dashboard}
         component={DashboardScreen}
         options={{
           tabBarLabel: 'Home',
-          tabBarIcon: ({ focused }) => <TabIcon glyph="H" focused={focused} />,
+          tabBarIcon: ({ focused, color, size }) => (
+            <TabIcon outlineName="home-outline" solidName="home" focused={focused} color={color} size={size} />
+          ),
         }}
       />
-      <Tab.Screen
-        name="Learn"
-        component={LearnScreen}
-        options={{
-          tabBarLabel: 'Learn',
-          tabBarIcon: ({ focused }) => <TabIcon glyph="L" focused={focused} />,
-        }}
-      />
-      <Tab.Screen
-        name="Notifications"
-        component={NotificationsScreen}
-        options={{
-          tabBarLabel: 'Alerts',
-          tabBarIcon: ({ focused }) => <TabIcon glyph="A" focused={focused} badge={unread} />,
-        }}
-      />
-      <Tab.Screen
-        name="Profile"
-        component={ProfileScreen}
-        options={{
-          tabBarLabel: 'Profile',
-          tabBarIcon: ({ focused }) => <TabIcon glyph="P" focused={focused} />,
-        }}
-      />
-      <Tab.Screen
-        name="Portal"
-        component={MoreScreen}
-        options={{
-          tabBarLabel: 'Portal',
-          tabBarIcon: ({ focused }) => <TabIcon glyph="+" focused={focused} />,
-        }}
-      />
+      {showLearnTab ? (
+        <Tab.Screen
+          name={TAB_ROUTES.Learn}
+          component={LearnScreen}
+          options={{
+            tabBarLabel: 'Learn',
+            tabBarIcon: ({ focused, color, size }) => (
+              <TabIcon outlineName="book-outline" solidName="book" focused={focused} color={color} size={size} />
+            ),
+          }}
+        />
+      ) : null}
+      {!isAdmin ? (
+        <Tab.Screen
+          name={TAB_ROUTES.Notifications}
+          component={NotificationsScreen}
+          options={{
+            tabBarLabel: 'Alerts',
+            tabBarIcon: ({ focused, color, size }) => (
+              <TabIcon
+                outlineName="notifications-outline"
+                solidName="notifications"
+                focused={focused}
+                color={color}
+                size={size}
+                badge={unread}
+              />
+            ),
+          }}
+        />
+      ) : null}
+      {isAdmin ? (
+        <>
+          <Tab.Screen
+            name={TAB_ROUTES.AdminApprovals}
+            component={StaffApprovalsScreen}
+            options={{
+              tabBarLabel: 'Approvals',
+              tabBarIcon: ({ focused, color, size }) => (
+                <TabIcon outlineName="shield-outline" solidName="shield" focused={focused} color={color} size={size} />
+              ),
+            }}
+          />
+          <Tab.Screen
+            name={TAB_ROUTES.AdminUsers}
+            component={AdminOnlyUsersScreen}
+            options={{
+              tabBarLabel: 'Users',
+              tabBarIcon: ({ focused, color, size }) => (
+                <TabIcon outlineName="people-outline" solidName="people" focused={focused} color={color} size={size} />
+              ),
+            }}
+          />
+          <Tab.Screen
+            name={TAB_ROUTES.AdminSignOut}
+            component={AdminSignOutTabPlaceholder}
+            options={{
+              tabBarLabel: 'Sign out',
+              tabBarIcon: ({ color, size }) => (
+                <Ionicons name="log-out-outline" size={size} color={color} />
+              ),
+              tabBarButton: (props) => {
+                const { children, style, accessibilityState } = props;
+                return (
+                  <TouchableOpacity
+                    accessibilityRole="button"
+                    accessibilityState={accessibilityState}
+                    activeOpacity={0.7}
+                    style={style}
+                    onPress={() => {
+                      Alert.alert('Sign out', 'Leave the admin portal?', [
+                        { text: 'Cancel', style: 'cancel' },
+                        { text: 'Sign out', style: 'destructive', onPress: () => void signOut() },
+                      ]);
+                    }}
+                  >
+                    {children}
+                  </TouchableOpacity>
+                );
+              },
+            }}
+          />
+        </>
+      ) : null}
+      {!isAdmin ? (
+        <Tab.Screen
+          name={TAB_ROUTES.Profile}
+          component={ProfileScreen}
+          options={{
+            tabBarLabel: 'Profile',
+            tabBarIcon: ({ focused, color, size }) => (
+              <TabIcon outlineName="person-outline" solidName="person" focused={focused} color={color} size={size} />
+            ),
+          }}
+        />
+      ) : null}
     </Tab.Navigator>
   );
 }
@@ -213,75 +388,93 @@ function MainTabs() {
 function MainStack() {
   return (
     <Stack.Navigator screenOptions={{ headerShown: false, animation: 'slide_from_right' }}>
-      <Stack.Screen name="MainTabs" component={MainTabs} options={{ animation: 'fade' }} />
-      <Stack.Screen name="Assignments" component={AssignmentsScreen} />
-      <Stack.Screen name="Grades" component={GradesScreen} />
-      <Stack.Screen name="Certificates" component={CertificatesScreen} />
-      <Stack.Screen name="Invoices" component={InvoicesScreen} />
-      <Stack.Screen name="Messages" component={MessagesScreen} />
-      <Stack.Screen name="Settings" component={SettingsScreen} />
-      <Stack.Screen name="MyChildren" component={MyChildrenScreen} />
-      <Stack.Screen name="Analytics" component={AnalyticsScreen} />
-      <Stack.Screen name="ParentResults" component={ParentResultsScreen} />
-      <Stack.Screen name="ParentAttendance" component={ParentAttendanceScreen} />
-      <Stack.Screen name="ParentGrades" component={ParentGradesScreen} />
-      <Stack.Screen name="ParentInvoices" component={ParentInvoicesScreen} />
-      <Stack.Screen name="ParentCertificates" component={ParentCertificatesScreen} />
-      <Stack.Screen name="Students" component={StudentsScreen} />
-      <Stack.Screen name="Teachers" component={TeachersScreen} />
-      <Stack.Screen name="Schools" component={SchoolsScreen} />
-      <Stack.Screen name="Parents" component={ParentsScreen} />
-      <Stack.Screen name="Approvals" component={ApprovalsScreen} />
-      <Stack.Screen name="Attendance" component={AttendanceScreen} />
-      <Stack.Screen name="Payments" component={PaymentsScreen} />
-      <Stack.Screen name="Timetable" component={TimetableScreen} />
-      <Stack.Screen name="Classes" component={ClassesScreen} />
-      <Stack.Screen name="CBT" component={CBTScreen} />
-      <Stack.Screen name="CBTExamination" component={CBTExaminationScreen} />
-      <Stack.Screen name="Reports" component={ReportsScreen} />
-      <Stack.Screen name="StudentDetail" component={StudentDetailScreen} />
-      <Stack.Screen name="AssignmentDetail" component={AssignmentDetailScreen} />
-      <Stack.Screen name="TeacherDetail" component={TeacherDetailScreen} />
-      <Stack.Screen name="ProjectDetail" component={ProjectDetailScreen} />
-      <Stack.Screen name="AddStudent" component={AddStudentScreen} />
-      <Stack.Screen name="AddSchool" component={AddSchoolScreen} />
-      <Stack.Screen name="AddTeacher" component={AddTeacherScreen} />
-      <Stack.Screen name="AddClass" component={AddClassScreen} />
-      <Stack.Screen name="SchoolDetail" component={SchoolDetailScreen} />
-      <Stack.Screen name="StudentReport" component={StudentReportScreen} />
-      <Stack.Screen name="BulkRegister" component={BulkRegisterScreen} />
-      <Stack.Screen name="ClassDetail" component={ClassDetailScreen} />
-      <Stack.Screen name="CreateAssignment" component={CreateAssignmentScreen} />
-      <Stack.Screen name="ReportBuilder" component={ReportBuilderScreen} />
-      <Stack.Screen name="AI" component={AIScreen} />
-      <Stack.Screen name="Courses" component={CoursesScreen} />
-      <Stack.Screen name="Projects" component={ProjectsScreen} />
-      <Stack.Screen name="Library" component={LibraryScreen} />
-      <Stack.Screen name="Leaderboard" component={LeaderboardScreen} />
-      <Stack.Screen name="LiveSessions" component={LiveSessionsScreen} />
-      <Stack.Screen name="Engage" component={EngageScreen} />
-      <Stack.Screen name="Vault" component={VaultScreen} />
-      <Stack.Screen name="Missions" component={MissionsScreen} />
-      <Stack.Screen name="Protocol" component={ProtocolScreen} />
-      <Stack.Screen name="ManageCertificates" component={ManageCertificatesScreen} />
-      <Stack.Screen name="Newsletters" component={NewslettersScreen} />
-      <Stack.Screen name="CardBuilder" component={CardBuilderScreen} />
-      <Stack.Screen name="Users" component={UsersScreen} />
-      <Stack.Screen name="EnrolStudents" component={EnrolStudentsScreen} />
-      <Stack.Screen name="WipeStudents" component={WipeStudentsScreen} />
-      <Stack.Screen name="Programs" component={ProgramsScreen} />
-      <Stack.Screen name="Lessons" component={LessonsScreen} />
-      <Stack.Screen name="LessonDetail" component={LessonDetailScreen} />
-      <Stack.Screen name="SchoolOverview" component={SchoolOverviewScreen} />
-      <Stack.Screen name="CourseDetail" component={CourseDetailScreen} />
-      <Stack.Screen name="MarkAttendance" component={MarkAttendanceScreen} />
+      <Stack.Screen name={MAIN_STACK_TABS} component={MainTabs} options={{ animation: 'fade' }} />
+      <Stack.Screen name={ROUTES.NotificationInbox} component={NotificationsScreen} />
+      <Stack.Screen name={ROUTES.UserProfile} component={ProfileScreen} />
+      <Stack.Screen name={ROUTES.Assignments} component={StaffAssignmentsScreen} />
+      <Stack.Screen name={ROUTES.Grades} component={StaffGradesScreen} />
+      <Stack.Screen name={ROUTES.Certificates} component={CertificatesScreen} />
+      <Stack.Screen name={ROUTES.Invoices} component={InvoicesScreen} />
+      <Stack.Screen name={ROUTES.Messages} component={MessagesScreen} />
+      <Stack.Screen name={ROUTES.Settings} component={SettingsScreen} />
+      <Stack.Screen name={ROUTES.MyChildren} component={ParentChildrenOnlyScreen} />
+      <Stack.Screen name={ROUTES.Analytics} component={StaffAnalyticsScreen} />
+      <Stack.Screen name={ROUTES.ParentResults} component={ParentResultsOnlyScreen} />
+      <Stack.Screen name={ROUTES.ParentAttendance} component={ParentAttendanceOnlyScreen} />
+      <Stack.Screen name={ROUTES.ParentGrades} component={ParentGradesOnlyScreen} />
+      <Stack.Screen name={ROUTES.ParentInvoices} component={ParentInvoicesOnlyScreen} />
+      <Stack.Screen name={ROUTES.ParentCertificates} component={ParentCertificatesOnlyScreen} />
+      <Stack.Screen name={ROUTES.ParentFeedback} component={ParentFeedbackScreenGuard} />
+      <Stack.Screen name={ROUTES.Students} component={StaffStudentsScreen} />
+      <Stack.Screen name={ROUTES.StudentImport} component={StaffStudentImportScreen} />
+      <Stack.Screen name={ROUTES.Teachers} component={StaffTeachersScreen} />
+      <Stack.Screen name={ROUTES.Schools} component={AdminOnlySchoolsScreen} />
+      <Stack.Screen name={ROUTES.Parents} component={StaffParentsScreen} />
+      <Stack.Screen name={ROUTES.ParentDetail} component={StaffParentDetailScreen} />
+      <Stack.Screen name={ROUTES.Approvals} component={StaffApprovalsScreen} />
+      <Stack.Screen name={ROUTES.Attendance} component={StaffAttendanceScreen} />
+      <Stack.Screen name={ROUTES.Payments} component={StaffPaymentsScreen} />
+      <Stack.Screen name={ROUTES.BulkPayments} component={StaffBulkPaymentsScreen} />
+      <Stack.Screen name={ROUTES.Transactions} component={StaffTransactionsScreen} />
+      <Stack.Screen name={ROUTES.Progress} component={ProgressAccessScreen} />
+      <Stack.Screen name={ROUTES.IoT} component={AdminOnlyIoTScreen} />
+      <Stack.Screen name={ROUTES.Timetable} component={StaffTimetableScreen} />
+      <Stack.Screen name={ROUTES.Classes} component={StaffClassesScreen} />
+      <Stack.Screen name={ROUTES.CBT} component={StaffCBTScreen} />
+      <Stack.Screen name={ROUTES.CBTExamination} component={StaffCBTExaminationScreen} />
+      <Stack.Screen name={ROUTES.CBTExamEditor} component={StaffCBTExamEditorScreen} />
+      <Stack.Screen name={ROUTES.CBTGrading} component={StaffCBTGradingScreen} />
+      <Stack.Screen name={ROUTES.Reports} component={StaffReportsScreen} />
+      <Stack.Screen name={ROUTES.StudentDetail} component={StaffStudentDetailScreen} />
+      <Stack.Screen name={ROUTES.AssignmentDetail} component={StaffAssignmentDetailScreen} />
+      <Stack.Screen name={ROUTES.TeacherDetail} component={StaffTeacherDetailScreen} />
+      <Stack.Screen name={ROUTES.ProjectDetail} component={StaffProjectDetailScreen} />
+      <Stack.Screen name={ROUTES.AddStudent} component={StaffAddStudentScreen} />
+      <Stack.Screen name={ROUTES.AddSchool} component={AdminOnlyAddSchoolScreen} />
+      <Stack.Screen name={ROUTES.AddTeacher} component={AdminOnlyAddTeacherScreen} />
+      <Stack.Screen name={ROUTES.AddClass} component={StaffAddClassScreen} />
+      <Stack.Screen name={ROUTES.SchoolDetail} component={StaffSchoolDetailScreen} />
+      <Stack.Screen name={ROUTES.StudentReport} component={StaffStudentReportScreen} />
+      <Stack.Screen name={ROUTES.BulkRegister} component={StaffBulkRegisterScreen} />
+      <Stack.Screen name={ROUTES.ClassDetail} component={StaffClassDetailScreen} />
+      <Stack.Screen name={ROUTES.CreateAssignment} component={StaffCreateAssignmentScreen} />
+      <Stack.Screen name={ROUTES.ReportBuilder} component={StaffReportBuilderScreen} />
+      <Stack.Screen name={ROUTES.AI} component={AIScreen} />
+      <Stack.Screen name={ROUTES.Courses} component={CoursesScreen} />
+      <Stack.Screen name={ROUTES.CourseEditor} component={StaffCourseEditorScreen} />
+      <Stack.Screen name={ROUTES.Projects} component={StaffProjectsScreen} />
+      <Stack.Screen name={ROUTES.Library} component={StaffLibraryScreen} />
+      <Stack.Screen name={ROUTES.Leaderboard} component={LeaderboardScreen} />
+      <Stack.Screen name={ROUTES.LiveSessions} component={StaffLiveSessionsScreen} />
+      <Stack.Screen name={ROUTES.Engage} component={StaffEngageScreen} />
+      <Stack.Screen name={ROUTES.Vault} component={StaffVaultScreen} />
+      <Stack.Screen name={ROUTES.Playground} component={PlaygroundAccessScreen} />
+      <Stack.Screen name={ROUTES.Portfolio} component={PortfolioAccessScreen} />
+      <Stack.Screen name={ROUTES.Missions} component={StaffMissionsScreen} />
+      <Stack.Screen name={ROUTES.Protocol} component={StaffProtocolScreen} />
+      <Stack.Screen name={ROUTES.ManageCertificates} component={StaffManageCertificatesScreen} />
+      <Stack.Screen name={ROUTES.Newsletters} component={RoleNewslettersScreen} />
+      <Stack.Screen name={ROUTES.CardBuilder} component={AdminOnlyCardBuilderScreen} />
+      <Stack.Screen name={ROUTES.Users} component={AdminOnlyUsersScreen} />
+      <Stack.Screen name={ROUTES.EnrolStudents} component={StaffEnrolStudentsScreen} />
+      <Stack.Screen name={ROUTES.WipeStudents} component={AdminOnlyWipeStudentsScreen} />
+      <Stack.Screen name={ROUTES.Programs} component={AdminOnlyProgramsScreen} />
+      <Stack.Screen name={ROUTES.Lessons} component={StaffLessonsScreen} />
+      <Stack.Screen name={ROUTES.LessonDetail} component={StaffLessonDetailScreen} />
+      <Stack.Screen name={ROUTES.CourseDiscussion} component={StaffCourseDiscussionScreen} />
+      <Stack.Screen name={ROUTES.DiscussionTopic} component={StaffDiscussionTopicScreen} />
+      <Stack.Screen name={ROUTES.LessonEditor} component={StaffLessonEditorScreen} />
+      <Stack.Screen name={ROUTES.SchoolOverview} component={StaffSchoolOverviewScreen} />
+      <Stack.Screen name={ROUTES.SchoolBilling} component={StaffSchoolBillingScreen} />
+      <Stack.Screen name={ROUTES.CourseDetail} component={StaffCourseDetailScreen} />
+      <Stack.Screen name={ROUTES.MarkAttendance} component={StaffMarkAttendanceScreen} />
     </Stack.Navigator>
   );
 }
 
 // ── Root navigator ────────────────────────────────────────────────────────────
 export default function AppNavigator() {
-  const { session, loading } = useAuth();
+  const { session, profile, loading } = useAuth();
   const [onboardingDone, setOnboardingDone] = useState<boolean | null>(null);
 
   useEffect(() => {
@@ -297,7 +490,7 @@ export default function AppNavigator() {
     return () => clearTimeout(t);
   }, []);
 
-  if (loading || onboardingDone === null) {
+  if (loading || onboardingDone === null || (session && !profile)) {
     return (
       <View style={styles.loader}>
         <MotiView
@@ -314,20 +507,20 @@ export default function AppNavigator() {
   return (
     <NavigationContainer>
       <Stack.Navigator screenOptions={{ headerShown: false, animation: 'fade' }}>
-        {session ? (
-          <Stack.Screen name="Main" component={MainStack} />
+        {session && profile ? (
+          <Stack.Screen name={ROUTES.Main} component={MainStack} />
         ) : onboardingDone ? (
           <>
-            <Stack.Screen name="Login" component={LoginScreen} options={{ animation: 'fade' }} />
-            <Stack.Screen name="Register" component={RegisterScreen} options={{ animation: 'slide_from_right' }} />
-            <Stack.Screen name="ForgotPassword" component={ForgotPasswordScreen} options={{ animation: 'slide_from_right' }} />
-            <Stack.Screen name="PublicStudentRegistration" component={PublicStudentRegistrationScreen} options={{ animation: 'slide_from_right' }} />
-            <Stack.Screen name="PublicSchoolRegistration" component={PublicSchoolRegistrationScreen} options={{ animation: 'slide_from_right' }} />
+            <Stack.Screen name={ROUTES.Login} component={LoginScreen} options={{ animation: 'fade' }} />
+            <Stack.Screen name={ROUTES.Register} component={RegisterScreen} options={{ animation: 'slide_from_right' }} />
+            <Stack.Screen name={ROUTES.ForgotPassword} component={ForgotPasswordScreen} options={{ animation: 'slide_from_right' }} />
+            <Stack.Screen name={ROUTES.PublicStudentRegistration} component={PublicStudentRegistrationScreen} options={{ animation: 'slide_from_right' }} />
+            <Stack.Screen name={ROUTES.PublicSchoolRegistration} component={PublicSchoolRegistrationScreen} options={{ animation: 'slide_from_right' }} />
           </>
         ) : (
           <>
             <Stack.Screen
-              name="Onboarding"
+              name={ROUTES.Onboarding}
               options={{ animation: 'fade' }}
             >
               {(props: any) => (
@@ -335,20 +528,20 @@ export default function AppNavigator() {
                   {...props}
                   navigation={{
                     ...props.navigation,
-                    replace: async (screen: string) => {
+                    replace: async (screen: keyof RootStackParamList) => {
                       await AsyncStorage.setItem(ONBOARDING_KEY, 'true');
                       setOnboardingDone(true);
-                      props.navigation.replace(screen as any);
+                      props.navigation.replace(screen);
                     },
                   }}
                 />
               )}
             </Stack.Screen>
-            <Stack.Screen name="Login" component={LoginScreen} options={{ animation: 'fade' }} />
-            <Stack.Screen name="Register" component={RegisterScreen} options={{ animation: 'slide_from_right' }} />
-            <Stack.Screen name="ForgotPassword" component={ForgotPasswordScreen} options={{ animation: 'slide_from_right' }} />
-            <Stack.Screen name="PublicStudentRegistration" component={PublicStudentRegistrationScreen} options={{ animation: 'slide_from_right' }} />
-            <Stack.Screen name="PublicSchoolRegistration" component={PublicSchoolRegistrationScreen} options={{ animation: 'slide_from_right' }} />
+            <Stack.Screen name={ROUTES.Login} component={LoginScreen} options={{ animation: 'fade' }} />
+            <Stack.Screen name={ROUTES.Register} component={RegisterScreen} options={{ animation: 'slide_from_right' }} />
+            <Stack.Screen name={ROUTES.ForgotPassword} component={ForgotPasswordScreen} options={{ animation: 'slide_from_right' }} />
+            <Stack.Screen name={ROUTES.PublicStudentRegistration} component={PublicStudentRegistrationScreen} options={{ animation: 'slide_from_right' }} />
+            <Stack.Screen name={ROUTES.PublicSchoolRegistration} component={PublicSchoolRegistrationScreen} options={{ animation: 'slide_from_right' }} />
           </>
         )}
       </Stack.Navigator>
@@ -390,12 +583,6 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     position: 'relative',
     overflow: 'visible',
-  },
-  tabGlyph: {
-    fontFamily: FONT_FAMILY.display,
-    fontSize: 15,
-    color: COLORS.white100,
-    letterSpacing: 0.4,
   },
   tabGlow: {
     ...StyleSheet.absoluteFillObject,

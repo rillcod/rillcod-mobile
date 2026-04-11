@@ -1,97 +1,82 @@
-﻿/**
- * OpenRouter AI helper aligned to the web AI engine.
- * NOTE: For production, proxy through a Supabase Edge Function so the key
- * is never shipped in the bundle.
+/**
+ * OpenRouter AI — requests go through Supabase Edge Function `openrouter-proxy`.
+ * The API key is resolved server-side (OPENROUTER_API_KEY secret or `app_settings.openrouter_api_key`); it is never exposed to the client.
  */
 
-const OPENROUTER_BASE = 'https://openrouter.ai/api/v1';
-
-const MODELS_CASCADE = [
-  'google/gemini-2.0-flash-001',
-  'x-ai/grok-2-1212',
-  'moonshotai/kimi-k2.5',
-  'deepseek/deepseek-chat-v3-5',
-  'deepseek/deepseek-chat',
-  'deepseek/deepseek-r1:free',
-  'qwen/qwen3-235b-a22b:free',
-  'qwen/qwen3-30b-a3b:free',
-  'qwen/qwen3-14b:free',
-  'minimax/minimax-01',
-  'zhipuai/glm-4-flash:free',
-  'zhipuai/glm-z1-flash:free',
-  'stepfun/step-3-5-flash',
-  'xiaomi/mimo-v2-flash:free',
-  'google/gemini-2.0-flash-lite-001',
-  'meta-llama/llama-3.3-70b-instruct',
-  'mistralai/mistral-large-2411',
-  'meta-llama/llama-3.1-8b-instruct:free',
-  'mistralai/mistral-7b-instruct:free',
-];
+import { supabase } from './supabase';
 
 export interface ChatMessage {
   role: 'system' | 'user' | 'assistant';
   content: string;
 }
 
-interface CallAIOptions {
+export interface CallAIOptions {
   messages: ChatMessage[];
   maxTokens?: number;
   temperature?: number;
-  apiKey: string;
+  /** Override model cascade (e.g. web lesson queue). */
+  models?: string[];
+  /** Per-request timeout in ms (rich lessons need 60s+). */
+  timeoutMs?: number;
+  /** When set, asks OpenRouter for JSON object output (matches web lesson route). */
+  responseFormatJsonObject?: boolean;
+}
+
+type ProxyOk = { text: string };
+type ProxyErr = { error: string };
+
+async function readInvokeErrorMessage(error: { message: string; context?: Response }): Promise<string> {
+  let msg = error.message;
+  try {
+    const body = await error.context?.json();
+    if (body && typeof body === 'object' && 'error' in body && typeof (body as { error: unknown }).error === 'string') {
+      msg = (body as { error: string }).error;
+    }
+  } catch {
+    /* keep message */
+  }
+  return msg;
 }
 
 export async function callAI({
   messages,
   maxTokens = 1024,
   temperature = 0.7,
-  apiKey,
+  models,
+  timeoutMs = 25000,
+  responseFormatJsonObject = false,
 }: CallAIOptions): Promise<string> {
-  if (!apiKey) throw new Error('No OpenRouter API key configured.');
+  const { data, error } = await supabase.functions.invoke<ProxyOk & Partial<ProxyErr>>('openrouter-proxy', {
+    body: {
+      messages,
+      maxTokens,
+      temperature,
+      models,
+      timeoutMs,
+      responseFormatJsonObject,
+    },
+  });
 
-  for (const model of MODELS_CASCADE) {
-    try {
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 25000);
-
-      const res = await fetch(`${OPENROUTER_BASE}/chat/completions`, {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${apiKey}`,
-          'Content-Type': 'application/json',
-          'HTTP-Referer': 'https://rillcod.com',
-          'X-Title': 'Rillcod Academy',
-        },
-        signal: controller.signal,
-        body: JSON.stringify({
-          model,
-          messages,
-          max_tokens: maxTokens,
-          temperature,
-        }),
-      });
-
-      clearTimeout(timeout);
-
-      if (!res.ok) {
-        const err = await res.text();
-        console.warn(`[openrouter] ${model} -> ${res.status}:`, err);
-        continue;
-      }
-
-      const data = await res.json();
-      const reply: string | undefined = data?.choices?.[0]?.message?.content;
-      if (reply?.trim()) return reply.trim();
-    } catch (e) {
-      console.warn(`[openrouter] ${model} threw:`, e);
-    }
+  if (error) {
+    throw new Error(await readInvokeErrorMessage(error as { message: string; context?: Response }));
   }
 
-  throw new Error('All AI models failed. Please check your connection and try again.');
+  const errMsg = (data as ProxyErr | null)?.error;
+  if (errMsg) {
+    throw new Error(errMsg);
+  }
+
+  const text = (data as ProxyOk | null)?.text?.trim();
+  if (!text) {
+    throw new Error('AI returned an empty response.');
+  }
+
+  return text;
 }
 
 export function pollinationsImageUrl(prompt: string, width = 768, height = 512): string {
   const safe = encodeURIComponent(
-    `Educational illustration: ${prompt}. Child-friendly, colourful, classroom-safe, digital art style.`
+    `Educational illustration: ${prompt}. Child-friendly, colourful, classroom-safe, digital art style.`,
   );
   return `https://image.pollinations.ai/prompt/${safe}?width=${width}&height=${height}&model=flux&nologo=true`;
 }

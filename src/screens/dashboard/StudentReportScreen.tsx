@@ -7,17 +7,21 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { MotiView } from 'moti';
 import { useAuth } from '../../contexts/AuthContext';
-import { supabase } from '../../lib/supabase';
+import { gradeService } from '../../services/grade.service';
 import { ScreenHeader } from '../../components/ui/ScreenHeader';
 import { COLORS } from '../../constants/colors';
 import { FONT_FAMILY, FONT_SIZE } from '../../constants/typography';
 import { SPACING, RADIUS } from '../../constants/spacing';
+import { ROUTES } from '../../navigation/routes';
 
 interface ProgressReport {
   id: string;
   course_name: string;
   report_term: string;
   report_period: string | null;
+  current_module: string | null;
+  next_module: string | null;
+  course_duration: string | null;
   theory_score: number | null;
   practical_score: number | null;
   attendance_score: number | null;
@@ -34,6 +38,7 @@ interface ProgressReport {
   learning_milestones: any;  // stored as string[] in DB
   key_strengths: string | null;
   areas_for_growth: string | null;
+  instructor_assessment: string | null;
   school_name: string | null;
   section_class: string | null;
 }
@@ -93,28 +98,22 @@ export default function StudentReportScreen({ navigation, route }: any) {
   const effectiveStudentId = canEdit || isParent ? studentId : profile?.id;
 
   const load = useCallback(async () => {
-    const [repRes, subRes, enrRes] = await Promise.all([
-      supabase
-        .from('student_progress_reports')
-        .select('id, course_name, report_term, report_period, theory_score, practical_score, attendance_score, participation_score, participation_grade, projects_grade, homework_grade, proficiency_level, overall_score, overall_grade, is_published, instructor_name, report_date, learning_milestones, key_strengths, areas_for_growth, school_name, section_class')
-        .eq('student_id', effectiveStudentId)
-        .order('report_date', { ascending: false }),
-      supabase
-        .from('assignment_submissions')
-        .select('id, status, grade, submitted_at, assignments(title, due_date)')
-        .eq('portal_user_id', effectiveStudentId)
-        .order('submitted_at', { ascending: false })
-        .limit(50),
-      supabase
-        .from('enrollments')
-        .select('id, status, grade, progress_pct, programs(title)')
-        .eq('user_id', effectiveStudentId)
-        .limit(50),
+    if (!effectiveStudentId) {
+      setReports([]);
+      setSubmissions([]);
+      setEnrollments([]);
+      setLoading(false);
+      return;
+    }
+    const [repRows, subRows, enrRows] = await Promise.all([
+      gradeService.listFullProgressReportsForStudentReport(effectiveStudentId),
+      gradeService.listSubmissionsForStudentReport(effectiveStudentId),
+      gradeService.listEnrollmentsForStudentReport(effectiveStudentId),
     ]);
 
-    if (repRes.data) setReports(repRes.data as ProgressReport[]);
-    if (subRes.data) setSubmissions(subRes.data as unknown as Submission[]);
-    if (enrRes.data) setEnrollments(enrRes.data as unknown as Enrollment[]);
+    setReports(repRows as ProgressReport[]);
+    setSubmissions(subRows as unknown as Submission[]);
+    setEnrollments(enrRows as unknown as Enrollment[]);
     setLoading(false);
   }, [effectiveStudentId]);
 
@@ -126,7 +125,7 @@ export default function StudentReportScreen({ navigation, route }: any) {
     return (
       <View style={styles.loader}>
         <ActivityIndicator color={COLORS.accent} size="large" />
-        <Text style={styles.loaderText}>Loading report…</Text>
+        <Text style={styles.loaderText}>Loading report...</Text>
       </View>
     );
   }
@@ -141,6 +140,18 @@ export default function StudentReportScreen({ navigation, route }: any) {
   const avgGrade = gradedCount > 0
     ? Math.round(submissions.filter(s => s.grade != null).reduce((s, sub) => s + (sub.grade ?? 0), 0) / gradedCount)
     : null;
+
+  const latestReport = publishedReports[0] ?? null;
+  const latestOverall = latestReport?.overall_score ?? avgScore ?? 0;
+  const latestGradeTone = gradeColor(latestReport?.overall_grade ?? null);
+  const latestMetrics = latestReport
+    ? [
+        { label: 'Examination', weight: '40%', value: latestReport.theory_score ?? 0, color: COLORS.info },
+        { label: 'Evaluation', weight: '20%', value: latestReport.practical_score ?? 0, color: COLORS.accent },
+        { label: 'Assignment', weight: '20%', value: latestReport.attendance_score ?? 0, color: COLORS.success },
+        { label: 'Participation', weight: '20%', value: latestReport.participation_score ?? 0, color: COLORS.warning },
+      ]
+    : [];
 
   return (
     <SafeAreaView style={styles.safe}>
@@ -172,9 +183,9 @@ export default function StudentReportScreen({ navigation, route }: any) {
           <View style={styles.statsRow}>
             {[
               { label: 'Reports', value: publishedReports.length, color: COLORS.accent },
-              { label: 'Avg Score', value: avgScore != null ? `${avgScore}%` : '—', color: COLORS.success },
+              { label: 'Avg Score', value: avgScore != null ? `${avgScore}%` : '--', color: COLORS.success },
               { label: 'Submitted', value: submittedCount, color: COLORS.info },
-              { label: 'Avg Grade', value: avgGrade != null ? `${avgGrade}%` : '—', color: COLORS.warning },
+              { label: 'Avg Grade', value: avgGrade != null ? `${avgGrade}%` : '--', color: COLORS.warning },
             ].map(stat => (
               <View key={stat.label} style={styles.statItem}>
                 <Text style={[styles.statValue, { color: stat.color }]}>{stat.value}</Text>
@@ -183,6 +194,115 @@ export default function StudentReportScreen({ navigation, route }: any) {
             ))}
           </View>
         </MotiView>
+
+        {latestReport && (
+          <View style={styles.previewCard}>
+            <LinearGradient colors={[COLORS.accent + '18', COLORS.bgCard]} style={StyleSheet.absoluteFill} />
+            <View style={styles.previewCardHeader}>
+              <Text style={styles.previewCardTitle}>Report Card</Text>
+              <View style={[styles.previewCardBadge, { backgroundColor: latestGradeTone + '25' }]}>
+                <Text style={[styles.previewCardGrade, { color: latestGradeTone }]}>
+                  {(latestReport.overall_grade ?? 'Pending') + ' / ' + (latestReport.overall_score != null ? `${latestReport.overall_score}%` : '--')}
+                </Text>
+              </View>
+            </View>
+            <View style={styles.previewDivider} />
+            <Text style={styles.previewStudentName}>{studentName || 'Student Report Card'}</Text>
+            <Text style={styles.previewMeta}>{latestReport.course_name || 'Course not set'} / {latestReport.report_term}</Text>
+            {latestReport.report_period ? <Text style={styles.previewMeta}>{latestReport.report_period}</Text> : null}
+            {latestReport.school_name ? (
+              <Text style={styles.previewMeta}>
+                {latestReport.school_name}{latestReport.section_class ? ` / ${latestReport.section_class}` : ''}
+              </Text>
+            ) : null}
+            {latestReport.instructor_name ? <Text style={styles.previewMeta}>{latestReport.instructor_name}</Text> : null}
+            <View style={styles.previewDivider} />
+            {latestMetrics.map((metric) => (
+              <View key={metric.label} style={styles.previewScoreRow}>
+                <Text style={styles.previewScoreLabel}>{metric.label}</Text>
+                <View style={styles.previewScoreTrack}>
+                  <View style={[styles.previewScoreFill, { width: `${Math.min(metric.value, 100)}%`, backgroundColor: metric.color }]} />
+                </View>
+                <Text style={[styles.previewScoreVal, { color: metric.color }]}>{metric.value}%</Text>
+              </View>
+            ))}
+            {(latestReport.participation_grade || latestReport.projects_grade || latestReport.homework_grade || latestReport.proficiency_level) && (
+              <>
+                <View style={styles.previewDivider} />
+                <View style={styles.previewChipRow}>
+                  {latestReport.participation_grade ? <View style={styles.previewChip}><Text style={styles.previewChipText}>Participation / {latestReport.participation_grade}</Text></View> : null}
+                  {latestReport.projects_grade ? <View style={styles.previewChip}><Text style={styles.previewChipText}>Projects / {latestReport.projects_grade}</Text></View> : null}
+                  {latestReport.homework_grade ? <View style={styles.previewChip}><Text style={styles.previewChipText}>Homework / {latestReport.homework_grade}</Text></View> : null}
+                  {latestReport.proficiency_level ? <View style={[styles.previewChip, styles.previewChipAccent]}><Text style={[styles.previewChipText, styles.previewChipAccentText]}>Proficiency / {latestReport.proficiency_level}</Text></View> : null}
+                </View>
+              </>
+            )}
+          </View>
+        )}
+
+        {latestReport && (
+          <View style={styles.webParityGrid}>
+            <View style={styles.identityCard}>
+              <Text style={styles.webParityEyebrow}>Authorized Recipient</Text>
+              <Text style={styles.identityName}>{studentName || 'Student'}</Text>
+              <View style={styles.identityGrid}>
+                <View>
+                  <Text style={styles.identityLabel}>Class</Text>
+                  <Text style={styles.identityValue}>{latestReport.section_class || '--'}</Text>
+                </View>
+                <View>
+                  <Text style={styles.identityLabel}>School</Text>
+                  <Text style={styles.identityValue}>{latestReport.school_name || '--'}</Text>
+                </View>
+                <View>
+                  <Text style={styles.identityLabel}>Term</Text>
+                  <Text style={styles.identityValue}>{latestReport.report_term || '--'}</Text>
+                </View>
+                <View>
+                  <Text style={styles.identityLabel}>Status</Text>
+                  <Text style={[styles.identityValue, { color: COLORS.success }]}>CERTIFIED</Text>
+                </View>
+              </View>
+            </View>
+
+            <View style={styles.moduleCard}>
+              <Text style={styles.webParityEyebrow}>Operational Domain</Text>
+              <Text style={styles.identityName}>{latestReport.course_name || '--'}</Text>
+              <View style={styles.moduleBox}>
+                <Text style={styles.identityLabel}>Current Module</Text>
+                <Text style={styles.moduleValue}>{latestReport.current_module || latestReport.report_period || latestReport.course_name || '--'}</Text>
+              </View>
+              <View style={[styles.moduleBox, styles.moduleBoxAccent]}>
+                <Text style={[styles.identityLabel, { color: COLORS.accent }]}>Upcoming Module</Text>
+                <Text style={[styles.moduleValue, { color: COLORS.accent }]}>{latestReport.next_module || latestReport.course_duration || latestReport.proficiency_level || '--'}</Text>
+              </View>
+            </View>
+          </View>
+        )}
+
+        {latestReport && (
+          <View style={styles.matrixCard}>
+            <Text style={styles.matrixTitle}>Assessment Matrix</Text>
+            {latestMetrics.map((metric) => (
+              <View key={metric.label} style={styles.matrixRow}>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.matrixLabel}>{metric.label} ({metric.weight})</Text>
+                  <View style={styles.matrixTrack}>
+                    <View style={[styles.matrixFill, { width: `${Math.min(metric.value, 100)}%`, backgroundColor: metric.color }]} />
+                  </View>
+                </View>
+                <Text style={[styles.matrixValue, { color: metric.color }]}>{metric.value}%</Text>
+              </View>
+            ))}
+            <View style={styles.matrixFooter}>
+              <View style={styles.matrixGradeBox}>
+                <Text style={styles.matrixGradeLabel}>Composite</Text>
+                <Text style={[styles.matrixGradeValue, { color: latestGradeTone }]}>{latestReport.overall_grade || '--'}</Text>
+                <Text style={styles.matrixGradePct}>{latestOverall}%</Text>
+              </View>
+            </View>
+          </View>
+        )}
 
         {/* Tabs */}
         <View style={styles.tabs}>
@@ -207,7 +327,7 @@ export default function StudentReportScreen({ navigation, route }: any) {
             <MotiView from={{ opacity: 0 }} animate={{ opacity: 1 }}>
               {publishedReports.length === 0 ? (
                 <View style={styles.emptyWrap}>
-                  <Text style={styles.emptyEmoji}>📋</Text>
+                  <Text style={styles.emptyEmoji}>[]</Text>
                   <Text style={styles.emptyText}>No progress reports yet.</Text>
                 </View>
               ) : (
@@ -231,7 +351,7 @@ export default function StudentReportScreen({ navigation, route }: any) {
                           <View style={{ flex: 1, gap: 3 }}>
                             <Text style={styles.reportCourse}>{r.course_name}</Text>
                             <Text style={styles.reportTerm}>{r.report_term}</Text>
-                            {r.instructor_name ? <Text style={styles.reportMeta}>👩‍🏫 {r.instructor_name}</Text> : null}
+                            {r.instructor_name ? <Text style={styles.reportMeta}>Instructor: {r.instructor_name}</Text> : null}
                           </View>
                           <View style={{ alignItems: 'flex-end', gap: 4 }}>
                             {r.overall_grade ? (
@@ -275,18 +395,19 @@ export default function StudentReportScreen({ navigation, route }: any) {
                                 <Text style={styles.scoreVal}>{r.participation_score}%</Text>
                               </View>
                             )}
-                            {r.report_period ? <Text style={styles.reportMeta}>📅 Period: {r.report_period}</Text> : null}
-                            {r.school_name ? <Text style={styles.reportMeta}>🏫 {r.school_name}{r.section_class ? ` · ${r.section_class}` : ''}</Text> : null}
-                            {r.proficiency_level ? <Text style={styles.reportMeta}>📊 Proficiency: <Text style={{textTransform:'capitalize'}}>{r.proficiency_level}</Text></Text> : null}
+                            {r.report_period ? <Text style={styles.reportMeta}>Period: {r.report_period}</Text> : null}
+                            {r.school_name ? <Text style={styles.reportMeta}>{r.school_name}{r.section_class ? ` / ${r.section_class}` : ''}</Text> : null}
+                            {r.proficiency_level ? <Text style={styles.reportMeta}>Proficiency: <Text style={{textTransform:'capitalize'}}>{r.proficiency_level}</Text></Text> : null}
                             {(r.participation_grade || r.projects_grade || r.homework_grade) && (
                               <View style={{ flexDirection: 'row', gap: 6, flexWrap: 'wrap', marginTop: 4 }}>
-                                {r.participation_grade && <View style={styles.ratingChip}><Text style={styles.ratingChipText}>💬 {r.participation_grade}</Text></View>}
-                                {r.projects_grade && <View style={styles.ratingChip}><Text style={styles.ratingChipText}>🔨 {r.projects_grade}</Text></View>}
-                                {r.homework_grade && <View style={styles.ratingChip}><Text style={styles.ratingChipText}>📖 {r.homework_grade}</Text></View>}
+                                {r.participation_grade && <View style={styles.ratingChip}><Text style={styles.ratingChipText}>Participation / {r.participation_grade}</Text></View>}
+                                {r.projects_grade && <View style={styles.ratingChip}><Text style={styles.ratingChipText}>Projects / {r.projects_grade}</Text></View>}
+                                {r.homework_grade && <View style={styles.ratingChip}><Text style={styles.ratingChipText}>Homework / {r.homework_grade}</Text></View>}
                               </View>
                             )}
-                            {r.key_strengths ? <View style={styles.notesBlock}><Text style={styles.notesLabel}>💪 Strengths</Text><Text style={styles.notesText}>{r.key_strengths}</Text></View> : null}
-                            {r.areas_for_growth ? <View style={styles.notesBlock}><Text style={styles.notesLabel}>🎯 Areas for Growth</Text><Text style={styles.notesText}>{r.areas_for_growth}</Text></View> : null}
+                            {r.key_strengths ? <View style={styles.notesBlock}><Text style={styles.notesLabel}>Key Strengths</Text><Text style={styles.notesText}>{r.key_strengths}</Text></View> : null}
+                            {r.areas_for_growth ? <View style={styles.notesBlock}><Text style={styles.notesLabel}>Areas for Growth</Text><Text style={styles.notesText}>{r.areas_for_growth}</Text></View> : null}
+                            {r.instructor_assessment ? <View style={styles.notesBlock}><Text style={styles.notesLabel}>Instructor Assessment</Text><Text style={styles.notesText}>{r.instructor_assessment}</Text></View> : null}
                             {(() => {
                               let miles: string[] = [];
                               if (Array.isArray(r.learning_milestones)) miles = r.learning_milestones;
@@ -295,28 +416,28 @@ export default function StudentReportScreen({ navigation, route }: any) {
                               }
                               return miles.length > 0 ? (
                                 <View style={styles.milestonesWrap}>
-                                  <Text style={styles.milestonesLabel}>🏆 Milestones</Text>
+                                  <Text style={styles.milestonesLabel}>Learning Milestones</Text>
                                   {miles.map((m, mi) => (
-                                    <Text key={mi} style={styles.milestonesText}>• {m}</Text>
+                                    <Text key={mi} style={styles.milestonesText}>- {m}</Text>
                                   ))}
                                 </View>
                               ) : null;
                             })()}
                             {r.report_date ? (
-                              <Text style={styles.reportDate}>📅 {new Date(r.report_date).toLocaleDateString('en-GB')}</Text>
+                              <Text style={styles.reportDate}>{new Date(r.report_date).toLocaleDateString('en-GB')}</Text>
                             ) : null}
                             {canEdit && (
                               <TouchableOpacity
                                 style={styles.editReportBtn}
-                                onPress={() => navigation.navigate('ReportBuilder', { studentId: effectiveStudentId, studentName })}
+                                onPress={() => navigation.navigate(ROUTES.ReportBuilder, { studentId: effectiveStudentId, studentName })}
                               >
-                                <Text style={styles.editReportText}>✏️ Edit in Report Builder</Text>
+                                <Text style={styles.editReportText}>Edit in Report Builder</Text>
                               </TouchableOpacity>
                             )}
                           </View>
                         )}
 
-                        <Text style={styles.expandChevron}>{expanded ? '▲' : '▼'}</Text>
+                        <Text style={styles.expandChevron}>{expanded ? 'Hide details' : 'Open details'}</Text>
                       </TouchableOpacity>
                     </MotiView>
                   );
@@ -330,7 +451,7 @@ export default function StudentReportScreen({ navigation, route }: any) {
             <MotiView from={{ opacity: 0 }} animate={{ opacity: 1 }}>
               {submissions.length === 0 ? (
                 <View style={styles.emptyWrap}>
-                  <Text style={styles.emptyEmoji}>📝</Text>
+                  <Text style={styles.emptyEmoji}>[]</Text>
                   <Text style={styles.emptyText}>No submissions found.</Text>
                 </View>
               ) : (
@@ -372,7 +493,7 @@ export default function StudentReportScreen({ navigation, route }: any) {
             <MotiView from={{ opacity: 0 }} animate={{ opacity: 1 }}>
               {enrollments.length === 0 ? (
                 <View style={styles.emptyWrap}>
-                  <Text style={styles.emptyEmoji}>📚</Text>
+                  <Text style={styles.emptyEmoji}>[]</Text>
                   <Text style={styles.emptyText}>No course enrollments found.</Text>
                 </View>
               ) : (
@@ -443,6 +564,59 @@ const styles = StyleSheet.create({
   statItem: { alignItems: 'center', gap: 4 },
   statValue: { fontFamily: FONT_FAMILY.display, fontSize: FONT_SIZE.xl },
   statLabel: { fontFamily: FONT_FAMILY.body, fontSize: 10, color: COLORS.textMuted, textTransform: 'uppercase', letterSpacing: 0.8 },
+
+  previewCard: {
+    marginHorizontal: SPACING.xl,
+    marginBottom: SPACING.md,
+    borderWidth: 1,
+    borderColor: COLORS.accent + '30',
+    borderRadius: RADIUS.xl,
+    padding: SPACING.lg,
+    overflow: 'hidden',
+    gap: SPACING.sm,
+  },
+  previewCardHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  previewCardTitle: { fontFamily: FONT_FAMILY.display, fontSize: FONT_SIZE.sm, color: COLORS.textPrimary },
+  previewCardBadge: { paddingHorizontal: 12, paddingVertical: 4, borderRadius: RADIUS.full },
+  previewCardGrade: { fontFamily: FONT_FAMILY.display, fontSize: FONT_SIZE.base },
+  previewDivider: { height: 1, backgroundColor: COLORS.border, marginVertical: SPACING.xs },
+  previewStudentName: { fontFamily: FONT_FAMILY.display, fontSize: FONT_SIZE.lg, color: COLORS.textPrimary },
+  previewMeta: { fontFamily: FONT_FAMILY.body, fontSize: FONT_SIZE.xs, color: COLORS.textSecondary },
+  previewScoreRow: { flexDirection: 'row', alignItems: 'center', gap: SPACING.sm },
+  previewScoreLabel: { fontFamily: FONT_FAMILY.body, fontSize: FONT_SIZE.xs, color: COLORS.textMuted, width: 88 },
+  previewScoreTrack: { flex: 1, height: 5, backgroundColor: COLORS.border, borderRadius: 3, overflow: 'hidden' },
+  previewScoreFill: { height: 5, borderRadius: 3 },
+  previewScoreVal: { fontFamily: FONT_FAMILY.bodySemi, fontSize: FONT_SIZE.xs, width: 36, textAlign: 'right' },
+  previewChipRow: { flexDirection: 'row', gap: 6, flexWrap: 'wrap' },
+  previewChip: { paddingHorizontal: 10, paddingVertical: 4, borderRadius: 99, backgroundColor: COLORS.bgCard, borderWidth: 1, borderColor: COLORS.border },
+  previewChipAccent: { backgroundColor: COLORS.accent + '18', borderColor: COLORS.accent + '32' },
+  previewChipText: { fontFamily: FONT_FAMILY.body, fontSize: 11, color: COLORS.textSecondary },
+  previewChipAccentText: { color: COLORS.accent },
+
+  webParityGrid: { flexDirection: 'row', gap: SPACING.sm, marginHorizontal: SPACING.xl, marginBottom: SPACING.md },
+  identityCard: { flex: 1, borderWidth: 1, borderColor: COLORS.border, borderRadius: RADIUS.xl, backgroundColor: COLORS.primaryPale, padding: SPACING.md },
+  moduleCard: { flex: 1, borderWidth: 1, borderColor: COLORS.border, borderRadius: RADIUS.xl, backgroundColor: COLORS.primaryPale, padding: SPACING.md },
+  webParityEyebrow: { fontFamily: FONT_FAMILY.bodySemi, fontSize: 10, color: COLORS.accent, textTransform: 'uppercase', letterSpacing: 1.3, marginBottom: 6 },
+  identityName: { fontFamily: FONT_FAMILY.display, fontSize: FONT_SIZE.base, color: COLORS.textPrimary, marginBottom: SPACING.sm },
+  identityGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: SPACING.sm },
+  identityLabel: { fontFamily: FONT_FAMILY.bodySemi, fontSize: 10, color: COLORS.textMuted, textTransform: 'uppercase', letterSpacing: 0.8 },
+  identityValue: { fontFamily: FONT_FAMILY.bodySemi, fontSize: FONT_SIZE.xs, color: COLORS.textPrimary, marginTop: 2 },
+  moduleBox: { borderWidth: 1, borderColor: COLORS.border, borderRadius: RADIUS.md, backgroundColor: COLORS.bgCard, padding: SPACING.sm, marginTop: SPACING.xs },
+  moduleBoxAccent: { backgroundColor: COLORS.accent + '10', borderColor: COLORS.accent + '25' },
+  moduleValue: { fontFamily: FONT_FAMILY.bodySemi, fontSize: FONT_SIZE.xs, color: COLORS.textPrimary, marginTop: 3 },
+
+  matrixCard: { marginHorizontal: SPACING.xl, marginBottom: SPACING.md, borderWidth: 1, borderColor: COLORS.border, borderRadius: RADIUS.xl, backgroundColor: COLORS.bgCard, padding: SPACING.md },
+  matrixTitle: { fontFamily: FONT_FAMILY.display, fontSize: FONT_SIZE.sm, color: COLORS.textPrimary, marginBottom: SPACING.sm, textTransform: 'uppercase', letterSpacing: 1.2 },
+  matrixRow: { flexDirection: 'row', alignItems: 'center', gap: SPACING.sm, marginBottom: SPACING.sm },
+  matrixLabel: { fontFamily: FONT_FAMILY.bodySemi, fontSize: 10, color: COLORS.textMuted, textTransform: 'uppercase', letterSpacing: 0.7, marginBottom: 4 },
+  matrixTrack: { height: 6, backgroundColor: COLORS.border, borderRadius: 999, overflow: 'hidden' },
+  matrixFill: { height: 6, borderRadius: 999 },
+  matrixValue: { width: 46, textAlign: 'right', fontFamily: FONT_FAMILY.display, fontSize: FONT_SIZE.sm },
+  matrixFooter: { alignItems: 'flex-end', marginTop: SPACING.xs },
+  matrixGradeBox: { minWidth: 110, borderWidth: 1, borderColor: COLORS.border, borderRadius: RADIUS.lg, backgroundColor: COLORS.bg, padding: SPACING.md, alignItems: 'center' },
+  matrixGradeLabel: { fontFamily: FONT_FAMILY.bodySemi, fontSize: 10, color: COLORS.textMuted, textTransform: 'uppercase', letterSpacing: 1 },
+  matrixGradeValue: { fontFamily: FONT_FAMILY.display, fontSize: 40, lineHeight: 42, marginTop: 4 },
+  matrixGradePct: { fontFamily: FONT_FAMILY.bodySemi, fontSize: FONT_SIZE.sm, color: COLORS.textSecondary },
 
   tabs: { flexDirection: 'row', borderBottomWidth: 1, borderBottomColor: COLORS.border, marginHorizontal: SPACING.xl },
   tab: { flex: 1, paddingVertical: 10, alignItems: 'center', borderBottomWidth: 2, borderBottomColor: 'transparent' },

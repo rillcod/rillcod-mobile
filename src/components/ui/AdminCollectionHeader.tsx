@@ -1,7 +1,8 @@
-﻿import React from 'react';
+import React from 'react';
 import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
 import { FONT_FAMILY, FONT_SIZE, LETTER_SPACING } from '../../constants/typography';
 import { SPACING, RADIUS } from '../../constants/spacing';
+import { IconBackButton } from './IconBackButton';
 
 interface AdminCollectionHeaderProps {
   title: string;
@@ -30,9 +31,11 @@ export function AdminCollectionHeader({
 }: AdminCollectionHeaderProps) {
   return (
     <View style={styles.header}>
-      <TouchableOpacity onPress={onBack} style={[styles.backBtn, { borderColor: colors.border }]}>
-        <Text style={[styles.backArrow, { color: colors.textPrimary }]}>BACK</Text>
-      </TouchableOpacity>
+      <IconBackButton
+        onPress={onBack}
+        color={colors.textPrimary}
+        style={[styles.backBtn, { borderColor: colors.border }]}
+      />
 
       <View style={styles.titleWrap}>
         <Text style={[styles.title, { color: colors.textPrimary }]}>{title}</Text>
@@ -72,11 +75,6 @@ const styles = StyleSheet.create({
     borderRadius: RADIUS.sm,
     alignItems: 'center',
     justifyContent: 'center',
-  },
-  backArrow: {
-    fontFamily: FONT_FAMILY.bodyBold,
-    fontSize: 9,
-    letterSpacing: LETTER_SPACING.wider,
   },
   titleWrap: {
     flex: 1,

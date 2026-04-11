@@ -1,336 +1,548 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  View, Text, StyleSheet, FlatList, TouchableOpacity,
-  RefreshControl, ActivityIndicator, Modal, TextInput,
-  KeyboardAvoidingView, Platform, Alert, ScrollView,
+  ActivityIndicator,
+  Alert,
+  FlatList,
+  Modal,
+  RefreshControl,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { MotiView } from 'moti';
-import { LinearGradient } from 'expo-linear-gradient';
+import { ScreenHeader } from '../../components/ui/ScreenHeader';
 import { useAuth } from '../../contexts/AuthContext';
-import { supabase } from '../../lib/supabase';
-import { COLORS } from '../../constants/colors';
-import { FONT_FAMILY, FONT_SIZE } from '../../constants/typography';
+import { useTheme } from '../../contexts/ThemeContext';
+import { newsletterService } from '../../services/newsletter.service';
+import { callAI } from '../../lib/openrouter';
+import { FONT_FAMILY, FONT_SIZE, LETTER_SPACING } from '../../constants/typography';
 import { SPACING, RADIUS } from '../../constants/spacing';
 
 type NewsletterStatus = 'draft' | 'published';
 type FilterTab = 'all' | 'draft' | 'published';
+type AudienceType = 'all' | 'students' | 'teachers' | 'schools' | 'parents';
 
-interface Newsletter {
+type Newsletter = {
   id: string;
   title: string;
   content: string;
   status: NewsletterStatus;
-  created_at: string;
+  created_at: string | null;
   published_at: string | null;
+  image_url: string | null;
   author_id: string | null;
+  school_id?: string | null;
+};
+
+const AUDIENCE_OPTIONS: { key: AudienceType; label: string }[] = [
+  { key: 'all', label: 'Everyone' },
+  { key: 'students', label: 'Students' },
+  { key: 'teachers', label: 'Teachers' },
+  { key: 'schools', label: 'Schools' },
+  { key: 'parents', label: 'Parents' },
+];
+
+const AI_TONES = ['professional', 'energetic', 'visionary'] as const;
+
+function formatDate(value: string | null) {
+  if (!value) return 'Draft';
+  return new Date(value).toLocaleDateString('en-GB', {
+    day: 'numeric',
+    month: 'short',
+    year: 'numeric',
+  });
 }
 
-function formatDate(d: string | null): string {
-  if (!d) return '—';
-  return new Date(d).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+function extractAiPayload(raw: string): { title: string; content: string } | null {
+  try {
+    const clean = raw.replace(/^```json\s*/i, '').replace(/```\s*$/i, '').trim();
+    const parsed = JSON.parse(clean);
+    if (typeof parsed?.title === 'string' && typeof parsed?.content === 'string') {
+      return {
+        title: parsed.title.trim(),
+        content: parsed.content.trim(),
+      };
+    }
+  } catch {
+    return null;
+  }
+  return null;
 }
 
-export default function NewslettersScreen({ navigation }: any) {
+export default function NewslettersScreenV2({ navigation }: any) {
   const { profile } = useAuth();
+  const { colors } = useTheme();
+  const styles = useMemo(() => getStyles(colors), [colors]);
+
   const [newsletters, setNewsletters] = useState<Newsletter[]>([]);
+  const [deliveryMap, setDeliveryMap] = useState<Record<string, { total: number; viewed: number }>>({});
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [filter, setFilter] = useState<FilterTab>('all');
-  const [showModal, setShowModal] = useState(false);
-
-  // Form
-  const [formTitle, setFormTitle] = useState('');
-  const [formContent, setFormContent] = useState('');
+  const [query, setQuery] = useState('');
+  const [showEditor, setShowEditor] = useState(false);
+  const [showReader, setShowReader] = useState(false);
+  const [activeNewsletter, setActiveNewsletter] = useState<Newsletter | null>(null);
   const [saving, setSaving] = useState(false);
+  const [publishing, setPublishing] = useState(false);
+  const [generating, setGenerating] = useState(false);
+  const [aiTopic, setAiTopic] = useState('');
+  const [aiTone, setAiTone] = useState<(typeof AI_TONES)[number]>('professional');
+  const [targetAudience, setTargetAudience] = useState<AudienceType>('all');
+  const [form, setForm] = useState({ title: '', content: '' });
 
   const isStaff = profile?.role === 'admin' || profile?.role === 'teacher' || profile?.role === 'school';
 
   const load = useCallback(async () => {
+    if (!profile) {
+      setLoading(false);
+      setRefreshing(false);
+      return;
+    }
+
     try {
-      let query = supabase
-        .from('newsletters')
-        .select('id, title, content, status, created_at, published_at, author_id')
-        .order('created_at', { ascending: false });
+      if (isStaff) {
+        const rows = (await newsletterService.listNewslettersForStaff({
+          schoolId: profile.role === 'school' ? profile.school_id : undefined,
+          limit: 120,
+        })) as Newsletter[];
+        setNewsletters(rows);
 
-      // School sees newsletters for their school; admin sees all
-      if (profile?.role === 'school' && profile.school_id) {
-        query = query.eq('school_id', profile.school_id);
+        if (rows.length > 0) {
+          const ids = rows.map((item) => item.id);
+          setDeliveryMap(await newsletterService.aggregateDeliveryStatsByNewsletterIds(ids));
+        } else {
+          setDeliveryMap({});
+        }
+      } else {
+        const { newsletters: items } = await newsletterService.loadPublishedNewslettersForReader(profile.id);
+        setNewsletters(items as Newsletter[]);
+        setDeliveryMap({});
       }
-
-      const { data, error } = await query;
-      if (error) throw error;
-      setNewsletters((data ?? []) as Newsletter[]);
-    } catch (e: any) {
-      Alert.alert('Error', e.message);
+    } catch (error: any) {
+      Alert.alert('Newsletters', error?.message ?? 'Could not load newsletters.');
     } finally {
       setLoading(false);
       setRefreshing(false);
     }
-  }, [profile]);
+  }, [isStaff, profile]);
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    load();
+  }, [load]);
 
-  const onRefresh = () => { setRefreshing(true); load(); };
-
-  const handleDelete = (item: Newsletter) => {
-    Alert.alert(
-      'Delete Newsletter',
-      `Delete "${item.title}"? This cannot be undone.`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Delete', style: 'destructive',
-          onPress: async () => {
-            const { error } = await supabase.from('newsletters').delete().eq('id', item.id);
-            if (error) { Alert.alert('Error', error.message); return; }
-            setNewsletters(prev => prev.filter(n => n.id !== item.id));
-          },
-        },
-      ]
-    );
+  const openCreate = () => {
+    setActiveNewsletter(null);
+    setForm({ title: '', content: '' });
+    setAiTopic('');
+    setTargetAudience('all');
+    setShowEditor(true);
   };
 
-  const handleSave = async (publish: boolean) => {
-    if (!formTitle.trim()) { Alert.alert('Validation', 'Title is required'); return; }
-    if (!formContent.trim()) { Alert.alert('Validation', 'Content is required'); return; }
+  const openEdit = (item: Newsletter) => {
+    setActiveNewsletter(item);
+    setForm({ title: item.title, content: item.content });
+    setAiTopic(item.title);
+    setShowEditor(true);
+  };
+
+  const openRead = (item: Newsletter) => {
+    setActiveNewsletter(item);
+    setShowReader(true);
+  };
+
+  const saveDraft = async () => {
+    if (!form.title.trim() || !form.content.trim()) {
+      Alert.alert('Validation', 'Title and content are required.');
+      return;
+    }
+
     setSaving(true);
     try {
-      const now = new Date().toISOString();
-      const { error } = await supabase.from('newsletters').insert({
-        title: formTitle.trim(),
-        content: formContent.trim(),
-        status: publish ? 'published' : 'draft',
-        author_id: profile?.id,
-        school_id: profile?.school_id || null,
-        published_at: publish ? now : null,
-        created_at: now,
+      await newsletterService.upsertNewsletterDraft({
+        id: activeNewsletter?.id,
+        title: form.title.trim(),
+        content: form.content.trim(),
+        authorId: profile?.id ?? null,
+        schoolId: profile?.role === 'school' ? profile.school_id ?? null : null,
       });
-      if (error) throw error;
-      setShowModal(false);
-      setFormTitle(''); setFormContent('');
-      load();
-    } catch (e: any) {
-      Alert.alert('Error', e.message);
+
+      setShowEditor(false);
+      await load();
+    } catch (error: any) {
+      Alert.alert('Draft', error?.message ?? 'Could not save draft.');
     } finally {
       setSaving(false);
     }
   };
 
-  const filtered = newsletters.filter(n => {
-    if (filter === 'draft') return n.status === 'draft';
-    if (filter === 'published') return n.status === 'published';
-    return true;
-  });
+  const publishNewsletter = async () => {
+    const newsletterId = activeNewsletter?.id;
+    if (!newsletterId) {
+      Alert.alert('Publish', 'Save this newsletter first before publishing it.');
+      return;
+    }
 
-  const total = newsletters.length;
-  const published = newsletters.filter(n => n.status === 'published').length;
-  const drafts = newsletters.filter(n => n.status === 'draft').length;
+    setPublishing(true);
+    try {
+      const count = await newsletterService.publishNewsletterToAudience({
+        newsletterId,
+        schoolScopeId: profile?.role === 'school' ? profile.school_id : undefined,
+        audience: targetAudience,
+      });
 
-  const renderItem = ({ item, index }: { item: Newsletter; index: number }) => (
-    <MotiView
-      from={{ opacity: 0, translateY: 8 }}
-      animate={{ opacity: 1, translateY: 0 }}
-      transition={{ delay: index * 35, type: 'timing', duration: 260 }}
-    >
-      <TouchableOpacity
-        style={styles.card}
-        onLongPress={() => isStaff && handleDelete(item)}
-        activeOpacity={0.85}
-      >
-        <View style={styles.cardHeader}>
-          <View style={[
-            styles.statusBadge,
-            { backgroundColor: item.status === 'published' ? 'rgba(16,185,129,0.15)' : 'rgba(245,158,11,0.15)' }
-          ]}>
-            <Text style={[
-              styles.statusText,
-              { color: item.status === 'published' ? COLORS.success : COLORS.warning }
-            ]}>
-              {item.status === 'published' ? '● Published' : '◐ Draft'}
-            </Text>
+      Alert.alert('Published', `Newsletter delivered to ${count} recipients.`);
+      setShowEditor(false);
+      await load();
+    } catch (error: any) {
+      if (error?.message === 'NO_RECIPIENTS') {
+        Alert.alert('Publish', 'No recipients matched this audience.');
+      } else {
+        Alert.alert('Publish', error?.message ?? 'Could not publish newsletter.');
+      }
+    } finally {
+      setPublishing(false);
+    }
+  };
+
+  const deleteNewsletter = (item: Newsletter) => {
+    Alert.alert('Delete newsletter', `Delete "${item.title}"?`, [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Delete',
+        style: 'destructive',
+        onPress: async () => {
+          try {
+            await newsletterService.deleteNewsletter(item.id);
+          } catch (err: any) {
+            Alert.alert('Delete', err?.message ?? 'Delete failed');
+            return;
+          }
+          if (activeNewsletter?.id === item.id) setActiveNewsletter(null);
+          await load();
+        },
+      },
+    ]);
+  };
+
+  const generateWithAI = async () => {
+    if (!aiTopic.trim()) {
+      Alert.alert('AI Builder', 'Enter a topic first.');
+      return;
+    }
+
+    setGenerating(true);
+    try {
+      const response = await callAI({
+        temperature: 0.65,
+        maxTokens: 900,
+        messages: [
+          {
+            role: 'system',
+            content:
+              'You create polished school newsletters for Rillcod Academy. Return only compact JSON with keys "title" and "content". Use British English, clear sections, short paragraphs, and a warm but professional voice.',
+          },
+          {
+            role: 'user',
+            content: `Create a newsletter for "${aiTopic.trim()}". Tone: ${aiTone}. Audience: ${targetAudience}. Context role: ${profile?.role ?? 'staff'}. Include a strong title, a short opening, 3 to 5 concise sections, and a clear closing call-to-action. Return JSON only.`,
+          },
+        ],
+      });
+
+      const payload = extractAiPayload(response);
+      if (!payload) throw new Error('AI returned an invalid newsletter format.');
+
+      setForm({
+        title: payload.title,
+        content: payload.content,
+      });
+    } catch (error: any) {
+      Alert.alert('AI Builder', error?.message ?? 'Could not generate newsletter draft.');
+    } finally {
+      setGenerating(false);
+    }
+  };
+
+  const filtered = useMemo(() => {
+    const needle = query.trim().toLowerCase();
+    return newsletters.filter((item) => {
+      const matchesFilter = filter === 'all' || item.status === filter;
+      const matchesQuery =
+        !needle ||
+        item.title.toLowerCase().includes(needle) ||
+        item.content.toLowerCase().includes(needle);
+      return matchesFilter && matchesQuery;
+    });
+  }, [filter, newsletters, query]);
+
+  const stats = useMemo(() => {
+    const published = newsletters.filter((item) => item.status === 'published').length;
+    const drafts = newsletters.filter((item) => item.status === 'draft').length;
+    const delivered = Object.values(deliveryMap).reduce((sum, item) => sum + item.total, 0);
+    return { total: newsletters.length, drafts, published, delivered };
+  }, [deliveryMap, newsletters]);
+
+  const renderCard = ({ item, index }: { item: Newsletter; index: number }) => {
+    const delivery = deliveryMap[item.id];
+    const isPublished = item.status === 'published';
+    return (
+      <MotiView from={{ opacity: 0, translateY: 10 }} animate={{ opacity: 1, translateY: 0 }} transition={{ delay: index * 35 }}>
+        <TouchableOpacity
+          activeOpacity={0.9}
+          style={styles.card}
+          onPress={() => (isStaff ? openEdit(item) : openRead(item))}
+          onLongPress={() => isStaff && deleteNewsletter(item)}
+        >
+          <View style={styles.cardTop}>
+            <View style={[styles.statusBadge, isPublished ? styles.statusPublished : styles.statusDraft]}>
+              <Text style={[styles.statusText, { color: isPublished ? colors.success : colors.warning }]}>
+                {isPublished ? 'PUBLISHED' : 'DRAFT'}
+              </Text>
+            </View>
+            <Text style={styles.dateText}>{formatDate(item.published_at ?? item.created_at)}</Text>
           </View>
-          <Text style={styles.cardDate}>{formatDate(item.published_at ?? item.created_at)}</Text>
-        </View>
-        <Text style={styles.cardTitle} numberOfLines={2}>{item.title}</Text>
-        <Text style={styles.cardContent} numberOfLines={2}>{item.content}</Text>
-        {isStaff && <Text style={styles.hintText}>Long press to delete</Text>}
-      </TouchableOpacity>
-    </MotiView>
-  );
+          <Text style={styles.cardTitle} numberOfLines={2}>{item.title}</Text>
+          <Text style={styles.cardBody} numberOfLines={4}>{item.content}</Text>
+          {isStaff ? (
+            <View style={styles.metaRow}>
+              <Text style={styles.metaText}>
+                {delivery ? `${delivery.total} delivered` : item.status === 'published' ? 'No delivery record' : 'Draft only'}
+              </Text>
+              {delivery ? <Text style={styles.metaText}>{delivery.viewed} viewed</Text> : null}
+            </View>
+          ) : null}
+        </TouchableOpacity>
+      </MotiView>
+    );
+  };
 
   return (
     <SafeAreaView style={styles.safe}>
-      <View style={styles.header}>
-        <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}>
-          <Text style={styles.backArrow}>←</Text>
-        </TouchableOpacity>
-        <Text style={styles.headerTitle}>Newsletters</Text>
-        {isStaff && (
-          <TouchableOpacity style={styles.addBtn} onPress={() => setShowModal(true)}>
-            <LinearGradient colors={COLORS.gradPrimary} style={styles.addBtnInner}>
-              <Text style={styles.addBtnText}>+ New</Text>
-            </LinearGradient>
-          </TouchableOpacity>
-        )}
-      </View>
+      <ScreenHeader title={isStaff ? 'NEWSLETTERS HUB' : 'NEWSLETTERS'} onBack={() => navigation.goBack()} />
 
-      {/* Stats */}
-      <View style={styles.statsRow}>
+      <View style={styles.summaryRow}>
         {[
-          { label: 'Total', value: total, color: COLORS.textPrimary },
-          { label: 'Published', value: published, color: COLORS.success },
-          { label: 'Drafts', value: drafts, color: COLORS.warning },
-        ].map(s => (
-          <View key={s.label} style={styles.statCard}>
-            <Text style={[styles.statNum, { color: s.color }]}>{s.value}</Text>
-            <Text style={styles.statLabel}>{s.label}</Text>
+          { label: 'Total', value: stats.total },
+          { label: 'Published', value: stats.published },
+          { label: isStaff ? 'Delivered' : 'Drafts', value: isStaff ? stats.delivered : stats.drafts },
+        ].map((item) => (
+          <View key={item.label} style={styles.summaryCard}>
+            <Text style={styles.summaryValue}>{item.value}</Text>
+            <Text style={styles.summaryLabel}>{item.label}</Text>
           </View>
         ))}
       </View>
 
-      {/* Filter tabs */}
-      <View style={styles.filterRow}>
-        {(['all', 'published', 'draft'] as FilterTab[]).map(f => (
+      <View style={styles.searchWrap}>
+        <TextInput
+          value={query}
+          onChangeText={setQuery}
+          placeholder={isStaff ? 'Search titles, drafts, delivery history...' : 'Search newsletters'}
+          placeholderTextColor={colors.textMuted}
+          style={styles.searchInput}
+        />
+        {isStaff ? (
+          <TouchableOpacity style={styles.primaryBtn} onPress={openCreate}>
+            <Text style={styles.primaryBtnText}>+ NEW</Text>
+          </TouchableOpacity>
+        ) : null}
+      </View>
+
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filterRow}>
+        {(['all', 'published', 'draft'] as FilterTab[]).map((item) => (
           <TouchableOpacity
-            key={f}
-            style={[styles.filterTab, filter === f && styles.filterTabActive]}
-            onPress={() => setFilter(f)}
+            key={item}
+            style={[styles.filterChip, filter === item && styles.filterChipActive]}
+            onPress={() => setFilter(item)}
           >
-            <Text style={[styles.filterText, filter === f && styles.filterTextActive]}>
-              {f.charAt(0).toUpperCase() + f.slice(1)}
+            <Text style={[styles.filterText, filter === item && styles.filterTextActive]}>
+              {item.toUpperCase()}
             </Text>
           </TouchableOpacity>
         ))}
-      </View>
+      </ScrollView>
 
       {loading ? (
         <View style={styles.center}>
-          <ActivityIndicator size="large" color={COLORS.primary} />
-        </View>
-      ) : filtered.length === 0 ? (
-        <View style={styles.center}>
-          <Text style={styles.emptyEmoji}>📰</Text>
-          <Text style={styles.emptyTitle}>No newsletters yet</Text>
-          <Text style={styles.emptySubtitle}>
-            {isStaff ? 'Create a newsletter to communicate with students' : 'No newsletters have been published yet'}
-          </Text>
+          <ActivityIndicator size="large" color={colors.primary} />
         </View>
       ) : (
         <FlatList
           data={filtered}
-          keyExtractor={i => i.id}
-          renderItem={renderItem}
-          contentContainerStyle={{ paddingHorizontal: SPACING.base, paddingBottom: 40, paddingTop: SPACING.xs }}
-          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={COLORS.primary} />}
+          keyExtractor={(item) => item.id}
+          renderItem={renderCard}
+          contentContainerStyle={styles.list}
           showsVerticalScrollIndicator={false}
+          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); load(); }} tintColor={colors.primary} />}
+          ListEmptyComponent={
+            <View style={styles.emptyWrap}>
+              <Text style={styles.emptyTitle}>No newsletters yet</Text>
+              <Text style={styles.emptyText}>
+                {isStaff ? 'Create a draft or publish an AI-assisted newsletter from mobile.' : 'No newsletters have been delivered to you yet.'}
+              </Text>
+            </View>
+          }
         />
       )}
 
-      {/* New Newsletter Modal */}
-      <Modal visible={showModal} animationType="slide" transparent>
-        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.modalOverlay}>
-          <View style={styles.modalSheet}>
-            <View style={styles.modalHandle} />
-            <Text style={styles.modalTitle}>New Newsletter</Text>
-            <ScrollView showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
-              <Text style={styles.label}>Title *</Text>
-              <TextInput
-                style={styles.input}
-                placeholder="Newsletter title"
-                placeholderTextColor={COLORS.textMuted}
-                value={formTitle}
-                onChangeText={setFormTitle}
-              />
+      <Modal visible={showEditor} animationType="slide" transparent onRequestClose={() => setShowEditor(false)}>
+        <View style={styles.modalBackdrop}>
+          <View style={styles.modalCard}>
+            <View style={styles.modalHeader}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.modalEyebrow}>NEWSLETTER BUILDER</Text>
+                <Text style={styles.modalTitle}>{activeNewsletter ? 'Edit newsletter' : 'Create newsletter'}</Text>
+              </View>
+              <TouchableOpacity onPress={() => setShowEditor(false)} style={styles.closeBtn}>
+                <Text style={styles.closeText}>X</Text>
+              </TouchableOpacity>
+            </View>
 
-              <Text style={styles.label}>Content *</Text>
-              <TextInput
-                style={[styles.input, styles.contentInput]}
-                placeholder="Write your newsletter content here..."
-                placeholderTextColor={COLORS.textMuted}
-                value={formContent}
-                onChangeText={setFormContent}
-                multiline
-                numberOfLines={8}
-              />
-
-              <View style={styles.actionRow}>
-                <TouchableOpacity style={styles.cancelBtn} onPress={() => setShowModal(false)}>
-                  <Text style={styles.cancelBtnText}>Cancel</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={styles.draftBtn}
-                  onPress={() => handleSave(false)}
-                  disabled={saving}
-                >
-                  {saving
-                    ? <ActivityIndicator size="small" color={COLORS.warning} />
-                    : <Text style={styles.draftBtnText}>Save Draft</Text>}
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={styles.publishBtn}
-                  onPress={() => handleSave(true)}
-                  disabled={saving}
-                >
-                  <LinearGradient colors={COLORS.gradPrimary} style={styles.publishBtnInner}>
-                    {saving
-                      ? <ActivityIndicator size="small" color="#fff" />
-                      : <Text style={styles.publishBtnText}>Publish</Text>}
-                  </LinearGradient>
+            <ScrollView contentContainerStyle={styles.modalBody} showsVerticalScrollIndicator={false}>
+              <View style={styles.aiCard}>
+                <Text style={styles.sectionTitle}>AI DRAFTING</Text>
+                <TextInput
+                  value={aiTopic}
+                  onChangeText={setAiTopic}
+                  placeholder="Topic or campaign goal"
+                  placeholderTextColor={colors.textMuted}
+                  style={styles.input}
+                />
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.pillRow}>
+                  {AI_TONES.map((tone) => (
+                    <TouchableOpacity key={tone} style={[styles.pill, aiTone === tone && styles.pillActive]} onPress={() => setAiTone(tone)}>
+                      <Text style={[styles.pillText, aiTone === tone && styles.pillTextActive]}>{tone.toUpperCase()}</Text>
+                    </TouchableOpacity>
+                  ))}
+                </ScrollView>
+                <TouchableOpacity style={styles.primaryWideBtn} onPress={generateWithAI} disabled={generating}>
+                  <Text style={styles.primaryBtnText}>{generating ? 'GENERATING...' : 'GENERATE WITH AI'}</Text>
                 </TouchableOpacity>
               </View>
+
+              <Text style={styles.fieldLabel}>TITLE</Text>
+              <TextInput
+                value={form.title}
+                onChangeText={(value) => setForm((current) => ({ ...current, title: value }))}
+                placeholder="Newsletter title"
+                placeholderTextColor={colors.textMuted}
+                style={styles.input}
+              />
+
+              <Text style={styles.fieldLabel}>CONTENT</Text>
+              <TextInput
+                value={form.content}
+                onChangeText={(value) => setForm((current) => ({ ...current, content: value }))}
+                placeholder="Write or refine your newsletter"
+                placeholderTextColor={colors.textMuted}
+                multiline
+                style={[styles.input, styles.textarea]}
+              />
+
+              <Text style={styles.fieldLabel}>PUBLISH AUDIENCE</Text>
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.pillRow}>
+                {AUDIENCE_OPTIONS.map((item) => (
+                  <TouchableOpacity key={item.key} style={[styles.pill, targetAudience === item.key && styles.pillActive]} onPress={() => setTargetAudience(item.key)}>
+                    <Text style={[styles.pillText, targetAudience === item.key && styles.pillTextActive]}>{item.label.toUpperCase()}</Text>
+                  </TouchableOpacity>
+                ))}
+              </ScrollView>
+            </ScrollView>
+
+            <View style={styles.actionRow}>
+              <TouchableOpacity style={styles.secondaryBtn} onPress={saveDraft} disabled={saving}>
+                <Text style={styles.secondaryBtnText}>{saving ? 'SAVING...' : 'SAVE DRAFT'}</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={[styles.primaryWideBtn, !activeNewsletter?.id && styles.primaryWideBtnDisabled]} onPress={publishNewsletter} disabled={!activeNewsletter?.id || publishing}>
+                <Text style={styles.primaryBtnText}>{publishing ? 'PUBLISHING...' : 'PUBLISH'}</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      <Modal visible={showReader} animationType="slide" transparent onRequestClose={() => setShowReader(false)}>
+        <View style={styles.modalBackdrop}>
+          <View style={styles.modalCard}>
+            <View style={styles.modalHeader}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.modalEyebrow}>NEWSLETTER</Text>
+                <Text style={styles.modalTitle}>{activeNewsletter?.title ?? 'Newsletter'}</Text>
+              </View>
+              <TouchableOpacity onPress={() => setShowReader(false)} style={styles.closeBtn}>
+                <Text style={styles.closeText}>X</Text>
+              </TouchableOpacity>
+            </View>
+            <ScrollView contentContainerStyle={styles.modalBody} showsVerticalScrollIndicator={false}>
+              <Text style={styles.readerDate}>{formatDate(activeNewsletter?.published_at ?? activeNewsletter?.created_at ?? null)}</Text>
+              <Text style={styles.readerText}>{activeNewsletter?.content ?? ''}</Text>
             </ScrollView>
           </View>
-        </KeyboardAvoidingView>
+        </View>
       </Modal>
     </SafeAreaView>
   );
 }
 
-const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: COLORS.bg },
-  header: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: SPACING.base, paddingVertical: SPACING.md, gap: SPACING.sm },
-  backBtn: { width: 36, height: 36, borderRadius: RADIUS.md, borderWidth: 1, borderColor: COLORS.border, alignItems: 'center', justifyContent: 'center' },
-  backArrow: { fontSize: 18, color: COLORS.textPrimary },
-  headerTitle: { flex: 1, fontSize: FONT_SIZE.lg, fontFamily: FONT_FAMILY.heading, color: COLORS.textPrimary },
-  addBtn: { borderRadius: RADIUS.md, overflow: 'hidden' },
-  addBtnInner: { paddingHorizontal: SPACING.md, paddingVertical: SPACING.sm },
-  addBtnText: { fontSize: FONT_SIZE.sm, fontFamily: FONT_FAMILY.bodySemi, color: '#fff' },
-  statsRow: { flexDirection: 'row', paddingHorizontal: SPACING.base, gap: SPACING.sm, marginBottom: SPACING.sm },
-  statCard: { flex: 1, backgroundColor: COLORS.bgCard, borderRadius: RADIUS.lg, borderWidth: 1, borderColor: COLORS.border, padding: SPACING.md, alignItems: 'center' },
-  statNum: { fontSize: FONT_SIZE.xl, fontFamily: FONT_FAMILY.display },
-  statLabel: { fontSize: FONT_SIZE.xs, fontFamily: FONT_FAMILY.body, color: COLORS.textMuted, marginTop: 2 },
-  filterRow: { flexDirection: 'row', paddingHorizontal: SPACING.base, gap: SPACING.sm, marginBottom: SPACING.sm },
-  filterTab: { flex: 1, alignItems: 'center', paddingVertical: 8, borderRadius: RADIUS.lg, borderWidth: 1, borderColor: COLORS.border },
-  filterTabActive: { backgroundColor: COLORS.primaryPale, borderColor: COLORS.primary },
-  filterText: { fontSize: FONT_SIZE.sm, fontFamily: FONT_FAMILY.bodySemi, color: COLORS.textMuted },
-  filterTextActive: { color: COLORS.primaryLight },
-  center: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: SPACING.xl },
-  emptyEmoji: { fontSize: 48, marginBottom: SPACING.md },
-  emptyTitle: { fontSize: FONT_SIZE.md, fontFamily: FONT_FAMILY.heading, color: COLORS.textPrimary, marginBottom: SPACING.sm },
-  emptySubtitle: { fontSize: FONT_SIZE.sm, fontFamily: FONT_FAMILY.body, color: COLORS.textMuted, textAlign: 'center' },
-  card: { backgroundColor: COLORS.bgCard, borderRadius: RADIUS.lg, borderWidth: 1, borderColor: COLORS.border, padding: SPACING.md, marginBottom: SPACING.sm },
-  cardHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: SPACING.sm },
-  statusBadge: { borderRadius: RADIUS.full, paddingHorizontal: 10, paddingVertical: 4 },
-  statusText: { fontSize: FONT_SIZE.xs, fontFamily: FONT_FAMILY.bodySemi },
-  cardDate: { fontSize: FONT_SIZE.xs, fontFamily: FONT_FAMILY.body, color: COLORS.textMuted },
-  cardTitle: { fontSize: FONT_SIZE.base, fontFamily: FONT_FAMILY.heading, color: COLORS.textPrimary, marginBottom: 6 },
-  cardContent: { fontSize: FONT_SIZE.sm, fontFamily: FONT_FAMILY.body, color: COLORS.textSecondary, lineHeight: 20 },
-  hintText: { fontSize: FONT_SIZE.xs, fontFamily: FONT_FAMILY.body, color: COLORS.textMuted, marginTop: SPACING.sm, textAlign: 'right' },
-  // Modal
-  modalOverlay: { flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.6)' },
-  modalSheet: { backgroundColor: '#0f0f1a', borderTopLeftRadius: RADIUS['2xl'], borderTopRightRadius: RADIUS['2xl'], padding: SPACING.xl, maxHeight: '90%' },
-  modalHandle: { width: 40, height: 4, backgroundColor: COLORS.border, borderRadius: 2, alignSelf: 'center', marginBottom: SPACING.lg },
-  modalTitle: { fontSize: FONT_SIZE.lg, fontFamily: FONT_FAMILY.heading, color: COLORS.textPrimary, marginBottom: SPACING.lg },
-  label: { fontSize: FONT_SIZE.sm, fontFamily: FONT_FAMILY.bodySemi, color: COLORS.textSecondary, marginBottom: 6, marginTop: SPACING.sm },
-  input: { backgroundColor: COLORS.bgCard, borderWidth: 1, borderColor: COLORS.border, borderRadius: RADIUS.lg, paddingHorizontal: SPACING.md, paddingVertical: SPACING.sm, fontSize: FONT_SIZE.base, fontFamily: FONT_FAMILY.body, color: COLORS.textPrimary },
-  contentInput: { minHeight: 200, textAlignVertical: 'top' },
-  actionRow: { flexDirection: 'row', gap: SPACING.sm, marginTop: SPACING.xl, marginBottom: SPACING.sm },
-  cancelBtn: { flex: 1, padding: SPACING.md, borderRadius: RADIUS.lg, borderWidth: 1, borderColor: COLORS.border, alignItems: 'center', justifyContent: 'center' },
-  cancelBtnText: { fontSize: FONT_SIZE.sm, fontFamily: FONT_FAMILY.bodySemi, color: COLORS.textSecondary },
-  draftBtn: { flex: 1.2, padding: SPACING.md, borderRadius: RADIUS.lg, borderWidth: 1, borderColor: COLORS.warning, alignItems: 'center', justifyContent: 'center' },
-  draftBtnText: { fontSize: FONT_SIZE.sm, fontFamily: FONT_FAMILY.bodySemi, color: COLORS.warning },
-  publishBtn: { flex: 1.5, borderRadius: RADIUS.lg, overflow: 'hidden' },
-  publishBtnInner: { padding: SPACING.md, alignItems: 'center' },
-  publishBtnText: { fontSize: FONT_SIZE.sm, fontFamily: FONT_FAMILY.bodySemi, color: '#fff' },
-});
+const getStyles = (colors: any) =>
+  StyleSheet.create({
+    safe: { flex: 1, backgroundColor: colors.bg },
+    summaryRow: { flexDirection: 'row', gap: SPACING.sm, paddingHorizontal: SPACING.xl, marginBottom: SPACING.md },
+    summaryCard: { flex: 1, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.bgCard, borderRadius: RADIUS.lg, padding: SPACING.md },
+    summaryValue: { fontFamily: FONT_FAMILY.display, fontSize: FONT_SIZE.xl, color: colors.textPrimary },
+    summaryLabel: { marginTop: 4, fontFamily: FONT_FAMILY.bodyBold, fontSize: 10, color: colors.textMuted, letterSpacing: LETTER_SPACING.wider },
+    searchWrap: { flexDirection: 'row', gap: SPACING.sm, paddingHorizontal: SPACING.xl, marginBottom: SPACING.md },
+    searchInput: { flex: 1, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.bgCard, borderRadius: RADIUS.lg, paddingHorizontal: SPACING.md, paddingVertical: 12, fontFamily: FONT_FAMILY.body, fontSize: FONT_SIZE.sm, color: colors.textPrimary },
+    primaryBtn: { minWidth: 84, borderRadius: RADIUS.lg, backgroundColor: colors.primary, alignItems: 'center', justifyContent: 'center', paddingHorizontal: SPACING.md },
+    primaryBtnText: { color: colors.white100, fontFamily: FONT_FAMILY.bodyBold, fontSize: 10, letterSpacing: LETTER_SPACING.wider },
+    filterRow: { paddingHorizontal: SPACING.xl, paddingBottom: SPACING.md, gap: SPACING.sm },
+    filterChip: { borderWidth: 1, borderColor: colors.border, backgroundColor: colors.bgCard, borderRadius: RADIUS.full, paddingHorizontal: 14, paddingVertical: 8 },
+    filterChipActive: { backgroundColor: colors.primaryPale, borderColor: colors.primary },
+    filterText: { color: colors.textMuted, fontFamily: FONT_FAMILY.bodyBold, fontSize: 10, letterSpacing: LETTER_SPACING.wider },
+    filterTextActive: { color: colors.primary },
+    list: { paddingHorizontal: SPACING.xl, paddingBottom: SPACING.xl },
+    center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
+    card: { borderWidth: 1, borderColor: colors.border, backgroundColor: colors.bgCard, borderRadius: RADIUS.lg, padding: SPACING.md, marginBottom: SPACING.sm, gap: SPACING.sm },
+    cardTop: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: SPACING.md },
+    statusBadge: { borderRadius: RADIUS.full, borderWidth: 1, paddingHorizontal: 10, paddingVertical: 5 },
+    statusPublished: { backgroundColor: colors.success + '14', borderColor: colors.success + '40' },
+    statusDraft: { backgroundColor: colors.warning + '14', borderColor: colors.warning + '40' },
+    statusText: { fontFamily: FONT_FAMILY.bodyBold, fontSize: 10, letterSpacing: LETTER_SPACING.wider },
+    dateText: { fontFamily: FONT_FAMILY.body, fontSize: FONT_SIZE.xs, color: colors.textMuted },
+    cardTitle: { color: colors.textPrimary, fontFamily: FONT_FAMILY.bodyBold, fontSize: FONT_SIZE.base, lineHeight: 22 },
+    cardBody: { color: colors.textMuted, fontFamily: FONT_FAMILY.body, fontSize: FONT_SIZE.sm, lineHeight: 20 },
+    metaRow: { flexDirection: 'row', gap: SPACING.md, flexWrap: 'wrap' },
+    metaText: { color: colors.textSecondary, fontFamily: FONT_FAMILY.bodyBold, fontSize: 10, letterSpacing: LETTER_SPACING.wide },
+    emptyWrap: { paddingVertical: 80, alignItems: 'center', gap: SPACING.sm },
+    emptyTitle: { color: colors.textPrimary, fontFamily: FONT_FAMILY.display, fontSize: FONT_SIZE.xl },
+    emptyText: { color: colors.textMuted, fontFamily: FONT_FAMILY.body, fontSize: FONT_SIZE.sm, textAlign: 'center', paddingHorizontal: SPACING.xl },
+    modalBackdrop: { flex: 1, backgroundColor: 'rgba(10,17,28,0.7)', justifyContent: 'flex-end' },
+    modalCard: { maxHeight: '92%', borderTopLeftRadius: 24, borderTopRightRadius: 24, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.bg, overflow: 'hidden' },
+    modalHeader: { flexDirection: 'row', gap: SPACING.md, alignItems: 'flex-start', padding: SPACING.xl, borderBottomWidth: 1, borderBottomColor: colors.border },
+    modalEyebrow: { color: colors.primary, fontFamily: FONT_FAMILY.bodyBold, fontSize: 10, letterSpacing: LETTER_SPACING.wider, marginBottom: 6 },
+    modalTitle: { color: colors.textPrimary, fontFamily: FONT_FAMILY.display, fontSize: FONT_SIZE.xl },
+    closeBtn: { width: 40, height: 40, borderRadius: 20, borderWidth: 1, borderColor: colors.border, alignItems: 'center', justifyContent: 'center' },
+    closeText: { color: colors.textSecondary, fontFamily: FONT_FAMILY.bodyBold, fontSize: 12 },
+    modalBody: { padding: SPACING.xl, gap: SPACING.md },
+    aiCard: { borderWidth: 1, borderColor: colors.primaryGlow, backgroundColor: colors.primaryPale, borderRadius: RADIUS.lg, padding: SPACING.md, gap: SPACING.sm },
+    sectionTitle: { color: colors.textPrimary, fontFamily: FONT_FAMILY.bodyBold, fontSize: 11, letterSpacing: LETTER_SPACING.wider },
+    fieldLabel: { color: colors.textMuted, fontFamily: FONT_FAMILY.bodyBold, fontSize: 10, letterSpacing: LETTER_SPACING.wider },
+    input: { borderWidth: 1, borderColor: colors.border, backgroundColor: colors.bgCard, borderRadius: RADIUS.lg, paddingHorizontal: SPACING.md, paddingVertical: 12, fontFamily: FONT_FAMILY.body, fontSize: FONT_SIZE.sm, color: colors.textPrimary },
+    textarea: { minHeight: 180, textAlignVertical: 'top' },
+    pillRow: { gap: SPACING.sm },
+    pill: { borderWidth: 1, borderColor: colors.border, backgroundColor: colors.bgCard, borderRadius: RADIUS.full, paddingHorizontal: 12, paddingVertical: 8 },
+    pillActive: { borderColor: colors.primary, backgroundColor: colors.primaryPale },
+    pillText: { color: colors.textMuted, fontFamily: FONT_FAMILY.bodyBold, fontSize: 10, letterSpacing: LETTER_SPACING.wide },
+    pillTextActive: { color: colors.primary },
+    actionRow: { flexDirection: 'row', gap: SPACING.sm, padding: SPACING.xl, borderTopWidth: 1, borderTopColor: colors.border },
+    secondaryBtn: { flex: 1, minHeight: 48, borderRadius: RADIUS.lg, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.bgCard, alignItems: 'center', justifyContent: 'center' },
+    secondaryBtnText: { color: colors.textPrimary, fontFamily: FONT_FAMILY.bodyBold, fontSize: 10, letterSpacing: LETTER_SPACING.wider },
+    primaryWideBtn: { flex: 1, minHeight: 48, borderRadius: RADIUS.lg, backgroundColor: colors.primary, alignItems: 'center', justifyContent: 'center', paddingHorizontal: SPACING.md },
+    primaryWideBtnDisabled: { opacity: 0.55 },
+    readerDate: { color: colors.primary, fontFamily: FONT_FAMILY.bodyBold, fontSize: 10, letterSpacing: LETTER_SPACING.wider },
+    readerText: { color: colors.textPrimary, fontFamily: FONT_FAMILY.body, fontSize: FONT_SIZE.base, lineHeight: 24 },
+  });

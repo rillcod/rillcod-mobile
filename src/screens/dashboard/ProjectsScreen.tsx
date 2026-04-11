@@ -6,10 +6,12 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { MotiView } from 'moti';
 import { useAuth } from '../../contexts/AuthContext';
-import { supabase } from '../../lib/supabase';
+import { projectService } from '../../services/project.service';
 import { COLORS } from '../../constants/colors';
 import { FONT_FAMILY, FONT_SIZE } from '../../constants/typography';
 import { SPACING, RADIUS } from '../../constants/spacing';
+import { IconBackButton } from '../../components/ui/IconBackButton';
+import { ROUTES } from '../../navigation/routes';
 
 interface Project {
   id: string;
@@ -42,46 +44,29 @@ export default function ProjectsScreen({ navigation }: any) {
   const load = useCallback(async () => {
     if (!profile) return;
     try {
-      // Lab Projects
-      let labQuery = supabase
-        .from('lab_projects')
-        .select(isStaff
-          ? 'id, user_id, title, updated_at, portal_users(full_name)'
-          : 'id, user_id, title, updated_at'
-        )
-        .order('updated_at', { ascending: false });
-      if (!isStaff) labQuery = labQuery.eq('user_id', profile.id);
-
-      // Portfolio Projects
-      let portQuery = supabase
-        .from('portfolio_projects')
-        .select(isStaff
-          ? 'id, user_id, title, updated_at, portal_users(full_name)'
-          : 'id, user_id, title, updated_at'
-        )
-        .order('updated_at', { ascending: false });
-      if (!isStaff) portQuery = portQuery.eq('user_id', profile.id);
-
-      const [{ data: labs }, { data: ports }] = await Promise.all([labQuery, portQuery]);
+      const [labs, ports] = await Promise.all([
+        projectService.listLabProjectsForScreen({ isStaff, currentUserId: profile.id }),
+        projectService.listPortfolioProjectsForScreen({ isStaff, currentUserId: profile.id }),
+      ]);
 
       setLabProjects(
-        (labs ?? []).map((r: any) => ({
+        (labs as any[]).map((r: any) => ({
           id: r.id,
           user_id: r.user_id,
           title: r.title,
           updated_at: r.updated_at,
           studentName: r.portal_users?.full_name ?? null,
-          type: 'lab',
+          type: 'lab' as const,
         }))
       );
       setPortfolioProjects(
-        (ports ?? []).map((r: any) => ({
+        (ports as any[]).map((r: any) => ({
           id: r.id,
           user_id: r.user_id,
           title: r.title,
           updated_at: r.updated_at,
           studentName: r.portal_users?.full_name ?? null,
-          type: 'portfolio',
+          type: 'portfolio' as const,
         }))
       );
     } catch (e: any) {
@@ -107,7 +92,7 @@ export default function ProjectsScreen({ navigation }: any) {
     >
       <TouchableOpacity
         style={styles.card}
-        onPress={() => navigation.navigate('ProjectDetail', { projectId: item.id, projectTitle: item.title })}
+        onPress={() => navigation.navigate(ROUTES.ProjectDetail, { projectId: item.id, projectTitle: item.title })}
         activeOpacity={0.7}
       >
         <View style={styles.cardLeft}>
@@ -140,9 +125,7 @@ export default function ProjectsScreen({ navigation }: any) {
     <SafeAreaView style={styles.safe}>
       {/* Header */}
       <View style={styles.header}>
-        <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}>
-          <Text style={styles.backArrow}>←</Text>
-        </TouchableOpacity>
+        <IconBackButton onPress={() => navigation.goBack()} color={COLORS.textPrimary} style={styles.backBtn} />
         <Text style={styles.headerTitle}>Projects</Text>
         <View style={styles.countBadge}>
           <Text style={styles.countText}>{current.length}</Text>
@@ -198,7 +181,6 @@ const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: COLORS.bg },
   header: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: SPACING.base, paddingVertical: SPACING.md, gap: SPACING.sm },
   backBtn: { width: 36, height: 36, borderRadius: RADIUS.md, borderWidth: 1, borderColor: COLORS.border, alignItems: 'center', justifyContent: 'center' },
-  backArrow: { fontSize: 18, color: COLORS.textPrimary },
   headerTitle: { flex: 1, fontSize: FONT_SIZE.lg, fontFamily: FONT_FAMILY.heading, color: COLORS.textPrimary },
   countBadge: { backgroundColor: COLORS.bgCard, borderRadius: RADIUS.full, paddingHorizontal: SPACING.sm, paddingVertical: 3, borderWidth: 1, borderColor: COLORS.border },
   countText: { fontSize: FONT_SIZE.sm, fontFamily: FONT_FAMILY.bodySemi, color: COLORS.textSecondary },

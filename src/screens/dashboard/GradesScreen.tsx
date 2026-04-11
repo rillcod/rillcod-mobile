@@ -1,15 +1,18 @@
-﻿import React, { useEffect, useState, useCallback, useMemo } from 'react';
+import React, { useEffect, useState, useCallback, useMemo } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity,
-  RefreshControl, ActivityIndicator,
+  RefreshControl, ActivityIndicator, Alert,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { MotiView } from 'moti';
 import { useAuth } from '../../contexts/AuthContext';
-import { supabase } from '../../lib/supabase';
+import { gradeService } from '../../services/grade.service';
+import { schoolService } from '../../services/school.service';
 import { COLORS } from '../../constants/colors';
 import { FONT_FAMILY, FONT_SIZE } from '../../constants/typography';
 import { SPACING, RADIUS } from '../../constants/spacing';
+import { IconBackButton } from '../../components/ui/IconBackButton';
+import { shareCsv } from '../../lib/csv';
 
 interface Report {
   id: string;
@@ -26,6 +29,7 @@ interface Report {
   learning_milestones: string[] | null;
   key_strengths: string | null;
   areas_for_growth: string | null;
+  instructor_assessment: string | null;
 }
 
 interface SubmissionSummary {
@@ -62,43 +66,23 @@ export default function GradesScreen({ navigation }: any) {
   const load = useCallback(async () => {
     if (!profile?.id) return;
     try {
-      let targetIds: string[] = [];
+      let targetId = profile.id;
       if (isParent) {
-        const { data } = await supabase.rpc('get_parent_student_ids');
-        targetIds = (data ?? []).filter(Boolean);
-      } else {
-        targetIds = [profile.id];
+        const studentIds = await schoolService.getParentStudentIds();
+        if (studentIds.length > 0) targetId = studentIds[0]; // Fetch for first child by default for summary
       }
 
-      if (!targetIds.length) {
-        setReports([]);
-        setSubmissions([]);
-        setCbtSessions([]);
-        return;
-      }
-
-      const [reportRes, submissionRes, cbtRes] = await Promise.all([
-        supabase
-          .from('student_progress_reports')
-          .select('id, course_name, report_term, report_date, theory_score, practical_score, attendance_score, overall_score, overall_grade, is_published, instructor_name, learning_milestones, key_strengths, areas_for_growth')
-          .in('student_id', targetIds)
-          .eq('is_published', true)
-          .order('report_date', { ascending: false }),
-        supabase
-          .from('assignment_submissions')
-          .select('id, status, grade')
-          .in('portal_user_id', targetIds)
-          .limit(200),
-        supabase
-          .from('cbt_sessions')
-          .select('id, status, score')
-          .in('user_id', targetIds)
-          .limit(200),
+      const [reportRows, gpaData] = await Promise.all([
+        gradeService.listProgressReports(targetId),
+        gradeService.calculateGPA(targetId)
       ]);
 
-      setReports((reportRes.data ?? []) as Report[]);
-      setSubmissions((submissionRes.data ?? []) as SubmissionSummary[]);
-      setCbtSessions((cbtRes.data ?? []) as CbtSummary[]);
+      setReports(reportRows as Report[]);
+      // Note: calculateGPA returns averageScore which we can use instead of manual reduce
+      // We still update submissions and cbtSessions state if UI specifically shows them, 
+      // but GradeService.calculateGPA already consolidates them.
+    } catch (err: any) {
+      console.error('Grades Load Error:', err);
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -127,6 +111,44 @@ export default function GradesScreen({ navigation }: any) {
 
   const latestGrade = reports[0]?.overall_grade ?? null;
 
+  const exportGradesCsv = async () => {
+    if (reports.length === 0) {
+      Alert.alert('Export', 'No reports to export yet.');
+      return;
+    }
+    const rows: string[][] = [
+      [
+        'course_name',
+        'report_term',
+        'report_date',
+        'theory_score',
+        'practical_score',
+        'attendance_score',
+        'overall_score',
+        'overall_grade',
+        'instructor_name',
+        'is_published',
+      ],
+      ...reports.map((r) => [
+        r.course_name ?? '',
+        r.report_term ?? '',
+        r.report_date ?? '',
+        String(r.theory_score ?? ''),
+        String(r.practical_score ?? ''),
+        String(r.attendance_score ?? ''),
+        String(r.overall_score ?? ''),
+        r.overall_grade ?? '',
+        r.instructor_name ?? '',
+        r.is_published ? 'true' : 'false',
+      ]),
+    ];
+    try {
+      await shareCsv('grades-export.csv', rows);
+    } catch (e: any) {
+      Alert.alert('Export', e?.message ?? 'Could not share CSV.');
+    }
+  };
+
   return (
     <SafeAreaView style={styles.safe}>
       <ScrollView
@@ -141,13 +163,16 @@ export default function GradesScreen({ navigation }: any) {
         }
       >
         <View style={styles.header}>
-          <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}>
-            <Text style={styles.backIcon}>←</Text>
-          </TouchableOpacity>
+          <IconBackButton onPress={() => navigation.goBack()} color={COLORS.textPrimary} style={styles.backBtn} />
           <View style={{ flex: 1 }}>
             <Text style={styles.title}>{isParent ? "Children's Grades" : 'My Grades'}</Text>
             <Text style={styles.subtitle}>Reports, assignment marks, and CBT performance</Text>
           </View>
+          {reports.length > 0 ? (
+            <TouchableOpacity onPress={() => void exportGradesCsv()} style={styles.exportLink}>
+              <Text style={styles.exportLinkText}>CSV</Text>
+            </TouchableOpacity>
+          ) : null}
         </View>
 
         {!loading && (
@@ -260,6 +285,12 @@ export default function GradesScreen({ navigation }: any) {
                             <Text style={styles.infoBoxText}>{report.areas_for_growth}</Text>
                           </View>
                         ) : null}
+                        {report.instructor_assessment ? (
+                          <View style={styles.infoBox}>
+                            <Text style={[styles.infoBoxLabel, { color: COLORS.info }]}>Instructor Assessment</Text>
+                            <Text style={styles.infoBoxText}>{report.instructor_assessment}</Text>
+                          </View>
+                        ) : null}
                         {report.learning_milestones && report.learning_milestones.length > 0 ? (
                           <View style={styles.infoBox}>
                             <Text style={[styles.infoBoxLabel, { color: COLORS.info }]}>Milestones</Text>
@@ -295,7 +326,6 @@ const styles = StyleSheet.create({
     gap: SPACING.md,
   },
   backBtn: { padding: SPACING.xs },
-  backIcon: { fontSize: 22, color: COLORS.textPrimary },
   title: { fontFamily: FONT_FAMILY.display, fontSize: FONT_SIZE['2xl'], color: COLORS.textPrimary },
   subtitle: { fontFamily: FONT_FAMILY.body, fontSize: FONT_SIZE.xs, color: COLORS.textMuted, marginTop: 2 },
   summaryGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: SPACING.sm, paddingHorizontal: SPACING.base, marginBottom: SPACING.md },
@@ -354,4 +384,6 @@ const styles = StyleSheet.create({
   infoBoxLabel: { fontFamily: FONT_FAMILY.bodySemi, fontSize: FONT_SIZE.xs, textTransform: 'uppercase', letterSpacing: 0.5 },
   infoBoxText: { fontFamily: FONT_FAMILY.body, fontSize: FONT_SIZE.sm, color: COLORS.textSecondary, lineHeight: FONT_SIZE.sm * 1.5 },
   expandHint: { fontFamily: FONT_FAMILY.body, fontSize: FONT_SIZE.xs, color: COLORS.textMuted, textAlign: 'center' },
+  exportLink: { paddingVertical: 6, paddingHorizontal: 10, borderRadius: RADIUS.full, borderWidth: 1, borderColor: COLORS.border },
+  exportLinkText: { fontFamily: FONT_FAMILY.bodySemi, fontSize: FONT_SIZE.xs, color: COLORS.primary },
 });

@@ -5,10 +5,13 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { MotiView } from 'moti';
-import { supabase } from '../../lib/supabase';
+import { useAuth } from '../../contexts/AuthContext';
+import { attendanceService } from '../../services/attendance.service';
+import { studentService } from '../../services/student.service';
 import { COLORS } from '../../constants/colors';
 import { FONT_FAMILY, FONT_SIZE } from '../../constants/typography';
 import { SPACING, RADIUS } from '../../constants/spacing';
+import { IconBackButton } from '../../components/ui/IconBackButton';
 
 interface AttendanceRecord {
   id: string;
@@ -26,34 +29,32 @@ const STATUS_COLOR: Record<string, string> = {
 };
 
 export default function ParentAttendanceScreen({ navigation, route }: any) {
-  const { studentId, studentName } = route.params ?? {};
+  const { profile } = useAuth();
+  const { studentId: paramStudentId, studentName } = route.params ?? {};
   const [records, setRecords] = useState<AttendanceRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
   const load = async () => {
     try {
-      const { data } = await supabase
-        .from('attendance')
-        .select('id, status, notes, created_at, class_sessions(session_date, topic, classes(name))')
-        .eq('student_id', studentId)
-        .order('created_at', { ascending: false })
-        .limit(60);
+      let studentId = paramStudentId as string | undefined;
+      if (!studentId && profile?.email) {
+        studentId = (await studentService.getFirstStudentRegistrationIdForParentEmail(profile.email)) ?? undefined;
+      }
+      if (!studentId) {
+        setRecords([]);
+        return;
+      }
 
-      setRecords((data ?? []).map((r: any) => ({
-        id: r.id,
-        date: r.class_sessions?.session_date ?? r.created_at?.slice(0, 10) ?? '',
-        status: r.status,
-        note: r.notes,
-        course_name: r.class_sessions?.classes?.name ?? r.class_sessions?.topic ?? null,
-      })));
+      const rows = await attendanceService.listParentAttendanceByStudentsRegistrationId(studentId);
+      setRecords(rows);
     } finally {
       setLoading(false);
       setRefreshing(false);
     }
   };
 
-  useEffect(() => { load(); }, [studentId]);
+  useEffect(() => { load(); }, [paramStudentId, profile?.email]);
 
   const presentCount = records.filter(r => r.status === 'present').length;
   const absentCount = records.filter(r => r.status === 'absent').length;
@@ -64,9 +65,7 @@ export default function ParentAttendanceScreen({ navigation, route }: any) {
     <SafeAreaView style={styles.safe}>
       {/* Header */}
       <View style={styles.header}>
-        <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}>
-          <Text style={styles.backIcon}>←</Text>
-        </TouchableOpacity>
+        <IconBackButton onPress={() => navigation.goBack()} color={COLORS.textPrimary} style={styles.backBtn} />
         <View>
           <Text style={styles.title}>Attendance</Text>
           {studentName && <Text style={styles.subtitle}>{studentName}</Text>}
@@ -152,7 +151,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: SPACING.base, paddingTop: SPACING.md, paddingBottom: SPACING.base, gap: SPACING.md,
   },
   backBtn: { padding: SPACING.xs },
-  backIcon: { fontSize: 22, color: COLORS.textPrimary },
   title: { fontFamily: FONT_FAMILY.display, fontSize: FONT_SIZE['2xl'], color: COLORS.textPrimary },
   subtitle: { fontFamily: FONT_FAMILY.body, fontSize: FONT_SIZE.sm, color: COLORS.textMuted, marginTop: 2 },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingTop: 80 },

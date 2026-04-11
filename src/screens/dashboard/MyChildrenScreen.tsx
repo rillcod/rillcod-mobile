@@ -6,10 +6,16 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { MotiView } from 'moti';
 import { useAuth } from '../../contexts/AuthContext';
-import { supabase } from '../../lib/supabase';
+import { attendanceService } from '../../services/attendance.service';
+import { certificateService } from '../../services/certificate.service';
+import { gradeService } from '../../services/grade.service';
+import { paymentService } from '../../services/payment.service';
+import { studentService } from '../../services/student.service';
 import { COLORS } from '../../constants/colors';
 import { FONT_FAMILY, FONT_SIZE } from '../../constants/typography';
 import { SPACING, RADIUS } from '../../constants/spacing';
+import { IconBackButton } from '../../components/ui/IconBackButton';
+import { ROUTES } from '../../navigation/routes';
 
 interface Child {
   id: string;
@@ -55,54 +61,34 @@ export default function MyChildrenScreen({ navigation }: any) {
   const load = useCallback(async () => {
     if (!profile) return;
     try {
-      const { data } = await supabase
-        .from('students')
-        .select('id, full_name, school_name, grade_level, status, gender, date_of_birth, parent_relationship, user_id')
-        .eq('parent_email', profile.email);
-
-      const kids = (data ?? []) as Child[];
+      const kids = (await studentService.listRegistrationsForParentEmail(profile.email)) as Child[];
       setChildren(kids);
 
-      // Load stats per child
       const stats: Record<string, ChildStats> = {};
-      await Promise.all(kids.map(async child => {
-        const [attRes, invRes, certRes] = await Promise.all([
-          supabase.from('attendance').select('status').eq('student_id', child.id).limit(60),
-          child.user_id
-            ? supabase.from('invoices').select('id', { count: 'exact', head: true })
-                .eq('portal_user_id', child.user_id).in('status', ['pending', 'overdue'])
-            : Promise.resolve({ count: 0 }),
-          child.user_id
-            ? supabase.from('certificates').select('id', { count: 'exact', head: true })
-                .eq('portal_user_id', child.user_id)
-            : Promise.resolve({ count: 0 }),
-        ]);
+      await Promise.all(
+        kids.map(async (child) => {
+          const [attRows, unpaidInvoices, certificates] = await Promise.all([
+            attendanceService.listAttendanceStatusesForStudentsRegistration(child.id, 60),
+            child.user_id ? paymentService.countUnpaidInvoicesForPortalUser(child.user_id) : Promise.resolve(0),
+            child.user_id ? certificateService.countCertificatesForPortalUser(child.user_id) : Promise.resolve(0),
+          ]);
 
-        const att = (attRes as any).data ?? [];
-        const present = att.filter((a: any) => a.status === 'present').length;
-        const attendancePct = att.length > 0 ? Math.round((present / att.length) * 100) : null;
+          const present = attRows.filter((a) => a.status === 'present').length;
+          const attendancePct = attRows.length > 0 ? Math.round((present / attRows.length) * 100) : null;
 
-        stats[child.id] = {
-          attendancePct,
-          lastGrade: null,
-          unpaidInvoices: (invRes as any).count ?? 0,
-          certificates: (certRes as any).count ?? 0,
-        };
+          stats[child.id] = {
+            attendancePct,
+            lastGrade: null,
+            unpaidInvoices,
+            certificates,
+          };
 
-        if (child.user_id) {
-          const gradeRes = await supabase
-            .from('student_progress_reports')
-            .select('overall_grade')
-            .eq('student_id', child.user_id)  // student_progress_reports.student_id = portal_users.id
-            .eq('is_published', true)
-            .order('report_date', { ascending: false })
-            .limit(1)
-            .maybeSingle();
-          if (gradeRes.data?.overall_grade) {
-            stats[child.id].lastGrade = gradeRes.data.overall_grade;
+          if (child.user_id) {
+            const letter = await gradeService.getLatestPublishedOverallGradeForPortalStudent(child.user_id);
+            if (letter) stats[child.id].lastGrade = letter;
           }
-        }
-      }));
+        }),
+      );
 
       setStatsMap(stats);
     } finally {
@@ -125,11 +111,11 @@ export default function MyChildrenScreen({ navigation }: any) {
 
   const QUICK_LINKS = (childId: string, childName: string, userId: string | null) => [
     // ParentResults uses userId (portal_users.id) because student_progress_reports.student_id → portal_users
-    { label: 'Report Card', emoji: '📊', screen: 'ParentResults', params: { studentId: childId, studentName: childName, userId } },
-    { label: 'Attendance', emoji: '📋', screen: 'ParentAttendance', params: { studentId: childId, studentName: childName } },
-    { label: 'Grades', emoji: '🎓', screen: 'ParentGrades', params: { studentId: childId, studentName: childName } },
-    { label: 'Invoices', emoji: '💰', screen: 'ParentInvoices', params: { studentId: childId, studentName: childName } },
-    { label: 'Certificates', emoji: '🏆', screen: 'ParentCertificates', params: { studentId: childId, studentName: childName } },
+    { label: 'Report Card', emoji: '📊', screen: ROUTES.ParentResults, params: { studentId: childId, studentName: childName, userId } },
+    { label: 'Attendance', emoji: '📋', screen: ROUTES.ParentAttendance, params: { studentId: childId, studentName: childName } },
+    { label: 'Grades', emoji: '🎓', screen: ROUTES.ParentGrades, params: { studentId: childId, studentName: childName } },
+    { label: 'Invoices', emoji: '💰', screen: ROUTES.ParentInvoices, params: { studentId: childId, studentName: childName } },
+    { label: 'Certificates', emoji: '🏆', screen: ROUTES.ParentCertificates, params: { studentId: childId, studentName: childName } },
   ];
 
   return (
@@ -147,9 +133,7 @@ export default function MyChildrenScreen({ navigation }: any) {
       >
         {/* Header */}
         <View style={styles.header}>
-          <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}>
-            <Text style={styles.backIcon}>←</Text>
-          </TouchableOpacity>
+          <IconBackButton onPress={() => navigation.goBack()} color={COLORS.textPrimary} style={styles.backBtn} />
           <View>
             <Text style={styles.title}>My Children</Text>
             <Text style={styles.subtitle}>Children linked to your account</Text>
@@ -294,7 +278,6 @@ const styles = StyleSheet.create({
     gap: SPACING.md,
   },
   backBtn: { padding: SPACING.xs },
-  backIcon: { fontSize: 22, color: COLORS.textPrimary },
   title: { fontFamily: FONT_FAMILY.display, fontSize: FONT_SIZE['2xl'], color: COLORS.textPrimary },
   subtitle: { fontFamily: FONT_FAMILY.body, fontSize: FONT_SIZE.sm, color: COLORS.textMuted, marginTop: 2 },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingTop: 80 },

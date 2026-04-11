@@ -7,11 +7,12 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { MotiView } from 'moti';
 import { useAuth } from '../../contexts/AuthContext';
-import { supabase } from '../../lib/supabase';
+import { schoolService } from '../../services/school.service';
 import { COLORS } from '../../constants/colors';
 import { FONT_FAMILY, FONT_SIZE, LETTER_SPACING } from '../../constants/typography';
 import { SPACING, RADIUS } from '../../constants/spacing';
 import { AdminCollectionHeader } from '../../components/ui/AdminCollectionHeader';
+import { ROUTES } from '../../navigation/routes';
 
 interface School {
   id: string;
@@ -34,6 +35,8 @@ const STATUS_COLOR: Record<string, string> = {
 export default function SchoolsScreen({ navigation }: any) {
   const { profile } = useAuth();
   const isAdmin = profile?.role === 'admin';
+  const isTeacher = profile?.role === 'teacher';
+  const canOpenApprovals = isAdmin || isTeacher;
   const [schools, setSchools] = useState<School[]>([]);
   const [filtered, setFiltered] = useState<School[]>([]);
   const [search, setSearch] = useState('');
@@ -49,16 +52,17 @@ export default function SchoolsScreen({ navigation }: any) {
   }), [schools]);
 
   const load = useCallback(async () => {
-    const { data } = await supabase
-      .from('schools')
-      .select('id, name, contact_person, email, phone, address, state, status, created_at')
-      .order('created_at', { ascending: false })
-      .limit(100);
-    if (data) {
+    try {
+      const data = await schoolService.listSchoolsForAdminScreen(100);
       setSchools(data as School[]);
       setFiltered(data as School[]);
+    } catch (e) {
+      console.warn('SchoolsScreen load', e);
+      setSchools([]);
+      setFiltered([]);
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
   }, []);
 
   useEffect(() => { load(); }, [load]);
@@ -86,8 +90,12 @@ export default function SchoolsScreen({ navigation }: any) {
         text: 'Delete',
         style: 'destructive',
         onPress: async () => {
-          const { error } = await supabase.from('schools').delete().eq('id', s.id);
-          if (!error) load();
+          try {
+            await schoolService.deleteSchool(s.id);
+            load();
+          } catch (e: any) {
+            Alert.alert('Error', e?.message ?? 'Could not remove school');
+          }
         },
       },
     ]);
@@ -110,8 +118,8 @@ export default function SchoolsScreen({ navigation }: any) {
         title="Schools"
         subtitle={`${schools.length} partner schools`}
         onBack={() => navigation.goBack()}
-        secondaryAction={isAdmin ? { label: 'Approvals', onPress: () => navigation.navigate('Approvals') } : undefined}
-        primaryAction={isAdmin ? { label: 'Add', onPress: () => navigation.navigate('AddSchool') } : undefined}
+        secondaryAction={canOpenApprovals ? { label: 'Approvals', onPress: () => navigation.navigate(ROUTES.Approvals) } : undefined}
+        primaryAction={isAdmin ? { label: 'Add', onPress: () => navigation.navigate(ROUTES.AddSchool) } : undefined}
         colors={COLORS}
       />
 
@@ -172,7 +180,7 @@ export default function SchoolsScreen({ navigation }: any) {
               animate={{ opacity: 1, translateY: 0 }}
               transition={{ type: 'spring', delay: i * 40 }}
             >
-              <TouchableOpacity style={styles.card} activeOpacity={0.82} onPress={() => navigation.navigate('SchoolDetail', { schoolId: s.id })}>
+              <TouchableOpacity style={styles.card} activeOpacity={0.82} onPress={() => navigation.navigate(ROUTES.SchoolDetail, { schoolId: s.id })}>
                 <LinearGradient colors={[COLORS.info + '08', 'transparent']} style={StyleSheet.absoluteFill} />
                 <View style={styles.cardTop}>
                   <View style={styles.schoolIcon}><Text style={styles.schoolIconText}>SC</Text></View>
@@ -195,16 +203,16 @@ export default function SchoolsScreen({ navigation }: any) {
                   </View>
                 ) : null}
                 <View style={styles.cardActions}>
-                  <TouchableOpacity onPress={() => navigation.navigate('SchoolDetail', { schoolId: s.id })} style={styles.cardAction}>
+                  <TouchableOpacity onPress={() => navigation.navigate(ROUTES.SchoolDetail, { schoolId: s.id })} style={styles.cardAction}>
                     <Text style={styles.cardActionText}>Open</Text>
                   </TouchableOpacity>
                   {isAdmin ? (
-                    <TouchableOpacity onPress={() => navigation.navigate('AddSchool', { schoolId: s.id })} style={styles.cardAction}>
+                    <TouchableOpacity onPress={() => navigation.navigate(ROUTES.AddSchool, { schoolId: s.id })} style={styles.cardAction}>
                       <Text style={styles.cardActionText}>Edit</Text>
                     </TouchableOpacity>
                   ) : null}
-                  {isAdmin && s.status === 'pending' ? (
-                    <TouchableOpacity onPress={() => navigation.navigate('Approvals')} style={styles.cardActionPrimary}>
+                  {canOpenApprovals && s.status === 'pending' ? (
+                    <TouchableOpacity onPress={() => navigation.navigate(ROUTES.Approvals)} style={styles.cardActionPrimary}>
                       <Text style={styles.cardActionPrimaryText}>Review</Text>
                     </TouchableOpacity>
                   ) : null}

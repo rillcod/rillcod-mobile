@@ -1,4 +1,4 @@
-﻿import React, { useEffect, useState, useCallback, useMemo } from 'react';
+import React, { useEffect, useState, useCallback, useMemo } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity,
   TextInput, RefreshControl, ActivityIndicator, Platform, Alert,
@@ -7,11 +7,12 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { MotiView } from 'moti';
 import { useAuth } from '../../contexts/AuthContext';
-import { supabase } from '../../lib/supabase';
+import { teacherService } from '../../services/teacher.service';
 import { COLORS } from '../../constants/colors';
 import { FONT_FAMILY, FONT_SIZE, LETTER_SPACING } from '../../constants/typography';
 import { SPACING, RADIUS } from '../../constants/spacing';
 import { AdminCollectionHeader } from '../../components/ui/AdminCollectionHeader';
+import { ROUTES } from '../../navigation/routes';
 
 interface Teacher {
   id: string;
@@ -21,6 +22,7 @@ interface Teacher {
   school_name: string | null;
   is_active: boolean;
   created_at: string;
+  school_count?: number; // number of schools this teacher is assigned to
 }
 
 function Avatar({ name }: { name: string }) {
@@ -44,28 +46,28 @@ export default function TeachersScreen({ navigation }: any) {
     total: teachers.length,
     live: teachers.filter((teacher) => teacher.is_active).length,
     offline: teachers.filter((teacher) => !teacher.is_active).length,
-    assigned: teachers.filter((teacher) => !!teacher.school_name).length,
+    // multi-school: count teachers with more than one assignment (admin view)
+    multiSchool: teachers.filter((teacher) => (teacher.school_count ?? 0) > 1).length,
   }), [teachers]);
 
   const load = useCallback(async () => {
-    let q = supabase
-      .from('portal_users')
-      .select('id, full_name, email, phone, school_name, is_active, created_at')
-      .eq('role', 'teacher')
-      .order('created_at', { ascending: false })
-      .limit(100);
-
-    if (!isAdmin && profile?.school_id) {
-      q = q.eq('school_id', profile.school_id);
+    try {
+      let teacherData: Teacher[] = [];
+      if (isAdmin) {
+        teacherData = (await teacherService.listTeachersAdminWithSchoolCounts()) as Teacher[];
+      } else if (profile?.school_id) {
+        teacherData = (await teacherService.listTeachersForSchoolPartner(profile.school_id)) as Teacher[];
+      }
+      setTeachers(teacherData);
+      setFiltered(teacherData);
+    } catch (e) {
+      console.warn('TeachersScreen load', e);
+      setTeachers([]);
+      setFiltered([]);
+    } finally {
+      setLoading(false);
     }
-
-    const { data } = await q;
-    if (data) {
-      setTeachers(data as Teacher[]);
-      setFiltered(data as Teacher[]);
-    }
-    setLoading(false);
-  }, [profile, isAdmin]);
+  }, [profile?.school_id, isAdmin]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -91,8 +93,12 @@ export default function TeachersScreen({ navigation }: any) {
         text: 'Delete',
         style: 'destructive',
         onPress: async () => {
-          const { error } = await supabase.from('portal_users').delete().eq('id', t.id);
-          if (!error) load();
+          try {
+            await teacherService.deleteTeacher(t.id);
+            load();
+          } catch (e: any) {
+            Alert.alert('Error', e?.message ?? 'Could not remove teacher');
+          }
         },
       },
     ]);
@@ -113,8 +119,8 @@ export default function TeachersScreen({ navigation }: any) {
         title="Teachers"
         subtitle={`${teachers.length} active records`}
         onBack={() => navigation.goBack()}
-        secondaryAction={isAdmin ? { label: 'Bulk', onPress: () => navigation.navigate('BulkRegister') } : undefined}
-        primaryAction={isAdmin ? { label: 'Add', onPress: () => navigation.navigate('AddTeacher') } : undefined}
+        secondaryAction={isAdmin ? { label: 'Bulk', onPress: () => navigation.navigate(ROUTES.BulkRegister) } : undefined}
+        primaryAction={isAdmin ? { label: 'Add', onPress: () => navigation.navigate(ROUTES.AddTeacher) } : undefined}
         colors={COLORS}
       />
 
@@ -125,11 +131,11 @@ export default function TeachersScreen({ navigation }: any) {
         </View>
         <View style={styles.summaryCard}>
           <Text style={[styles.summaryValue, { color: COLORS.success }]}>{stats.live}</Text>
-          <Text style={styles.summaryLabel}>Live</Text>
+          <Text style={styles.summaryLabel}>Active</Text>
         </View>
         <View style={styles.summaryCard}>
-          <Text style={[styles.summaryValue, { color: COLORS.info }]}>{stats.assigned}</Text>
-          <Text style={styles.summaryLabel}>Assigned</Text>
+          <Text style={[styles.summaryValue, { color: COLORS.info }]}>{stats.multiSchool}</Text>
+          <Text style={styles.summaryLabel}>Multi-School</Text>
         </View>
       </View>
 
@@ -168,16 +174,27 @@ export default function TeachersScreen({ navigation }: any) {
               transition={{ type: 'spring', delay: i * 40 }}
             >
               <View style={styles.card}>
-                <TouchableOpacity style={styles.cardMain} activeOpacity={0.82} onPress={() => navigation.navigate('TeacherDetail', { teacherId: t.id })}>
+                <TouchableOpacity style={styles.cardMain} activeOpacity={0.82} onPress={() => navigation.navigate(ROUTES.TeacherDetail, { teacherId: t.id })}>
                   <LinearGradient colors={[COLORS.info + '10', 'transparent']} style={StyleSheet.absoluteFill} />
                   <Avatar name={t.full_name} />
                   <View style={styles.cardContent}>
                     <Text style={styles.cardName} numberOfLines={1}>{t.full_name}</Text>
                     <Text style={styles.cardEmail} numberOfLines={1}>{t.email}</Text>
                     {t.phone ? <Text style={styles.cardPhone}>{t.phone}</Text> : null}
-                    {t.school_name ? (
-                      <View style={styles.schoolChip}><Text style={styles.schoolChipText}>{t.school_name}</Text></View>
-                    ) : null}
+                    <View style={styles.schoolChipRow}>
+                      {t.school_name ? (
+                        <View style={styles.schoolChip}>
+                          <Text style={styles.schoolChipText} numberOfLines={1}>{t.school_name}</Text>
+                        </View>
+                      ) : null}
+                      {isAdmin && (t.school_count ?? 0) > 1 ? (
+                        <View style={[styles.schoolChip, styles.schoolChipMulti]}>
+                          <Text style={[styles.schoolChipText, { color: COLORS.info }]}>
+                            +{(t.school_count ?? 1) - 1} more school{(t.school_count ?? 1) - 1 > 1 ? 's' : ''}
+                          </Text>
+                        </View>
+                      ) : null}
+                    </View>
                   </View>
                   <View style={styles.actions}>
                     <View style={[styles.statusPill, { backgroundColor: t.is_active ? COLORS.success + '20' : COLORS.error + '20' }]}>
@@ -189,11 +206,11 @@ export default function TeachersScreen({ navigation }: any) {
                   </View>
                 </TouchableOpacity>
                 <View style={styles.cardActions}>
-                  <TouchableOpacity onPress={() => navigation.navigate('TeacherDetail', { teacherId: t.id })} style={styles.cardAction}>
+                  <TouchableOpacity onPress={() => navigation.navigate(ROUTES.TeacherDetail, { teacherId: t.id })} style={styles.cardAction}>
                     <Text style={styles.cardActionText}>Open</Text>
                   </TouchableOpacity>
                   {isAdmin ? (
-                    <TouchableOpacity onPress={() => navigation.navigate('AddTeacher', { teacherId: t.id })} style={styles.cardAction}>
+                    <TouchableOpacity onPress={() => navigation.navigate(ROUTES.AddTeacher, { teacherId: t.id })} style={styles.cardAction}>
                       <Text style={styles.cardActionText}>Edit</Text>
                     </TouchableOpacity>
                   ) : null}
@@ -251,7 +268,9 @@ const styles = StyleSheet.create({
   cardName: { fontFamily: FONT_FAMILY.bodySemi, fontSize: FONT_SIZE.base, color: COLORS.textPrimary },
   cardEmail: { fontFamily: FONT_FAMILY.body, fontSize: FONT_SIZE.xs, color: COLORS.textMuted },
   cardPhone: { fontFamily: FONT_FAMILY.body, fontSize: FONT_SIZE.xs, color: COLORS.textMuted },
-  schoolChip: { backgroundColor: COLORS.border, borderRadius: RADIUS.full, paddingHorizontal: 8, paddingVertical: 2, alignSelf: 'flex-start', marginTop: 4 },
+  schoolChipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 4, marginTop: 4 },
+  schoolChip: { backgroundColor: COLORS.border, borderRadius: RADIUS.full, paddingHorizontal: 8, paddingVertical: 2 },
+  schoolChipMulti: { backgroundColor: COLORS.info + '15', borderWidth: 1, borderColor: COLORS.info + '40' },
   schoolChipText: { fontFamily: FONT_FAMILY.body, fontSize: 10, color: COLORS.textSecondary },
   actions: { alignItems: 'flex-end', gap: 8 },
   cardActions: { flexDirection: 'row', gap: SPACING.sm, paddingHorizontal: 60, paddingBottom: SPACING.md },

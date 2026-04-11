@@ -1,25 +1,35 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  View, Text, ScrollView, TouchableOpacity, StyleSheet,
-  RefreshControl, TextInput, Platform, Dimensions,
+  View,
+  Text,
+  ScrollView,
+  TouchableOpacity,
+  StyleSheet,
+  RefreshControl,
+  TextInput,
+  Platform,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
-import { MotiView, MotiText, AnimatePresence } from 'moti';
-import { BlurView } from 'expo-blur';
+import { Ionicons } from '@expo/vector-icons';
 import { StatusBar } from 'expo-status-bar';
 import { useAuth } from '../../contexts/AuthContext';
-import { supabase } from '../../lib/supabase';
+import { useTheme } from '../../contexts/ThemeContext';
+import { programService } from '../../services/program.service';
+import { courseService } from '../../services/course.service';
 import { OfflineBanner } from '../../components/ui/OfflineBanner';
-import { COLORS } from '../../constants/colors';
+import type { ColorPalette } from '../../constants/colors';
 import { FONT_FAMILY, FONT_SIZE, LETTER_SPACING } from '../../constants/typography';
 import { SPACING, RADIUS, SHADOW } from '../../constants/spacing';
 import { t } from '../../i18n';
 import { useHaptics } from '../../hooks/useHaptics';
 import { useNavigation } from '@react-navigation/native';
+import { ROUTES } from '../../navigation/routes';
+import { searchService } from '../../services/search.service';
+import { assignmentService } from '../../services/assignment.service';
+import { dashboardService } from '../../services/dashboard.service';
 
-const { width } = Dimensions.get('window');
-
-interface Course {
+interface Program {
   id: string;
   name: string;
   description: string | null;
@@ -35,473 +45,731 @@ interface Enrollment {
   status: string;
 }
 
-const LEVEL_COLORS: Record<string, string> = {
-  beginner:     COLORS.success,
-  intermediate: COLORS.gold,
-  advanced:     COLORS.accent,
-};
+type CourseRow = { program_id: string | null; is_locked: boolean | null };
+
+function accentForProgram(id: string, palette: ColorPalette): string {
+  const pool = [palette.primary, palette.info, palette.success, palette.accent];
+  let h = 0;
+  for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) >>> 0;
+  return pool[h % pool.length];
+}
+
+function buildProgramCourseStats(rows: CourseRow[]) {
+  const unlockedByProgram = new Map<string, number>();
+  const totalByProgram = new Map<string, number>();
+  for (const row of rows) {
+    const pid = row.program_id;
+    if (!pid) continue;
+    totalByProgram.set(pid, (totalByProgram.get(pid) ?? 0) + 1);
+    if (!row.is_locked) {
+      unlockedByProgram.set(pid, (unlockedByProgram.get(pid) ?? 0) + 1);
+    }
+  }
+  return { unlockedByProgram, totalByProgram };
+}
 
 export default function LearnScreen() {
   const navigation: any = useNavigation();
   const { profile } = useAuth();
+  const { colors, isDark } = useTheme();
   const { light } = useHaptics();
+  const styles = useMemo(() => getStyles(colors), [colors]);
 
-  const [courses, setCourses] = useState<Course[]>([]);
+  const [programs, setPrograms] = useState<Program[]>([]);
   const [enrollments, setEnrollments] = useState<Enrollment[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [search, setSearch] = useState('');
   const [searchFocused, setSearchFocused] = useState(false);
+  const [catalogHits, setCatalogHits] = useState<{
+    courses: { id: string; title?: string; name?: string }[];
+    programs: { id: string; name?: string }[];
+    teachers: { id: string; full_name?: string }[];
+  } | null>(null);
+  const catalogSearchRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /** Programmes that have at least one unlocked active course (catalogue). */
+  const [publicProgramIds, setPublicProgramIds] = useState<Set<string>>(new Set());
+  const [unlockedByProgram, setUnlockedByProgram] = useState<Map<string, number>>(new Map());
+  const [studentTodoCount, setStudentTodoCount] = useState<number | null>(null);
+  const [nextLessonId, setNextLessonId] = useState<string | null>(null);
+  const [nextLessonTitle, setNextLessonTitle] = useState<string | null>(null);
 
   const loadData = useCallback(async () => {
-    const [courseRes, enrollRes] = await Promise.all([
-      supabase
-        .from('programs')
-        .select('id, name, description, difficulty_level, duration_weeks, is_active')
-        .eq('is_active', true)
-        .order('created_at', { ascending: false }),
-      profile
-        ? supabase
-            .from('enrollments')
-            .select('id, program_id, progress_pct, status')
-            .eq('user_id', profile.id)
-        : Promise.resolve({ data: [] }),
-    ]);
+    try {
+      const [programRows, enrollRows, courseRows] = await Promise.all([
+        programService.listActiveCatalog(),
+        profile ? courseService.listUserEnrollmentsSummary(profile.id) : Promise.resolve([]),
+        courseService.listActiveCourseProgramStats(),
+      ]);
 
-    if (courseRes.data) setCourses(courseRes.data as Course[]);
-    if (enrollRes.data) setEnrollments(enrollRes.data as Enrollment[]);
-    setLoading(false);
-    setRefreshing(false);
+      setPrograms(programRows as Program[]);
+      setEnrollments(enrollRows as Enrollment[]);
+
+      const rows = courseRows as CourseRow[];
+      const visible = new Set(
+        rows.filter((r) => r.program_id && !r.is_locked).map((r) => r.program_id as string),
+      );
+      setPublicProgramIds(visible);
+      const { unlockedByProgram: u } = buildProgramCourseStats(rows);
+      setUnlockedByProgram(u);
+
+      if (profile?.role === 'student' && profile.id) {
+        const [todo, snap] = await Promise.all([
+          assignmentService.countStudentAssignmentsTodo(profile.id),
+          dashboardService.getStudentDashboardSnapshot(profile.id),
+        ]);
+        setStudentTodoCount(todo);
+        const enrRow = (snap.enrollmentRes.data ?? [])[0] as { program_id?: string } | undefined;
+        const pid = enrRow?.program_id;
+        const completedLessonIds = (snap.progressRes.data ?? [])
+          .map((r) => r.lesson_id)
+          .filter((id): id is string => typeof id === 'string' && id.length > 0);
+        if (pid) {
+          const next = await dashboardService.resolveNextLessonInProgram(pid, completedLessonIds);
+          setNextLessonId(next.nextLessonId);
+          setNextLessonTitle(next.nextLessonTitle);
+        } else {
+          setNextLessonId(null);
+          setNextLessonTitle(null);
+        }
+      } else {
+        setStudentTodoCount(null);
+        setNextLessonId(null);
+        setNextLessonTitle(null);
+      }
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
   }, [profile]);
 
-  useEffect(() => { loadData(); }, [loadData]);
+  useEffect(() => {
+    loadData();
+  }, [loadData]);
 
-  const onRefresh = () => { setRefreshing(true); loadData(); };
+  useEffect(() => {
+    const q = search.trim();
+    if (catalogSearchRef.current) clearTimeout(catalogSearchRef.current);
+    if (q.length < 2) {
+      setCatalogHits(null);
+      return;
+    }
+    catalogSearchRef.current = setTimeout(async () => {
+      try {
+        const hits = await searchService.searchAll(q, profile?.school_id ?? undefined);
+        setCatalogHits({
+          courses: (hits.courses ?? []) as { id: string; title?: string }[],
+          programs: (hits.programs ?? []) as { id: string; name?: string }[],
+          teachers: (hits.teachers ?? []) as { id: string; full_name?: string }[],
+        });
+      } catch {
+        setCatalogHits(null);
+      }
+    }, 320);
+    return () => {
+      if (catalogSearchRef.current) clearTimeout(catalogSearchRef.current);
+    };
+  }, [search, profile?.school_id]);
 
-  const getEnrollment = (courseId: string) =>
-    enrollments.find(e => e.program_id === courseId);
+  const onRefresh = () => {
+    setRefreshing(true);
+    loadData();
+  };
 
-  const filtered = courses.filter(c => {
-    const matchSearch = !search.trim() ||
-      c.name.toLowerCase().includes(search.toLowerCase()) ||
-      (c.description ?? '').toLowerCase().includes(search.toLowerCase());
-    return matchSearch;
+  const getEnrollment = (programId: string) => enrollments.find((e) => e.program_id === programId);
+
+  const filtered = programs.filter((p) => {
+    const q = search.trim().toLowerCase();
+    if (!q) return true;
+    return (
+      p.name.toLowerCase().includes(q) || (p.description ?? '').toLowerCase().includes(q)
+    );
   });
 
-  const enrolled  = filtered.filter(c => !!getEnrollment(c.id));
-  const available = filtered.filter(c => !getEnrollment(c.id));
+  const enrolled = filtered.filter((p) => !!getEnrollment(p.id));
+  const available = filtered.filter((p) => !getEnrollment(p.id) && publicProgramIds.has(p.id));
+
+  const headerGradient = (
+    isDark ? [colors.bg, `${colors.primary}12`] : [`${colors.primary}10`, colors.bg]
+  ) as readonly [string, string];
 
   return (
-    <View style={styles.container}>
-      <StatusBar style="light" />
+    <SafeAreaView style={styles.safe} edges={['top']}>
+      <StatusBar style={isDark ? 'light' : 'dark'} />
       <OfflineBanner />
 
-      {/* Header */}
-      <LinearGradient colors={['#0d0510', COLORS.bg]} style={styles.header}>
-        <MotiText
-          from={{ opacity: 0, translateY: -10 }}
-          animate={{ opacity: 1, translateY: 0 }}
-          transition={{ type: 'spring', delay: 60 }}
-          style={styles.headerTitle}
-        >
-          {t('learn.title')}
-        </MotiText>
-        <MotiText
-          from={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          transition={{ type: 'timing', delay: 180 }}
-          style={styles.headerSub}
-        >
-          {courses.length} {t('learn.coursesAvailable')}
-        </MotiText>
+      <LinearGradient colors={headerGradient} style={styles.header}>
+        <Text style={styles.kicker}>{t('learn.kicker')}</Text>
+        <Text style={styles.headerTitle}>{t('learn.title')}</Text>
+        <Text style={styles.headerSub}>
+          {t('learn.programmesCount', { count: programs.length })}
+        </Text>
 
-        {/* Search bar */}
-        <MotiView
-          animate={{
-            borderColor: searchFocused ? COLORS.primaryMid : COLORS.border,
-            backgroundColor: searchFocused ? 'rgba(122,6,6,0.05)' : COLORS.bgCard,
-          }}
-          transition={{ type: 'timing', duration: 180 }}
-          style={styles.searchWrap}
+        <View
+          style={[
+            styles.searchWrap,
+            {
+              borderColor: searchFocused ? colors.primary : colors.border,
+              backgroundColor: colors.bgCard,
+            },
+          ]}
         >
-          <Text style={styles.searchIcon}>🔍</Text>
+          <Ionicons name="search-outline" size={20} color={colors.textMuted} />
           <TextInput
             style={styles.searchInput}
             placeholder={t('learn.searchPlaceholder')}
-            placeholderTextColor={COLORS.textMuted}
+            placeholderTextColor={colors.textMuted}
             value={search}
             onChangeText={setSearch}
             onFocus={() => setSearchFocused(true)}
             onBlur={() => setSearchFocused(false)}
-            selectionColor={COLORS.primaryLight}
+            selectionColor={colors.primary}
             returnKeyType="search"
+            accessibilityLabel={t('learn.searchPlaceholder')}
           />
-          {search.length > 0 && (
-            <TouchableOpacity onPress={() => setSearch('')}>
-              <Text style={{ fontSize: 16, color: COLORS.textMuted }}>✕</Text>
+          {search.length > 0 ? (
+            <TouchableOpacity onPress={() => setSearch('')} hitSlop={12} accessibilityRole="button">
+              <Ionicons name="close-circle" size={22} color={colors.textMuted} />
             </TouchableOpacity>
-          )}
-        </MotiView>
+          ) : null}
+        </View>
       </LinearGradient>
 
       <ScrollView
         contentContainerStyle={styles.scroll}
         showsVerticalScrollIndicator={false}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={COLORS.primary} />}
+        refreshControl={
+          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.primary} />
+        }
       >
         {loading ? (
           <View style={styles.loadingWrap}>
-            {[0, 1, 2].map(i => (
-              <MotiView
-                key={i}
-                from={{ opacity: 0.3 }}
-                animate={{ opacity: 0.7 }}
-                transition={{ type: 'timing', duration: 800, loop: true, delay: i * 200 }}
-                style={styles.skeleton}
-              />
+            {[0, 1, 2].map((i) => (
+              <View key={i} style={[styles.skeleton, { backgroundColor: colors.bgCard }]} />
             ))}
           </View>
         ) : (
           <>
-            {/* Enrolled courses */}
-            {enrolled.length > 0 && (
-              <MotiView
-                from={{ opacity: 0, translateY: 12 }}
-                animate={{ opacity: 1, translateY: 0 }}
-                transition={{ type: 'timing', delay: 100 }}
-              >
-                <Text style={styles.sectionLabel}>{t('learn.myCourses')}</Text>
-                {enrolled.map((course, i) => (
-                  <CourseCard
-                    key={course.id}
-                    course={course}
-                    enrollment={getEnrollment(course.id)}
-                    index={i}
-                    onPress={() => { light(); navigation.navigate('CourseDetail', { programId: course.id, title: course.name }); }}
-                  />
-                ))}
-              </MotiView>
-            )}
-
-            {/* Available courses */}
-            {available.length > 0 && (
-              <MotiView
-                from={{ opacity: 0, translateY: 12 }}
-                animate={{ opacity: 1, translateY: 0 }}
-                transition={{ type: 'timing', delay: 200 }}
-              >
-                <Text style={styles.sectionLabel}>
-                  {enrolled.length > 0 ? t('learn.explore') : t('learn.allCourses')}
+            {profile?.role === 'student' && studentTodoCount !== null ? (
+              <View style={[styles.studentHub, { borderColor: colors.border, backgroundColor: colors.bgCard }]}>
+                <Text style={[styles.sectionLabel, { color: colors.textPrimary }]}>Learning hub</Text>
+                <Text style={[styles.headerSub, { marginBottom: SPACING.md }]}>
+                  Jump to lessons, assignments, and your week — same lanes as the web student Learning Center.
                 </Text>
-                {available.map((course, i) => (
-                  <CourseCard
-                    key={course.id}
-                    course={course}
-                    enrollment={undefined}
-                    index={i}
-                    onPress={() => { light(); navigation.navigate('CourseDetail', { programId: course.id, title: course.name }); }}
+                <View style={styles.hubRow}>
+                  <TouchableOpacity
+                    style={[styles.hubTile, { borderColor: colors.warning + '44', backgroundColor: colors.warning + '10' }]}
+                    onPress={() => {
+                      light();
+                      navigation.navigate(ROUTES.Assignments);
+                    }}
+                    activeOpacity={0.85}
+                  >
+                    <Ionicons name="clipboard-outline" size={22} color={colors.warning} />
+                    <Text style={[styles.hubTileTitle, { color: colors.textPrimary }]}>Assignments</Text>
+                    <Text style={[styles.hubTileSub, { color: colors.textMuted }]}>
+                      {studentTodoCount > 0 ? `${studentTodoCount} to hand in` : 'All caught up'}
+                    </Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[styles.hubTile, { borderColor: colors.info + '44', backgroundColor: colors.info + '10' }]}
+                    onPress={() => {
+                      light();
+                      navigation.navigate(ROUTES.Timetable);
+                    }}
+                    activeOpacity={0.85}
+                  >
+                    <Ionicons name="calendar-outline" size={22} color={colors.info} />
+                    <Text style={[styles.hubTileTitle, { color: colors.textPrimary }]}>My week</Text>
+                    <Text style={[styles.hubTileSub, { color: colors.textMuted }]}>Timetable</Text>
+                  </TouchableOpacity>
+                </View>
+                {nextLessonId ? (
+                  <TouchableOpacity
+                    style={[styles.nextLessonBtn, { borderColor: colors.primary + '50', backgroundColor: colors.primary + '12' }]}
+                    onPress={() => {
+                      light();
+                      navigation.navigate(ROUTES.LessonDetail, { lessonId: nextLessonId });
+                    }}
+                    activeOpacity={0.85}
+                  >
+                    <Ionicons name="play-circle-outline" size={20} color={colors.primary} />
+                    <View style={{ flex: 1, marginLeft: SPACING.sm }}>
+                      <Text style={[styles.hubTileTitle, { color: colors.textPrimary }]}>Next lesson</Text>
+                      <Text style={[styles.hubTileSub, { color: colors.textMuted }]} numberOfLines={2}>
+                        {nextLessonTitle ?? 'Continue'}
+                      </Text>
+                    </View>
+                    <Ionicons name="chevron-forward" size={18} color={colors.textMuted} />
+                  </TouchableOpacity>
+                ) : null}
+              </View>
+            ) : null}
+
+            {catalogHits && search.trim().length >= 2 ? (
+              <View style={[styles.sectionBlock, { marginBottom: SPACING.md }]}>
+                <Text style={styles.sectionLabel}>Catalog search</Text>
+                <Text style={[styles.headerSub, { marginBottom: 8 }]}>
+                  {catalogHits.courses.length} courses · {catalogHits.programs.length} programmes ·{' '}
+                  {catalogHits.teachers.length} teachers
+                </Text>
+                {catalogHits.courses.slice(0, 5).map((c) => (
+                  <TouchableOpacity
+                    key={c.id}
+                    style={[styles.hitRow, { borderColor: colors.border, backgroundColor: colors.bgCard }]}
+                    onPress={() => {
+                      light();
+                      navigation.navigate(ROUTES.Courses, {});
+                    }}
+                  >
+                    <Text style={[styles.hitTitle, { color: colors.textPrimary }]}>{c.title ?? 'Course'}</Text>
+                    <Text style={{ color: colors.textMuted, fontSize: 11 }}>Open courses</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            ) : null}
+
+            {enrolled.length > 0 ? (
+              <View style={styles.sectionBlock}>
+                <Text style={styles.sectionLabel}>{t('learn.myProgrammes')}</Text>
+                {enrolled.map((program) => (
+                  <ProgramCard
+                    key={program.id}
+                    program={program}
+                    enrollment={getEnrollment(program.id)}
+                    accent={accentForProgram(program.id, colors)}
+                    unlockedCourses={unlockedByProgram.get(program.id) ?? 0}
+                    colors={colors}
+                    styles={styles}
+                    onPress={() => {
+                      light();
+                      navigation.navigate(ROUTES.CourseDetail, {
+                        programId: program.id,
+                        title: program.name,
+                      });
+                    }}
                   />
                 ))}
-              </MotiView>
-            )}
+              </View>
+            ) : null}
 
-            {filtered.length === 0 && (
-              <MotiView
-                from={{ opacity: 0, scale: 0.9 }}
-                animate={{ opacity: 1, scale: 1 }}
-                style={styles.emptyWrap}
-              >
-                <Text style={styles.emptyEmoji}>🔭</Text>
-                <Text style={styles.emptyTitle}>{t('learn.noCourses')}</Text>
-                <Text style={styles.emptySub}>{t('learn.noCourseSub')}</Text>
-              </MotiView>
-            )}
+            {available.length > 0 ? (
+              <View style={styles.sectionBlock}>
+                <Text style={styles.sectionLabel}>
+                  {enrolled.length > 0 ? t('learn.exploreProgrammes') : t('learn.allProgrammes')}
+                </Text>
+                {available.map((program) => (
+                  <ProgramCard
+                    key={program.id}
+                    program={program}
+                    enrollment={undefined}
+                    accent={accentForProgram(program.id, colors)}
+                    unlockedCourses={unlockedByProgram.get(program.id) ?? 0}
+                    colors={colors}
+                    styles={styles}
+                    onPress={() => {
+                      light();
+                      navigation.navigate(ROUTES.CourseDetail, {
+                        programId: program.id,
+                        title: program.name,
+                      });
+                    }}
+                  />
+                ))}
+              </View>
+            ) : null}
+
+            {!loading && filtered.length === 0 ? (
+              <View style={styles.emptyWrap}>
+                <View style={[styles.emptyIconWrap, { backgroundColor: `${colors.primary}14` }]}>
+                  <Ionicons name="school-outline" size={40} color={colors.primary} />
+                </View>
+                <Text style={styles.emptyTitle}>{t('learn.noProgrammes')}</Text>
+                <Text style={styles.emptySub}>{t('learn.noProgrammesSub')}</Text>
+              </View>
+            ) : null}
+
+            {!loading &&
+            filtered.length > 0 &&
+            enrolled.length === 0 &&
+            available.length === 0 ? (
+              <View style={styles.emptyWrap}>
+                <View style={[styles.emptyIconWrap, { backgroundColor: `${colors.info}14` }]}>
+                  <Ionicons name="lock-closed-outline" size={36} color={colors.info} />
+                </View>
+                <Text style={styles.emptyTitle}>{t('learn.noneAvailableTitle')}</Text>
+                <Text style={styles.emptySub}>{t('learn.noneAvailableSub')}</Text>
+              </View>
+            ) : null}
           </>
         )}
       </ScrollView>
-    </View>
+    </SafeAreaView>
   );
 }
 
-// ── Course Card ───────────────────────────────────────────────────────────────
-interface CourseCardProps {
-  course: Course;
+interface ProgramCardProps {
+  program: Program;
   enrollment: Enrollment | undefined;
-  index: number;
+  accent: string;
+  unlockedCourses: number;
+  colors: ColorPalette;
+  styles: ReturnType<typeof getStyles>;
   onPress: () => void;
 }
 
-function CourseCard({ course, enrollment, index, onPress }: CourseCardProps) {
+function ProgramCard({
+  program,
+  enrollment,
+  accent,
+  unlockedCourses,
+  colors,
+  styles,
+  onPress,
+}: ProgramCardProps) {
   const progress = enrollment?.progress_pct ?? 0;
-  const lvlColor = LEVEL_COLORS[course.difficulty_level?.toLowerCase() ?? ''] ?? COLORS.textMuted;
-  const grad: [string, string] = ['#0f0a1a', '#1e1050'];
+  const levelLabel = program.difficulty_level
+    ? program.difficulty_level.charAt(0).toUpperCase() + program.difficulty_level.slice(1)
+    : null;
+
+  const ctaLabel = enrollment
+    ? progress > 0
+      ? t('learn.continue')
+      : t('learn.start')
+    : t('learn.openProgramme');
 
   return (
-    <MotiView
-      from={{ opacity: 0, translateX: -20 }}
-      animate={{ opacity: 1, translateX: 0 }}
-      transition={{ type: 'spring', delay: index * 60, damping: 22 }}
-      style={styles.card}
+    <TouchableOpacity
+      activeOpacity={0.92}
+      onPress={onPress}
+      style={[
+        styles.card,
+        {
+          borderColor: colors.border,
+          backgroundColor: colors.bgCard,
+        },
+        Platform.OS === 'web' ? SHADOW.sm : SHADOW.md,
+      ]}
+      accessibilityRole="button"
+      accessibilityLabel={`${program.name}. ${ctaLabel}`}
     >
-      <TouchableOpacity activeOpacity={0.88} onPress={onPress} style={{ overflow: 'hidden', borderRadius: RADIUS['2xl'] }}>
-        <BlurView intensity={12} tint="dark" style={StyleSheet.absoluteFill} />
+      <View style={[styles.cardAccent, { backgroundColor: accent }]} />
 
-        {/* Top banner */}
-        <LinearGradient colors={grad} style={styles.cardBanner}>
-          <Text style={styles.cardBannerEmoji}>📘</Text>
-          {enrollment && (
-            <View style={styles.enrolledBadge}>
-              <Text style={styles.enrolledBadgeText}>✓ Enrolled</Text>
-            </View>
-          )}
-        </LinearGradient>
-
-        <View style={styles.cardBody}>
-          {/* Level + duration row */}
-          <View style={styles.cardMeta}>
-            {course.difficulty_level && (
-              <View style={[styles.lvlChip, { borderColor: lvlColor + '60' }]}>
-                <Text style={[styles.lvlChipText, { color: lvlColor }]}>
-                  {course.difficulty_level.charAt(0).toUpperCase() + course.difficulty_level.slice(1)}
-                </Text>
-              </View>
-            )}
-            {course.duration_weeks && (
-              <Text style={styles.durationText}>⏱ {course.duration_weeks}w</Text>
-            )}
+      <View style={styles.cardInner}>
+        <View style={styles.cardTop}>
+          <View style={[styles.iconTile, { backgroundColor: `${accent}18` }]}>
+            <Ionicons name="library-outline" size={26} color={accent} />
           </View>
-
-          <Text style={styles.cardTitle} numberOfLines={2}>{course.name}</Text>
-
-          {course.description && (
-            <Text style={styles.cardDesc} numberOfLines={2}>{course.description}</Text>
-          )}
-
-          {/* Progress bar (enrolled only) */}
-          {enrollment && (
-            <View style={styles.progressSection}>
-              <View style={styles.progressTrack}>
-                <MotiView
-                  from={{ width: '0%' }}
-                  animate={{ width: `${Math.min(100, progress)}%` as any }}
-                  transition={{ type: 'spring', delay: 300 + index * 60 }}
-                  style={[styles.progressFill, { backgroundColor: lvlColor }]}
-                />
+          <View style={styles.cardTopRight}>
+            {enrollment ? (
+              <View style={[styles.badge, { borderColor: `${colors.success}55`, backgroundColor: `${colors.success}12` }]}>
+                <Ionicons name="checkmark-circle" size={14} color={colors.success} />
+                <Text style={[styles.badgeText, { color: colors.success }]}>{t('learn.enrolled')}</Text>
               </View>
-              <Text style={[styles.progressLabel, { color: lvlColor }]}>{Math.round(progress)}%</Text>
-            </View>
-          )}
-
-          {/* CTA */}
-          <TouchableOpacity activeOpacity={0.8} onPress={onPress} style={styles.ctaBtn}>
-            <LinearGradient
-              colors={enrollment ? [COLORS.primary, COLORS.primaryMid] : ['rgba(255,255,255,0.07)', 'rgba(255,255,255,0.04)']}
-              style={styles.ctaGrad}
-            >
-              <Text style={[styles.ctaText, enrollment ? { color: '#fff' } : { color: COLORS.textSecondary }]}>
-                {enrollment ? (progress > 0 ? '▶ Continue' : '▶ Start') : t('learn.enroll')}
-              </Text>
-            </LinearGradient>
-          </TouchableOpacity>
+            ) : null}
+          </View>
         </View>
-      </TouchableOpacity>
-    </MotiView>
+
+        <View style={styles.metaRow}>
+          {levelLabel ? (
+            <View style={[styles.chip, { borderColor: `${accent}40` }]}>
+              <Text style={[styles.chipText, { color: accent }]}>{levelLabel}</Text>
+            </View>
+          ) : null}
+          {program.duration_weeks ? (
+            <Text style={styles.durationText}>
+              {t('learn.weeksDuration', { count: program.duration_weeks })}
+            </Text>
+          ) : null}
+          {unlockedCourses > 0 ? (
+            <Text style={styles.durationText}>
+              {t('learn.openCourses', { count: unlockedCourses })}
+            </Text>
+          ) : null}
+        </View>
+
+        <Text style={styles.cardTitle} numberOfLines={2}>
+          {program.name}
+        </Text>
+        {program.description ? (
+          <Text style={styles.cardDesc} numberOfLines={2}>
+            {program.description}
+          </Text>
+        ) : null}
+
+        {enrollment ? (
+          <View style={styles.progressSection}>
+            <View style={[styles.progressTrack, { backgroundColor: colors.bg }]}>
+              <View
+                style={[
+                  styles.progressFill,
+                  { width: `${Math.min(100, progress)}%`, backgroundColor: accent },
+                ]}
+              />
+            </View>
+            <Text style={[styles.progressLabel, { color: accent }]}>{Math.round(progress)}%</Text>
+          </View>
+        ) : null}
+
+        <View
+          style={[
+            styles.ctaRow,
+            {
+              borderTopColor: colors.border,
+              backgroundColor: enrollment ? `${colors.primary}10` : colors.bg,
+            },
+          ]}
+        >
+          <Text style={[styles.ctaText, { color: colors.primary }]}>{ctaLabel}</Text>
+          <Ionicons name="chevron-forward" size={18} color={colors.primary} />
+        </View>
+      </View>
+    </TouchableOpacity>
   );
 }
 
-const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: COLORS.bg },
-  header: {
-    paddingTop: Platform.OS === 'ios' ? 48 : 36,
-    paddingHorizontal: SPACING.xl,
-    paddingBottom: SPACING.base,
-  },
-  headerTitle: {
-    fontFamily: FONT_FAMILY.display,
-    fontSize: FONT_SIZE['2xl'],
-    color: COLORS.textPrimary,
-    marginBottom: 4,
-  },
-  headerSub: {
-    fontFamily: FONT_FAMILY.body,
-    fontSize: FONT_SIZE.sm,
-    color: COLORS.textMuted,
-    marginBottom: SPACING.base,
-  },
-  searchWrap: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    borderWidth: 1,
-    borderRadius: RADIUS.xl,
-    paddingHorizontal: SPACING.md,
-    gap: SPACING.sm,
-  },
-  searchIcon: { fontSize: 16 },
-  searchInput: {
-    flex: 1,
-    paddingVertical: 12,
-    fontFamily: FONT_FAMILY.body,
-    fontSize: FONT_SIZE.base,
-    color: COLORS.textPrimary,
-  },
-  filtersScroll: { maxHeight: 52 },
-  filtersRow: {
-    paddingHorizontal: SPACING.xl,
-    paddingVertical: SPACING.sm,
-    gap: 8,
-  },
-  filterChip: {
-    borderWidth: 1,
-    borderRadius: RADIUS.full,
-    paddingHorizontal: SPACING.md,
-    paddingVertical: 7,
-  },
-  filterText: {
-    fontFamily: FONT_FAMILY.bodySemi,
-    fontSize: FONT_SIZE.xs,
-    color: COLORS.textSecondary,
-  },
-  filterTextActive: { color: '#fff' },
-  scroll: { paddingHorizontal: SPACING.xl, paddingTop: SPACING.xs, paddingBottom: 24 },
-  sectionLabel: {
-    fontFamily: FONT_FAMILY.bodySemi,
-    fontSize: FONT_SIZE.xs,
-    color: COLORS.textSecondary,
-    textTransform: 'uppercase',
-    letterSpacing: LETTER_SPACING.wider,
-    marginBottom: SPACING.md,
-    marginTop: SPACING.sm,
-  },
-  card: {
-    borderRadius: RADIUS['2xl'],
-    overflow: 'hidden',
-    borderWidth: 1,
-    borderColor: COLORS.border,
-    marginBottom: SPACING.base,
-    ...SHADOW.md,
-  },
-  cardBanner: {
-    height: 90,
-    alignItems: 'flex-end',
-    justifyContent: 'space-between',
-    flexDirection: 'row',
-    paddingHorizontal: SPACING.lg,
-    paddingBottom: SPACING.md,
-    paddingTop: SPACING.md,
-  },
-  cardBannerEmoji: { fontSize: 44, opacity: 0.9 },
-  enrolledBadge: {
-    backgroundColor: 'rgba(16,185,129,0.2)',
-    borderWidth: 1,
-    borderColor: 'rgba(16,185,129,0.4)',
-    borderRadius: RADIUS.full,
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-  },
-  enrolledBadgeText: {
-    fontFamily: FONT_FAMILY.bodySemi,
-    fontSize: FONT_SIZE.xs,
-    color: '#34d399',
-  },
-  cardBody: { padding: SPACING.lg },
-  cardMeta: { flexDirection: 'row', alignItems: 'center', gap: 7, marginBottom: SPACING.sm, flexWrap: 'wrap' },
-  catChip: {
-    backgroundColor: COLORS.primaryPale,
-    borderRadius: RADIUS.full,
-    paddingHorizontal: 9,
-    paddingVertical: 3,
-  },
-  catChipText: {
-    fontFamily: FONT_FAMILY.bodySemi,
-    fontSize: 10,
-    color: COLORS.primaryLight,
-  },
-  lvlChip: {
-    borderWidth: 1,
-    borderRadius: RADIUS.full,
-    paddingHorizontal: 9,
-    paddingVertical: 3,
-  },
-  lvlChipText: {
-    fontFamily: FONT_FAMILY.bodySemi,
-    fontSize: 10,
-  },
-  durationText: {
-    fontFamily: FONT_FAMILY.body,
-    fontSize: 10,
-    color: COLORS.textMuted,
-  },
-  cardTitle: {
-    fontFamily: FONT_FAMILY.display,
-    fontSize: FONT_SIZE.lg,
-    color: COLORS.textPrimary,
-    lineHeight: FONT_SIZE.lg * 1.25,
-    marginBottom: SPACING.xs,
-  },
-  cardDesc: {
-    fontFamily: FONT_FAMILY.body,
-    fontSize: FONT_SIZE.sm,
-    color: COLORS.textSecondary,
-    lineHeight: FONT_SIZE.sm * 1.6,
-    marginBottom: SPACING.md,
-  },
-  progressSection: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: SPACING.sm,
-    marginBottom: SPACING.md,
-  },
-  progressTrack: {
-    flex: 1,
-    height: 4,
-    backgroundColor: COLORS.bgCard,
-    borderRadius: RADIUS.full,
-    overflow: 'hidden',
-  },
-  progressFill: {
-    height: '100%',
-    borderRadius: RADIUS.full,
-  },
-  progressLabel: {
-    fontFamily: FONT_FAMILY.bodySemi,
-    fontSize: FONT_SIZE.xs,
-    minWidth: 32,
-    textAlign: 'right',
-  },
-  ctaBtn: { borderRadius: RADIUS.md, overflow: 'hidden' },
-  ctaGrad: {
-    paddingVertical: 11,
-    alignItems: 'center',
-  },
-  ctaText: {
-    fontFamily: FONT_FAMILY.bodySemi,
-    fontSize: FONT_SIZE.sm,
-    letterSpacing: LETTER_SPACING.wide,
-  },
-  loadingWrap: { gap: SPACING.base, marginTop: SPACING.base },
-  skeleton: {
-    height: 200,
-    borderRadius: RADIUS['2xl'],
-    backgroundColor: COLORS.bgCard,
-  },
-  emptyWrap: {
-    alignItems: 'center',
-    paddingTop: 40,
-    paddingBottom: 24,
-  },
-  emptyEmoji: { fontSize: 56, marginBottom: SPACING.lg },
-  emptyTitle: {
-    fontFamily: FONT_FAMILY.display,
-    fontSize: FONT_SIZE.xl,
-    color: COLORS.textPrimary,
-    marginBottom: SPACING.sm,
-  },
-  emptySub: {
-    fontFamily: FONT_FAMILY.body,
-    fontSize: FONT_SIZE.base,
-    color: COLORS.textMuted,
-    textAlign: 'center',
-    maxWidth: width * 0.7,
-    lineHeight: FONT_SIZE.base * 1.6,
-  },
-});
+const getStyles = (colors: ColorPalette) =>
+  StyleSheet.create({
+    safe: { flex: 1, backgroundColor: colors.bg },
+    header: {
+      paddingHorizontal: SPACING.xl,
+      paddingTop: SPACING.sm,
+      paddingBottom: SPACING.lg,
+    },
+    kicker: {
+      fontFamily: FONT_FAMILY.bodyBold,
+      fontSize: 10,
+      letterSpacing: LETTER_SPACING.wider,
+      color: colors.textMuted,
+      textTransform: 'uppercase',
+      marginBottom: 4,
+    },
+    headerTitle: {
+      fontFamily: FONT_FAMILY.display,
+      fontSize: FONT_SIZE['2xl'],
+      color: colors.textPrimary,
+      marginBottom: 4,
+    },
+    headerSub: {
+      fontFamily: FONT_FAMILY.body,
+      fontSize: FONT_SIZE.sm,
+      color: colors.textSecondary,
+      marginBottom: SPACING.md,
+    },
+    searchWrap: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      borderWidth: 1,
+      borderRadius: RADIUS.xl,
+      paddingHorizontal: SPACING.md,
+      gap: SPACING.sm,
+    },
+    searchInput: {
+      flex: 1,
+      paddingVertical: Platform.OS === 'web' ? 10 : 12,
+      fontFamily: FONT_FAMILY.body,
+      fontSize: FONT_SIZE.base,
+      color: colors.textPrimary,
+    },
+    scroll: {
+      paddingHorizontal: SPACING.xl,
+      paddingTop: SPACING.md,
+      paddingBottom: SPACING['3xl'],
+    },
+    sectionBlock: { marginBottom: SPACING.sm },
+    studentHub: {
+      borderWidth: 1,
+      borderRadius: RADIUS.xl,
+      padding: SPACING.lg,
+      marginBottom: SPACING.lg,
+    },
+    hubRow: { flexDirection: 'row', gap: SPACING.md },
+    hubTile: {
+      flex: 1,
+      minWidth: 140,
+      borderWidth: 1,
+      borderRadius: RADIUS.lg,
+      padding: SPACING.md,
+      gap: 6,
+    },
+    hubTileTitle: { fontFamily: FONT_FAMILY.bodySemi, fontSize: FONT_SIZE.sm },
+    hubTileSub: { fontFamily: FONT_FAMILY.body, fontSize: FONT_SIZE.xs },
+    nextLessonBtn: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      marginTop: SPACING.md,
+      padding: SPACING.md,
+      borderRadius: RADIUS.lg,
+      borderWidth: 1,
+    },
+    sectionLabel: {
+      fontFamily: FONT_FAMILY.bodySemi,
+      fontSize: FONT_SIZE.xs,
+      color: colors.textMuted,
+      textTransform: 'uppercase',
+      letterSpacing: LETTER_SPACING.wider,
+      marginBottom: SPACING.md,
+    },
+    hitRow: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      padding: SPACING.md,
+      borderRadius: RADIUS.lg,
+      borderWidth: 1,
+      marginBottom: SPACING.xs,
+    },
+    hitTitle: { fontFamily: FONT_FAMILY.bodySemi, fontSize: FONT_SIZE.sm, flex: 1 },
+    card: {
+      borderRadius: RADIUS.xl,
+      borderWidth: 1,
+      marginBottom: SPACING.base,
+      overflow: 'hidden',
+      position: 'relative',
+    },
+    cardAccent: {
+      position: 'absolute',
+      left: 0,
+      top: 0,
+      bottom: 0,
+      width: 4,
+    },
+    cardInner: {
+      padding: SPACING.lg,
+      paddingLeft: SPACING.lg + 2,
+    },
+    cardTop: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'flex-start',
+      marginBottom: SPACING.sm,
+    },
+    iconTile: {
+      width: 48,
+      height: 48,
+      borderRadius: RADIUS.lg,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    cardTopRight: { alignItems: 'flex-end' },
+    badge: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 4,
+      borderWidth: 1,
+      borderRadius: RADIUS.full,
+      paddingHorizontal: 10,
+      paddingVertical: 4,
+    },
+    badgeText: {
+      fontFamily: FONT_FAMILY.bodySemi,
+      fontSize: FONT_SIZE.xs,
+    },
+    metaRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      flexWrap: 'wrap',
+      gap: 8,
+      marginBottom: SPACING.sm,
+    },
+    chip: {
+      borderWidth: 1,
+      borderRadius: RADIUS.full,
+      paddingHorizontal: 10,
+      paddingVertical: 4,
+    },
+    chipText: {
+      fontFamily: FONT_FAMILY.bodySemi,
+      fontSize: 10,
+    },
+    durationText: {
+      fontFamily: FONT_FAMILY.body,
+      fontSize: 11,
+      color: colors.textMuted,
+    },
+    cardTitle: {
+      fontFamily: FONT_FAMILY.display,
+      fontSize: FONT_SIZE.lg,
+      color: colors.textPrimary,
+      lineHeight: FONT_SIZE.lg * 1.25,
+      marginBottom: SPACING.xs,
+    },
+    cardDesc: {
+      fontFamily: FONT_FAMILY.body,
+      fontSize: FONT_SIZE.sm,
+      color: colors.textSecondary,
+      lineHeight: FONT_SIZE.sm * 1.55,
+      marginBottom: SPACING.md,
+    },
+    progressSection: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: SPACING.sm,
+      marginBottom: SPACING.md,
+    },
+    progressTrack: {
+      flex: 1,
+      height: 5,
+      borderRadius: RADIUS.full,
+      overflow: 'hidden',
+    },
+    progressFill: {
+      height: '100%',
+      borderRadius: RADIUS.full,
+    },
+    progressLabel: {
+      fontFamily: FONT_FAMILY.bodySemi,
+      fontSize: FONT_SIZE.xs,
+      minWidth: 36,
+      textAlign: 'right',
+    },
+    ctaRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      marginHorizontal: -SPACING.lg,
+      marginBottom: -SPACING.lg,
+      marginTop: SPACING.xs,
+      paddingHorizontal: SPACING.lg,
+      paddingVertical: SPACING.md,
+      borderTopWidth: StyleSheet.hairlineWidth,
+      backgroundColor: colors.bg,
+    },
+    ctaText: {
+      fontFamily: FONT_FAMILY.bodySemi,
+      fontSize: FONT_SIZE.sm,
+      letterSpacing: 0.3,
+    },
+    loadingWrap: { gap: SPACING.base, marginTop: SPACING.sm },
+    skeleton: {
+      height: 168,
+      borderRadius: RADIUS.xl,
+    },
+    emptyWrap: {
+      alignItems: 'center',
+      paddingTop: 48,
+      paddingBottom: 24,
+    },
+    emptyIconWrap: {
+      width: 88,
+      height: 88,
+      borderRadius: 44,
+      alignItems: 'center',
+      justifyContent: 'center',
+      marginBottom: SPACING.lg,
+    },
+    emptyTitle: {
+      fontFamily: FONT_FAMILY.display,
+      fontSize: FONT_SIZE.xl,
+      color: colors.textPrimary,
+      marginBottom: SPACING.sm,
+    },
+    emptySub: {
+      fontFamily: FONT_FAMILY.body,
+      fontSize: FONT_SIZE.base,
+      color: colors.textMuted,
+      textAlign: 'center',
+      maxWidth: 320,
+      lineHeight: FONT_SIZE.base * 1.55,
+    },
+  });

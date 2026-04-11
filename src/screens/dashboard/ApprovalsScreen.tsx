@@ -1,4 +1,4 @@
-﻿import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   View,
   Text,
@@ -14,12 +14,14 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { MotiView } from 'moti';
 import * as Print from 'expo-print';
 import * as Sharing from 'expo-sharing';
-import { supabase } from '../../lib/supabase';
+import { approvalService } from '../../services/approval.service';
 import { useAuth } from '../../contexts/AuthContext';
 import { COLORS } from '../../constants/colors';
 import { FONT_FAMILY, FONT_SIZE, LETTER_SPACING } from '../../constants/typography';
 import { SPACING, RADIUS } from '../../constants/spacing';
 import { AdminCollectionHeader } from '../../components/ui/AdminCollectionHeader';
+import { ROUTES } from '../../navigation/routes';
+import { RoleGuard } from '../../components/ui/RoleGuard';
 
 type Tab = 'students' | 'schools' | 'prospective';
 
@@ -27,6 +29,7 @@ interface PendingStudent {
   id: string;
   full_name: string;
   student_email: string | null;
+  parent_email: string | null;
   parent_name: string | null;
   parent_phone: string | null;
   school_id: string | null;
@@ -34,6 +37,7 @@ interface PendingStudent {
   current_class: string | null;
   grade_level: string | null;
   enrollment_type: string | null;
+  goals: string | null;
   created_at: string;
   status: string;
 }
@@ -165,6 +169,7 @@ export default function ApprovalsScreen({ navigation }: any) {
   const [credentials, setCredentials] = useState<Credentials | null>(null);
   const [exportingCredentials, setExportingCredentials] = useState(false);
   const isAdmin = profile?.role === 'admin';
+  const isTeacher = profile?.role === 'teacher';
 
   const shareCredentials = useCallback(async () => {
     if (!credentials) return;
@@ -224,32 +229,16 @@ export default function ApprovalsScreen({ navigation }: any) {
   }, [credentials]);
 
   const load = useCallback(async () => {
-    const [stuRes, schRes, proRes] = await Promise.all([
-      supabase
-        .from('students')
-        .select('id, full_name, student_email, parent_name, parent_phone, school_id, school_name, current_class, grade_level, enrollment_type, created_at, status')
-        .eq('status', 'pending')
-        .is('is_deleted', false)
-        .order('created_at', { ascending: false })
-        .limit(50),
-      supabase
-        .from('schools')
-        .select('id, name, email, phone, city, state, contact_person, student_count, school_type, status, created_at')
-        .eq('status', 'pending')
-        .order('created_at', { ascending: false })
-        .limit(50),
-      supabase
-        .from('prospective_students')
-        .select('id, full_name, parent_email, parent_phone, school_name, grade, course_interest, created_at')
-        .eq('is_active', false)
-        .order('created_at', { ascending: false })
-        .limit(50),
-    ]);
-
-    setStudents((stuRes.data ?? []) as PendingStudent[]);
-    setSchools((schRes.data ?? []) as PendingSchool[]);
-    setProspective((proRes.data ?? []) as ProspectiveStudent[]);
-    setLoading(false);
+    try {
+      const { pendingStudents, pendingSchools, prospective: prospects } = await approvalService.loadApprovalsQueues();
+      setStudents(pendingStudents as PendingStudent[]);
+      setSchools(pendingSchools as PendingSchool[]);
+      setProspective(prospects as ProspectiveStudent[]);
+    } catch (e: any) {
+      Alert.alert('Load failed', e?.message ?? 'Could not load approvals');
+    } finally {
+      setLoading(false);
+    }
   }, []);
 
   useEffect(() => {
@@ -269,41 +258,34 @@ export default function ApprovalsScreen({ navigation }: any) {
         text: 'Approve',
         onPress: async () => {
           setProcessing(student.id);
-          const email = student.student_email ?? `student_${student.id.slice(0, 6)}@rillcod.school`;
+          const rawEmail = (student.student_email || student.parent_email || '').trim();
+          const email = rawEmail || `student_${student.id.slice(0, 6)}@rillcod.school`;
           const password = genPassword();
 
-          await supabase.from('students').update({
-            status: 'approved',
-            approved_at: new Date().toISOString(),
-            approved_by: profile?.id ?? null,
-            updated_at: new Date().toISOString(),
-          }).eq('id', student.id);
-          const { data: portalUser } = await supabase.from('portal_users').upsert(
-            {
+          try {
+            const { portalUserId } = await approvalService.approvePendingStudentWithAuth({
+              student,
               email,
-              full_name: student.full_name,
-              role: 'student',
-              is_active: true,
-              is_deleted: false,
-              student_id: student.id,
-              school_id: student.school_id,
-              school_name: student.school_name,
-              section_class: student.current_class,
-              enrollment_type: student.enrollment_type,
-            },
-            { onConflict: 'email' }
-          ).select('id').single();
+              password,
+              approvedBy: profile?.id ?? null,
+            });
 
-          setStudents((prev) => prev.filter((item) => item.id !== student.id));
-          setCredentials({
-            email,
-            password,
-            name: student.full_name,
-            roleLabel: 'Student account',
-            targetLabel: 'Open Student',
-            onOpenTarget: portalUser?.id ? () => navigation.navigate('StudentDetail', { studentId: portalUser.id }) : () => navigation.navigate('Students'),
-          });
-          setProcessing(null);
+            setStudents((prev) => prev.filter((item) => item.id !== student.id));
+            setCredentials({
+              email,
+              password,
+              name: student.full_name,
+              roleLabel: 'Student account',
+              targetLabel: 'Open Student',
+              onOpenTarget: portalUserId
+                ? () => navigation.navigate(ROUTES.StudentDetail, { studentId: portalUserId })
+                : () => navigation.navigate(ROUTES.Students),
+            });
+          } catch (err: any) {
+            Alert.alert('Approval Failed', err?.message ?? 'Unknown error');
+          } finally {
+            setProcessing(null);
+          }
         },
       },
     ]);
@@ -317,12 +299,14 @@ export default function ApprovalsScreen({ navigation }: any) {
         style: 'destructive',
         onPress: async () => {
           setProcessing(student.id);
-          await supabase.from('students').update({
-            status: 'rejected',
-            updated_at: new Date().toISOString(),
-          }).eq('id', student.id);
-          setStudents((prev) => prev.filter((item) => item.id !== student.id));
-          setProcessing(null);
+          try {
+            await approvalService.rejectPendingStudent(student.id);
+            setStudents((prev) => prev.filter((item) => item.id !== student.id));
+          } catch (err: any) {
+            Alert.alert('Reject failed', err?.message ?? 'Unknown error');
+          } finally {
+            setProcessing(null);
+          }
         },
       },
     ]);
@@ -338,34 +322,23 @@ export default function ApprovalsScreen({ navigation }: any) {
           const email = school.email ?? `school_${school.id.slice(0, 6)}@rillcod.school`;
           const password = genPassword();
 
-          await supabase.from('schools').update({
-            status: 'approved',
-            is_active: true,
-            updated_at: new Date().toISOString(),
-          }).eq('id', school.id);
-          await supabase.from('portal_users').upsert(
-            {
-              email,
-              full_name: school.contact_person ?? school.name,
-              role: 'school',
-              is_active: true,
-              is_deleted: false,
-              school_id: school.id,
-              school_name: school.name,
-            },
-            { onConflict: 'email' }
-          );
+          try {
+            await approvalService.approvePendingSchoolWithAuth({ school, email, password });
 
-          setSchools((prev) => prev.filter((item) => item.id !== school.id));
-          setCredentials({
-            email,
-            password,
-            name: school.name,
-            roleLabel: 'School account',
-            targetLabel: 'Open School',
-            onOpenTarget: () => navigation.navigate('SchoolDetail', { schoolId: school.id }),
-          });
-          setProcessing(null);
+            setSchools((prev) => prev.filter((item) => item.id !== school.id));
+            setCredentials({
+              email,
+              password,
+              name: school.name,
+              roleLabel: 'School account',
+              targetLabel: 'Open School',
+              onOpenTarget: () => navigation.navigate(ROUTES.SchoolDetail, { schoolId: school.id }),
+            });
+          } catch (err: any) {
+            Alert.alert('Approval Failed', err?.message ?? 'Unknown error');
+          } finally {
+            setProcessing(null);
+          }
         },
       },
     ]);
@@ -379,13 +352,14 @@ export default function ApprovalsScreen({ navigation }: any) {
         style: 'destructive',
         onPress: async () => {
           setProcessing(school.id);
-          await supabase.from('schools').update({
-            status: 'rejected',
-            is_deleted: true,
-            updated_at: new Date().toISOString(),
-          }).eq('id', school.id);
-          setSchools((prev) => prev.filter((item) => item.id !== school.id));
-          setProcessing(null);
+          try {
+            await approvalService.rejectPendingSchool(school.id);
+            setSchools((prev) => prev.filter((item) => item.id !== school.id));
+          } catch (err: any) {
+            Alert.alert('Reject failed', err?.message ?? 'Unknown error');
+          } finally {
+            setProcessing(null);
+          }
         },
       },
     ]);
@@ -398,9 +372,35 @@ export default function ApprovalsScreen({ navigation }: any) {
         text: 'Accept',
         onPress: async () => {
           setProcessing(student.id);
-          await supabase.from('prospective_students').update({ is_active: true }).eq('id', student.id);
-          setProspective((prev) => prev.filter((item) => item.id !== student.id));
-          setProcessing(null);
+          try {
+            await approvalService.activateProspectiveStudent(student.id);
+            setProspective((prev) => prev.filter((item) => item.id !== student.id));
+          } catch (err: any) {
+            Alert.alert('Accept failed', err?.message ?? 'Unknown error');
+          } finally {
+            setProcessing(null);
+          }
+        },
+      },
+    ]);
+  };
+
+  const rejectProspective = (student: ProspectiveStudent) => {
+    Alert.alert('Reject prospect', `Dismiss ${student.full_name} from the summer-school queue?`, [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Reject',
+        style: 'destructive',
+        onPress: async () => {
+          setProcessing(student.id);
+          try {
+            await approvalService.rejectProspectiveStudent(student.id);
+            setProspective((prev) => prev.filter((item) => item.id !== student.id));
+          } catch (err: any) {
+            Alert.alert('Reject failed', err?.message ?? 'Unknown error');
+          } finally {
+            setProcessing(null);
+          }
         },
       },
     ]);
@@ -409,8 +409,8 @@ export default function ApprovalsScreen({ navigation }: any) {
   const tabs = useMemo(
     () => [
       { key: 'students' as Tab, label: 'Students', count: students.length, code: 'ST' },
+      { key: 'prospective' as Tab, label: 'Summer', count: prospective.length, code: 'PR' },
       ...(isAdmin ? [{ key: 'schools' as Tab, label: 'Schools', count: schools.length, code: 'SC' }] : []),
-      { key: 'prospective' as Tab, label: 'Prospects', count: prospective.length, code: 'PR' },
     ],
     [isAdmin, students.length, schools.length, prospective.length]
   );
@@ -427,10 +427,11 @@ export default function ApprovalsScreen({ navigation }: any) {
   }
 
   return (
+    <RoleGuard allow={['admin', 'teacher']} navigation={navigation}>
     <SafeAreaView style={styles.safe}>
       <AdminCollectionHeader
         title="Approvals"
-        subtitle={`${totalPending} pending items across onboarding`}
+        subtitle={`${totalPending} pending · queue oldest-first · ${isAdmin ? 'admin' : isTeacher ? 'teacher' : 'staff'}`}
         onBack={() => navigation.goBack()}
         colors={COLORS}
       />
@@ -490,7 +491,9 @@ export default function ApprovalsScreen({ navigation }: any) {
                     </View>
                     <View style={styles.cardBody}>
                       <Text style={styles.cardTitle}>{student.full_name}</Text>
-                      <Text style={styles.cardSub}>{student.student_email ?? 'Portal email will be generated'}</Text>
+                      <Text style={styles.cardSub}>
+                        {student.student_email?.trim() || student.parent_email?.trim() || 'Portal email will be generated'}
+                      </Text>
                     </View>
                     <Text style={styles.cardTime}>{timeAgo(student.created_at)}</Text>
                   </View>
@@ -502,9 +505,16 @@ export default function ApprovalsScreen({ navigation }: any) {
                     {student.enrollment_type ? <Chip label={student.enrollment_type} color={COLORS.success} /> : null}
                   </View>
 
-                  {student.parent_name || student.parent_phone ? (
+                  {student.goals ? (
+                    <Text style={styles.supportingText} numberOfLines={2}>
+                      Goal: {student.goals}
+                    </Text>
+                  ) : null}
+                  {student.parent_name || student.parent_phone || student.parent_email ? (
                     <Text style={styles.supportingText}>
-                      Parent: {student.parent_name ?? 'Unknown'}{student.parent_phone ? ` · ${student.parent_phone}` : ''}
+                      Parent: {student.parent_name ?? 'Unknown'}
+                      {student.parent_email ? ` · ${student.parent_email}` : ''}
+                      {student.parent_phone ? ` · ${student.parent_phone}` : ''}
                     </Text>
                   ) : null}
 
@@ -623,17 +633,26 @@ export default function ApprovalsScreen({ navigation }: any) {
 
                   {student.parent_phone ? <Text style={styles.supportingText}>Phone: {student.parent_phone}</Text> : null}
 
-                  <TouchableOpacity
-                    onPress={() => approveProspective(student)}
-                    disabled={processing === student.id}
-                    style={[styles.acceptButton, processing === student.id && styles.buttonDisabled]}
-                  >
-                    {processing === student.id ? (
-                      <ActivityIndicator color={COLORS.white100} size="small" />
-                    ) : (
-                      <Text style={styles.acceptText}>Accept Prospect</Text>
-                    )}
-                  </TouchableOpacity>
+                  <View style={styles.actionRow}>
+                    <TouchableOpacity
+                      onPress={() => rejectProspective(student)}
+                      disabled={processing === student.id}
+                      style={[styles.rejectButton, processing === student.id && styles.buttonDisabled]}
+                    >
+                      <Text style={styles.rejectText}>Reject</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      onPress={() => approveProspective(student)}
+                      disabled={processing === student.id}
+                      style={[styles.approveButton, processing === student.id && styles.buttonDisabled]}
+                    >
+                      {processing === student.id ? (
+                        <ActivityIndicator color={COLORS.white100} size="small" />
+                      ) : (
+                        <Text style={styles.approveText}>Approve</Text>
+                      )}
+                    </TouchableOpacity>
+                  </View>
                 </View>
               </MotiView>
             ))
@@ -651,6 +670,7 @@ export default function ApprovalsScreen({ navigation }: any) {
         />
       ) : null}
     </SafeAreaView>
+    </RoleGuard>
   );
 }
 

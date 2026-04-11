@@ -1,15 +1,19 @@
-﻿import React, { useEffect, useState, useCallback, useMemo } from 'react';
+import React, { useEffect, useState, useCallback, useMemo } from 'react';
 import {
   View, Text, StyleSheet, FlatList, TouchableOpacity,
   RefreshControl, ActivityIndicator, ScrollView, TextInput,
+  Alert,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { MotiView } from 'moti';
 import { useAuth } from '../../contexts/AuthContext';
-import { supabase } from '../../lib/supabase';
+import { assignmentService } from '../../services/assignment.service';
 import { COLORS } from '../../constants/colors';
 import { FONT_FAMILY, FONT_SIZE } from '../../constants/typography';
 import { SPACING, RADIUS } from '../../constants/spacing';
+import { IconBackButton } from '../../components/ui/IconBackButton';
+import { Ionicons } from '@expo/vector-icons';
+import { ROUTES } from '../../navigation/routes';
 
 interface CourseSummary {
   title: string | null;
@@ -71,83 +75,19 @@ export default function AssignmentsScreen({ navigation }: any) {
   const load = useCallback(async () => {
     if (!profile) return;
     try {
-      if (isStaff) {
-        const { data } = await supabase
-          .from('assignments')
-          .select(`
-            id, title, description, due_date, max_points, assignment_type, is_active,
-            courses(title, programs(name)),
-            assignment_submissions(id, status)
-          `)
-          .order('created_at', { ascending: false })
-          .limit(80);
-
-        const mapped = ((data ?? []) as any[]).map((assignment) => {
-          const submissions = Array.isArray(assignment.assignment_submissions) ? assignment.assignment_submissions : [];
-          const submittedCount = submissions.filter((sub: any) => sub.status === 'submitted').length;
-          const gradedCount = submissions.filter((sub: any) => sub.status === 'graded').length;
-          return {
-            id: assignment.id,
-            title: assignment.title,
-            description: assignment.description ?? null,
-            due_date: assignment.due_date ?? null,
-            max_points: assignment.max_points ?? null,
-            assignment_type: assignment.assignment_type ?? null,
-            is_active: assignment.is_active ?? true,
-            course: assignment.courses ?? null,
-            submissionCount: submissions.length,
-            submittedCount,
-            gradedCount,
-          } as AssignmentCard;
-        });
-
-        setAssignments(mapped);
-      } else {
-        const { data: submissions } = await supabase
-          .from('assignment_submissions')
-          .select('id, assignment_id, status, grade, feedback, submitted_at')
-          .eq('portal_user_id', profile.id);
-
-        const subMap: Record<string, SubmissionSummary> = {};
-        ((submissions ?? []) as any[]).forEach((submission) => {
-          if (submission.assignment_id) {
-            subMap[submission.assignment_id] = {
-              id: submission.id,
-              assignment_id: submission.assignment_id,
-              status: submission.status ?? 'pending',
-              grade: submission.grade ?? null,
-              feedback: submission.feedback ?? null,
-              submitted_at: submission.submitted_at ?? null,
-            };
-          }
-        });
-
-        const { data: assignmentRows } = await supabase
-          .from('assignments')
-          .select('id, title, description, due_date, max_points, assignment_type, is_active, courses(title, programs(name))')
-          .eq('is_active', true)
-          .order('due_date', { ascending: true })
-          .limit(80);
-
-        const mapped = ((assignmentRows ?? []) as any[]).map((assignment) => ({
-          id: assignment.id,
-          title: assignment.title,
-          description: assignment.description ?? null,
-          due_date: assignment.due_date ?? null,
-          max_points: assignment.max_points ?? null,
-          assignment_type: assignment.assignment_type ?? null,
-          is_active: assignment.is_active ?? true,
-          course: assignment.courses ?? null,
-          submission: subMap[assignment.id] ?? null,
-        })) as AssignmentCard[];
-
-        setAssignments(mapped);
-      }
+      const data = await assignmentService.listAssignments({
+        role: profile.role,
+        userId: profile.id,
+        schoolId: profile.school_id
+      });
+      setAssignments(data as any[]);
+    } catch (error: any) {
+      Alert.alert('Error', error.message);
     } finally {
       setLoading(false);
       setRefreshing(false);
     }
-  }, [isStaff, profile]);
+  }, [profile]);
 
   useEffect(() => {
     load();
@@ -185,12 +125,14 @@ export default function AssignmentsScreen({ navigation }: any) {
         primary: assignments.length,
         secondary: assignments.filter((a) => (a.submittedCount ?? 0) > 0).length,
         tertiary: assignments.filter((a) => (a.gradedCount ?? 0) > 0).length,
+        overdue: assignments.filter((a) => isOverdue(a.due_date) && a.is_active !== false).length,
       };
     }
     return {
       primary: assignments.filter((a) => !a.submission).length,
       secondary: assignments.filter((a) => a.submission?.status === 'submitted').length,
       tertiary: assignments.filter((a) => a.submission?.status === 'graded').length,
+      overdue: assignments.filter((a) => !a.submission && isOverdue(a.due_date)).length,
     };
   }, [assignments, isStaff]);
 
@@ -242,7 +184,7 @@ export default function AssignmentsScreen({ navigation }: any) {
         <TouchableOpacity
           style={styles.card}
           activeOpacity={0.88}
-          onPress={() => navigation.navigate('AssignmentDetail', { assignmentId: item.id, title: item.title })}
+          onPress={() => navigation.navigate(ROUTES.AssignmentDetail, { assignmentId: item.id, title: item.title })}
         >
           <View style={styles.cardTop}>
             <View style={{ flex: 1, gap: 5 }}>
@@ -294,13 +236,30 @@ export default function AssignmentsScreen({ navigation }: any) {
   return (
     <SafeAreaView style={styles.safe}>
       <View style={styles.header}>
-        <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}>
-          <Text style={styles.backIcon}>←</Text>
-        </TouchableOpacity>
+        <IconBackButton onPress={() => navigation.goBack()} color={COLORS.textPrimary} size={20} style={styles.backBtn} />
         <View style={{ flex: 1 }}>
           <Text style={styles.title}>Assignments</Text>
           <Text style={styles.subtitle}>{isStaff ? 'Create, monitor and grade work' : 'Track and submit your work'}</Text>
         </View>
+        {isStaff ? (
+          <TouchableOpacity
+            style={styles.createBtn}
+            onPress={() =>
+              Alert.alert(
+                'Create from a class',
+                'Open Classes, choose a class, then use New Assignment.',
+                [
+                  { text: 'Cancel', style: 'cancel' },
+                  { text: 'Go to Classes', onPress: () => navigation.navigate(ROUTES.Classes) },
+                ],
+              )
+            }
+            activeOpacity={0.88}
+          >
+            <Ionicons name="add" size={16} color={COLORS.bg} />
+            <Text style={styles.createBtnText}>Create</Text>
+          </TouchableOpacity>
+        ) : null}
       </View>
 
       <View style={styles.statsRow}>
@@ -309,8 +268,28 @@ export default function AssignmentsScreen({ navigation }: any) {
         <View style={styles.statCard}><Text style={styles.statLabel}>Graded</Text><Text style={[styles.statValue, { color: COLORS.success }]}>{stats.tertiary}</Text></View>
       </View>
 
+      {isStaff && stats.secondary > 0 ? (
+        <View style={styles.alertCard}>
+          <View style={[styles.alertDot, { backgroundColor: COLORS.warning }]} />
+          <View style={{ flex: 1 }}>
+            <Text style={styles.alertTitle}>{stats.secondary} submission{stats.secondary > 1 ? 's' : ''} awaiting review</Text>
+            <Text style={styles.alertText}>Filter to `To Grade` and open the assignment detail to mark and respond quickly.</Text>
+          </View>
+        </View>
+      ) : null}
+
+      {!isStaff && stats.overdue > 0 ? (
+        <View style={[styles.alertCard, styles.alertDangerCard]}>
+          <View style={[styles.alertDot, { backgroundColor: COLORS.error }]} />
+          <View style={{ flex: 1 }}>
+            <Text style={[styles.alertTitle, { color: COLORS.error }]}>{stats.overdue} overdue assignment{stats.overdue > 1 ? 's' : ''}</Text>
+            <Text style={styles.alertText}>Switch to the overdue filter and submit the missing work from your detail screen.</Text>
+          </View>
+        </View>
+      ) : null}
+
       <View style={styles.searchWrap}>
-        <Text style={styles.searchIcon}>S</Text>
+        <Ionicons name="search-outline" size={18} color={COLORS.textMuted} style={styles.searchIcon} />
         <TextInput
           style={styles.searchInput}
           value={search}
@@ -344,7 +323,7 @@ export default function AssignmentsScreen({ navigation }: any) {
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); load(); }} tintColor={COLORS.primary} />}
           ListEmptyComponent={
             <View style={styles.empty}>
-              <Text style={styles.emptyIcon}>[]</Text>
+              <Ionicons name="document-text-outline" size={48} color={COLORS.textMuted} style={styles.emptyIcon} />
               <Text style={styles.emptyText}>No assignments found</Text>
             </View>
           }
@@ -358,15 +337,21 @@ const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: COLORS.bg },
   header: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: SPACING.base, paddingTop: SPACING.md, paddingBottom: SPACING.base, gap: SPACING.md },
   backBtn: { width: 36, height: 36, borderRadius: 18, borderWidth: 1, borderColor: COLORS.border, alignItems: 'center', justifyContent: 'center' },
-  backIcon: { fontSize: 18, color: COLORS.textPrimary },
   title: { fontFamily: FONT_FAMILY.display, fontSize: FONT_SIZE['2xl'], color: COLORS.textPrimary },
   subtitle: { fontFamily: FONT_FAMILY.body, fontSize: FONT_SIZE.xs, color: COLORS.textMuted, marginTop: 2 },
+  createBtn: { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: COLORS.accent, paddingHorizontal: SPACING.md, paddingVertical: 10, borderRadius: RADIUS.full },
+  createBtnText: { fontFamily: FONT_FAMILY.bodySemi, fontSize: FONT_SIZE.sm, color: COLORS.bg },
   statsRow: { flexDirection: 'row', gap: SPACING.sm, paddingHorizontal: SPACING.base, marginBottom: SPACING.md },
   statCard: { flex: 1, backgroundColor: COLORS.bgCard, borderWidth: 1, borderColor: COLORS.border, borderRadius: RADIUS.lg, padding: SPACING.md },
   statLabel: { fontFamily: FONT_FAMILY.bodySemi, fontSize: FONT_SIZE.xs, color: COLORS.textMuted, textTransform: 'uppercase', letterSpacing: 0.6 },
   statValue: { fontFamily: FONT_FAMILY.display, fontSize: FONT_SIZE.xl, color: COLORS.textPrimary, marginTop: 6 },
+  alertCard: { flexDirection: 'row', alignItems: 'flex-start', gap: SPACING.sm, marginHorizontal: SPACING.base, marginBottom: SPACING.md, padding: SPACING.md, borderRadius: RADIUS.lg, borderWidth: 1, borderColor: COLORS.warning + '35', backgroundColor: COLORS.warning + '12' },
+  alertDangerCard: { borderColor: COLORS.error + '35', backgroundColor: COLORS.error + '10' },
+  alertDot: { width: 10, height: 10, borderRadius: 999, marginTop: 5 },
+  alertTitle: { fontFamily: FONT_FAMILY.bodySemi, fontSize: FONT_SIZE.sm, color: COLORS.textPrimary },
+  alertText: { fontFamily: FONT_FAMILY.body, fontSize: FONT_SIZE.xs, color: COLORS.textMuted, marginTop: 2, lineHeight: 18 },
   searchWrap: { flexDirection: 'row', alignItems: 'center', gap: SPACING.sm, marginHorizontal: SPACING.base, marginBottom: SPACING.md, borderWidth: 1, borderColor: COLORS.border, borderRadius: RADIUS.lg, backgroundColor: COLORS.bgCard, paddingHorizontal: SPACING.md, paddingVertical: 10 },
-  searchIcon: { fontFamily: FONT_FAMILY.mono, fontSize: FONT_SIZE.sm, color: COLORS.textMuted },
+  searchIcon: { marginRight: 2 },
   searchInput: { flex: 1, fontFamily: FONT_FAMILY.body, fontSize: FONT_SIZE.sm, color: COLORS.textPrimary },
   filtersScroll: { maxHeight: 48, marginBottom: SPACING.md },
   filters: { paddingHorizontal: SPACING.base, gap: SPACING.sm, alignItems: 'center' },

@@ -10,7 +10,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { MotiView } from 'moti';
 import { useAuth } from '../../contexts/AuthContext';
-import { supabase } from '../../lib/supabase';
+import { analyticsService } from '../../services/analytics.service';
 import { COLORS } from '../../constants/colors';
 import { FONT_FAMILY, FONT_SIZE, LETTER_SPACING } from '../../constants/typography';
 import { SPACING, RADIUS } from '../../constants/spacing';
@@ -62,96 +62,15 @@ export default function AnalyticsScreen({ navigation }: any) {
     if (!profile) return;
 
     try {
-      const isAdmin = profile.role === 'admin';
-
-      let studentsQuery = supabase.from('portal_users').select('id, last_sign_in_at', { count: 'exact' }).eq('role', 'student');
-      let teachersQuery = supabase.from('portal_users').select('id', { count: 'exact' }).eq('role', 'teacher').eq('is_active', true);
-      let schoolsQuery = supabase.from('schools').select('id, name', { count: 'exact' }).eq('status', 'approved');
-      let pendingQuery = supabase.from('students').select('id', { count: 'exact' }).eq('status', 'pending');
-      let reportsQuery = supabase.from('student_progress_reports').select('id', { count: 'exact' }).eq('is_published', true);
-      let invoicesQuery = supabase.from('invoices').select('amount, status');
-
-      if (!isAdmin && (profile.school_id || profile.school_name)) {
-        const sid = profile.school_id;
-        if (sid) {
-          studentsQuery = studentsQuery.eq('school_id', sid) as any;
-          teachersQuery = teachersQuery.eq('school_id', sid) as any;
-          schoolsQuery = schoolsQuery.eq('id', sid);
-          pendingQuery = pendingQuery.eq('school_id', sid) as any;
-          reportsQuery = reportsQuery.eq('school_id', sid) as any;
-          invoicesQuery = invoicesQuery.eq('school_id', sid);
-        }
-      }
-
-      const [studentsRes, teachersRes, schoolsRes, pendingRes, reportsRes, invoicesRes] = await Promise.all([
-        studentsQuery,
-        teachersQuery,
-        schoolsQuery,
-        pendingQuery,
-        reportsQuery,
-        invoicesQuery,
-      ]);
-
-      // Calculate Revenue
-      const invoices = (invoicesRes.data ?? []) as any[];
-      const totalRevenue = invoices.filter(i => i.status === 'paid').reduce((s, i) => s + (i.amount || 0), 0);
-      const pendingRevenue = invoices.filter(i => ['pending', 'overdue'].includes(i.status)).reduce((s, i) => s + (i.amount || 0), 0);
-
-      const totalStudents = studentsRes.count ?? 0;
-      const activeThreshold = 7 * 24 * 60 * 60 * 1000;
-      const activeStudents = ((studentsRes.data ?? []) as any[]).filter((s) => {
-        if (!s.last_sign_in_at) return false;
-        return Date.now() - new Date(s.last_sign_in_at).getTime() < activeThreshold;
-      }).length;
-
-      setStats({
-        totalStudents,
-        activeStudents,
-        totalTeachers: teachersRes.count ?? 0,
-        totalSchools: isAdmin ? (schoolsRes.count ?? 0) : 1,
-        pendingApprovals: pendingRes.count ?? 0,
-        publishedReports: reportsRes.count ?? 0,
-        avgProgress: totalStudents > 0 ? Math.round((activeStudents / totalStudents) * 100) : 0,
-        totalRevenue,
-        pendingRevenue,
-      });
-
-      // Enrollment Distribution (Admin Only)
-      if (isAdmin) {
-        const { data: dist } = await supabase.from('portal_users').select('school_id, schools(name)').eq('role', 'student');
-        const counts: Record<string, number> = {};
-        dist?.forEach((d: any) => {
-           const name = d.schools?.name || 'Individual';
-           counts[name] = (counts[name] || 0) + 1;
+      const { stats, schoolEnrollments: enrollments, atRisk: risk } =
+        await analyticsService.fetchStaffAnalyticsDashboard({
+          id: profile.id,
+          role: profile.role,
+          school_id: profile.school_id ?? null,
         });
-        const sortedDist = Object.entries(counts)
-          .map(([name, count]) => ({ name, count }))
-          .sort((a, b) => b.count - a.count)
-          .slice(0, 5);
-        setSchoolEnrollments(sortedDist);
-      }
-
-      const { data: riskStudents } = await supabase
-        .from('portal_users')
-        .select('id, full_name, last_sign_in_at')
-        .eq('role', 'student')
-        .eq('is_active', true)
-        .order('last_sign_in_at', { ascending: true })
-        .limit(8);
-
-      setAtRisk(
-        ((riskStudents ?? []) as any[])
-          .filter((student) => {
-            if (!student.last_sign_in_at) return true;
-            return Date.now() - new Date(student.last_sign_in_at).getTime() > 7 * 24 * 60 * 60 * 1000;
-          })
-          .slice(0, 5)
-          .map((student) => ({
-            id: student.id,
-            name: student.full_name ?? 'Unknown Student',
-            lastLogin: student.last_sign_in_at,
-          }))
-      );
+      setStats(stats);
+      setSchoolEnrollments(enrollments);
+      setAtRisk(risk);
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -164,19 +83,41 @@ export default function AnalyticsScreen({ navigation }: any) {
 
   const allowed = ['admin', 'teacher', 'school'].includes(profile?.role ?? '');
 
+  const isTeacherRole = profile?.role === 'teacher';
+
   const kpis = useMemo(
     () =>
       stats
         ? [
-            { label: 'Students', value: stats.totalStudents, color: COLORS.info, code: 'ST' },
-            { label: 'Active 7d', value: stats.activeStudents, color: COLORS.success, code: 'AC' },
-            { label: 'Teachers', value: stats.totalTeachers, color: COLORS.primary, code: 'TC' },
-            { label: 'Schools', value: stats.totalSchools, color: COLORS.warning, code: 'SC' },
+            {
+              label: isTeacherRole ? 'My Classes' : 'Students',
+              value: stats.totalStudents,
+              color: COLORS.info,
+              code: isTeacherRole ? 'CL' : 'ST',
+            },
+            {
+              label: isTeacherRole ? 'My Assignments' : 'Active 7d',
+              value: stats.activeStudents,
+              color: COLORS.success,
+              code: isTeacherRole ? 'AS' : 'AC',
+            },
+            {
+              label: isTeacherRole ? 'Schools Assigned' : 'Teachers',
+              value: stats.totalTeachers,
+              color: COLORS.primary,
+              code: isTeacherRole ? 'SH' : 'TC',
+            },
+            {
+              label: 'Schools',
+              value: stats.totalSchools,
+              color: COLORS.warning,
+              code: 'SC',
+            },
             { label: 'Revenue (P)', value: (stats.totalRevenue / 1000).toFixed(1) + 'k', color: COLORS.success, code: 'RV' },
             { label: 'Pending', value: (stats.pendingRevenue / 1000).toFixed(1) + 'k', color: COLORS.error, code: 'PN' },
           ]
         : [],
-    [stats]
+    [stats, isTeacherRole]
   );
 
   const metricBars: MetricBar[] = stats

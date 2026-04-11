@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   View, Text, ScrollView, TouchableOpacity, StyleSheet,
   Image, Alert, Platform, ActivityIndicator, Switch,
@@ -10,7 +10,15 @@ import { StatusBar } from 'expo-status-bar';
 import * as ImagePicker from 'expo-image-picker';
 import { useAuth } from '../../contexts/AuthContext';
 import { useTheme } from '../../contexts/ThemeContext';
-import { supabase } from '../../lib/supabase';
+import { dashboardService } from '../../services/dashboard.service';
+import { assignmentService } from '../../services/assignment.service';
+import { gamificationService } from '../../services/gamification.service';
+import { schoolService } from '../../services/school.service';
+import { studentService } from '../../services/student.service';
+import { teacherService } from '../../services/teacher.service';
+import { courseService } from '../../services/course.service';
+import { badgeService } from '../../services/badge.service';
+import { uploadToR2, mimeFromExt } from '../../lib/r2';
 import { PremiumButton } from '../../components/ui/PremiumButton';
 import { PremiumInput } from '../../components/ui/PremiumInput';
 import { OfflineBanner } from '../../components/ui/OfflineBanner';
@@ -18,6 +26,10 @@ import { FONT_FAMILY, FONT_SIZE, LETTER_SPACING } from '../../constants/typograp
 import { SPACING, RADIUS, SHADOW } from '../../constants/spacing';
 import { t } from '../../i18n';
 import { useHaptics } from '../../hooks/useHaptics';
+import { ROUTES, type StackRouteName } from '../../navigation/routes';
+import { IconBackButton } from '../../components/ui/IconBackButton';
+
+type EarnedBadgeRow = { earned_at: string | null; badges: { name?: string | null } | null };
 
 const ROLE_BADGE: Record<string, { label: string; color: string; bg: string }> = {
   admin:   { label: 'Administrator', color: '#f59e0b', bg: 'rgba(245,158,11,0.15)' },
@@ -27,7 +39,7 @@ const ROLE_BADGE: Record<string, { label: string; color: string; bg: string }> =
 };
 
 export default function ProfileScreen({ navigation }: any) {
-  const { profile, signOut, refreshProfile } = useAuth();
+  const { profile, signOut, refreshProfile, loading: authLoading } = useAuth();
   const { colors, isDark, toggleTheme } = useTheme();
   const styles = getStyles(colors);
   const { success: hapticSuccess, error: hapticError, light } = useHaptics();
@@ -39,9 +51,154 @@ export default function ProfileScreen({ navigation }: any) {
   const [fullName, setFullName] = useState(profile?.full_name ?? '');
   const [phone, setPhone] = useState(profile?.phone ?? '');
   const [bio, setBio] = useState(profile?.bio ?? '');
+  const [stats, setStats] = useState<Array<{ label: string; value: string }>>([]);
+  const [earnedBadges, setEarnedBadges] = useState<EarnedBadgeRow[]>([]);
+  const [pointHistory, setPointHistory] = useState<
+    Array<{ id: string; points: number; activity_type: string; description: string | null; created_at: string | null }>
+  >([]);
 
   const badge = ROLE_BADGE[profile?.role ?? 'student'] ?? ROLE_BADGE.student;
   const initials = (profile?.full_name ?? 'U').split(' ').map(w => w[0]).slice(0, 2).join('').toUpperCase();
+  const quickActions = useMemo((): { label: string; route: StackRouteName }[] => {
+    if (profile?.role === 'admin') {
+      return [
+        { label: 'Schools', route: ROUTES.Schools },
+        { label: 'Programs', route: ROUTES.Programs },
+        { label: 'Newsletters', route: ROUTES.Newsletters },
+        { label: 'Messages', route: ROUTES.Messages },
+      ];
+    }
+    if (profile?.role === 'teacher') {
+      return [
+        { label: 'Lessons', route: ROUTES.Lessons },
+        { label: 'Assignments', route: ROUTES.Assignments },
+        { label: 'Messages', route: ROUTES.Messages },
+        { label: 'Reports', route: ROUTES.Reports },
+      ];
+    }
+    if (profile?.role === 'school') {
+      return [
+        { label: 'Students', route: ROUTES.Students },
+        { label: 'Teachers', route: ROUTES.Teachers },
+        { label: 'Payments', route: ROUTES.Payments },
+        { label: 'Messages', route: ROUTES.Messages },
+      ];
+    }
+    if (profile?.role === 'student') {
+      return [
+        { label: 'Lessons', route: ROUTES.Lessons },
+        { label: 'Assignments', route: ROUTES.Assignments },
+        { label: 'Grades', route: ROUTES.Grades },
+        { label: 'Messages', route: ROUTES.Messages },
+      ];
+    }
+    return [
+      { label: 'MyChildren', route: ROUTES.MyChildren },
+      { label: 'Grades', route: ROUTES.ParentGrades },
+      { label: 'Invoices', route: ROUTES.ParentInvoices },
+      { label: 'Messages', route: ROUTES.Messages },
+    ];
+  }, [profile?.role]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadProfileStats() {
+      if (!profile) {
+        setStats([]);
+        return;
+      }
+
+      try {
+        if (profile.role === 'admin') {
+          const stats = await dashboardService.getAdminStats(colors);
+          if (!cancelled) setStats(stats.map(s => ({ label: s.label, value: String(s.value) })));
+          return;
+        }
+
+        if (profile.role === 'teacher') {
+          const { stats: teaStats } = await dashboardService.getTeacherDashboardData(profile.id, colors);
+          if (!cancelled) setStats(teaStats.map(s => ({ label: s.label, value: String(s.value) })));
+          return;
+        }
+
+        if (profile.role === 'school' && profile.school_id) {
+          const stats = await dashboardService.getSchoolDashboardData(profile.school_id, colors);
+          if (!cancelled) setStats(stats.map(s => ({ label: s.label, value: String(s.value) })));
+          return;
+        }
+
+        if (profile.role === 'student') {
+          const [progress, subsCount, points] = await Promise.all([
+            courseService.listCourses({ role: 'student', userId: profile.id }),
+            assignmentService.countSubmissionsForPortalUser(profile.id),
+            gamificationService.getUserLevel(profile.id)
+          ]);
+
+          if (!cancelled) {
+            setStats([
+              { label: 'COURSES', value: String(progress.length) },
+              { label: 'SUBMISSIONS', value: String(subsCount) },
+              { label: 'LVL', value: String(points.level) },
+              { label: 'XP', value: String(points.total_points) },
+            ]);
+          }
+          return;
+        }
+
+        // Parent Logic
+        const { stats: parStats } = await dashboardService.getParentDashboardData(profile.email || '', colors);
+        if (!cancelled) setStats(parStats.map(s => ({ label: s.label, value: String(s.value) })));
+
+      } catch (err) {
+        console.error('Profile Stats Error:', err);
+        if (!cancelled) setStats([]);
+      }
+    }
+
+    loadProfileStats();
+    return () => {
+      cancelled = true;
+    };
+  }, [profile]);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      if (!profile?.id) {
+        setEarnedBadges([]);
+        return;
+      }
+      try {
+        const rows = await badgeService.getPlayerBadges(profile.id);
+        if (!cancelled) setEarnedBadges((rows ?? []) as EarnedBadgeRow[]);
+      } catch {
+        if (!cancelled) setEarnedBadges([]);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [profile?.id]);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (profile?.role !== 'student' || !profile?.id) {
+      setPointHistory([]);
+      return;
+    }
+    (async () => {
+      try {
+        const rows = await gamificationService.listRecentPointTransactions(profile.id, 14);
+        if (!cancelled) setPointHistory(rows);
+      } catch {
+        if (!cancelled) setPointHistory([]);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [profile?.role, profile?.id]);
 
   const pickPhoto = async () => {
     try {
@@ -63,23 +220,12 @@ export default function ProfileScreen({ navigation }: any) {
 
       const asset = result.assets[0];
       const ext = asset.uri.split('.').pop() ?? 'jpg';
-      const fileName = `avatar_${profile?.id}_${Date.now()}.${ext}`;
+      const key = `avatars/avatar_${profile?.id}_${Date.now()}.${ext}`;
+      const contentType = mimeFromExt(ext);
 
-      const response = await fetch(asset.uri);
-      const blob = await response.blob();
-      const arrayBuffer = await new Response(blob).arrayBuffer();
+      const publicUrl = await uploadToR2(asset.uri, key, contentType);
 
-      const { error: uploadErr } = await supabase.storage
-        .from('avatars')
-        .upload(fileName, arrayBuffer, { contentType: `image/${ext}`, upsert: true });
-
-      if (uploadErr) throw uploadErr;
-
-      const { data: urlData } = supabase.storage.from('avatars').getPublicUrl(fileName);
-      await supabase
-        .from('portal_users')
-        .update({ profile_image_url: urlData.publicUrl })
-        .eq('id', profile!.id);
+      await studentService.updateStudent(profile!.id, { profile_image_url: publicUrl });
 
       await refreshProfile();
       await hapticSuccess();
@@ -99,17 +245,11 @@ export default function ProfileScreen({ navigation }: any) {
     }
     setSaving(true);
     try {
-      const { error } = await supabase
-        .from('portal_users')
-        .update({
-          full_name: fullName.trim(),
-          phone: phone.trim() || null,
-          bio: bio.trim() || null,
-          updated_at: new Date().toISOString(),
-        })
-        .eq('id', profile!.id);
-
-      if (error) throw error;
+      await studentService.updateStudent(profile!.id, {
+        full_name: fullName.trim(),
+        phone: phone.trim() || null,
+        bio: bio.trim() || null,
+      });
       await refreshProfile();
       await hapticSuccess();
       setEditing(false);
@@ -159,6 +299,13 @@ export default function ProfileScreen({ navigation }: any) {
           colors={isDark ? ['#050505', '#0a0a0a', colors.bg] : ['#f1f5f9', '#f8fafc', colors.bg]}
           style={styles.hero}
         >
+          {typeof navigation?.canGoBack === 'function' && navigation.canGoBack() ? (
+            <IconBackButton
+              onPress={() => navigation.goBack()}
+              color={colors.textPrimary}
+              style={styles.heroBack}
+            />
+          ) : null}
           {/* Ambient Glow */}
           <MotiView
             from={{ opacity: 0, scale: 0.7 }}
@@ -256,6 +403,119 @@ export default function ProfileScreen({ navigation }: any) {
               <Text style={[styles.statusText, { color: profile?.is_active ? '#34d399' : '#f97316' }]}>
                 {profile?.is_active ? 'Account Verified' : 'Pending Approval'}
               </Text>
+            </View>
+          </MotiView>
+
+          {stats.length ? (
+            <MotiView
+              from={{ opacity: 0, translateY: 14 }}
+              animate={{ opacity: 1, translateY: 0 }}
+              transition={{ type: 'timing', delay: 520 }}
+              style={styles.statsWrap}
+            >
+              {stats.map((item) => (
+                <View key={item.label} style={[styles.statsCard, { backgroundColor: colors.bgCard, borderColor: colors.border }]}>
+                  <Text style={[styles.statsValue, { color: colors.textPrimary }]}>{item.value}</Text>
+                  <Text style={[styles.statsLabel, { color: colors.textMuted }]}>{item.label}</Text>
+                </View>
+              ))}
+            </MotiView>
+          ) : null}
+
+          {earnedBadges.length > 0 ? (
+            <MotiView
+              from={{ opacity: 0, translateY: 14 }}
+              animate={{ opacity: 1, translateY: 0 }}
+              transition={{ type: 'timing', delay: 540 }}
+              style={styles.card}
+            >
+              <View style={styles.cardInner}>
+                <Text style={[styles.cardTitle, { color: colors.textSecondary, marginBottom: SPACING.sm }]}>Badges</Text>
+                <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+                  {earnedBadges.map((row, bi) => {
+                    const name = row.badges?.name ?? 'Badge';
+                    return (
+                      <View
+                        key={`${bi}-${name}`}
+                        style={{
+                          paddingHorizontal: 12,
+                          paddingVertical: 6,
+                          borderRadius: RADIUS.full,
+                          backgroundColor: colors.primaryPale,
+                          borderWidth: 1,
+                          borderColor: colors.primaryGlow,
+                        }}
+                      >
+                        <Text style={{ color: colors.primary, fontFamily: FONT_FAMILY.bodyBold, fontSize: 10 }}>{name}</Text>
+                      </View>
+                    );
+                  })}
+                </View>
+              </View>
+            </MotiView>
+          ) : null}
+
+          {profile?.role === 'student' && pointHistory.length > 0 ? (
+            <MotiView
+              from={{ opacity: 0, translateY: 14 }}
+              animate={{ opacity: 1, translateY: 0 }}
+              transition={{ type: 'timing', delay: 550 }}
+              style={styles.card}
+            >
+              <View style={styles.cardInner}>
+                <Text style={[styles.cardTitle, { color: colors.textSecondary, marginBottom: SPACING.sm }]}>Recent XP</Text>
+                <View style={{ gap: 10 }}>
+                  {pointHistory.map((row) => (
+                    <View
+                      key={row.id}
+                      style={{
+                        flexDirection: 'row',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        paddingVertical: 8,
+                        borderBottomWidth: 1,
+                        borderBottomColor: colors.border,
+                      }}
+                    >
+                      <View style={{ flex: 1, paddingRight: 8 }}>
+                        <Text style={{ fontFamily: FONT_FAMILY.bodySemi, fontSize: 12, color: colors.textPrimary }}>
+                          {row.description || row.activity_type.replace(/_/g, ' ')}
+                        </Text>
+                        <Text style={{ fontFamily: FONT_FAMILY.body, fontSize: 10, color: colors.textMuted, marginTop: 2 }}>
+                          {row.created_at ? new Date(row.created_at).toLocaleString() : ''}
+                        </Text>
+                      </View>
+                      <Text style={{ fontFamily: FONT_FAMILY.display, fontSize: 14, color: colors.success }}>
+                        +{row.points}
+                      </Text>
+                    </View>
+                  ))}
+                </View>
+              </View>
+            </MotiView>
+          ) : null}
+
+          <MotiView
+            from={{ opacity: 0, translateY: 18 }}
+            animate={{ opacity: 1, translateY: 0 }}
+            transition={{ type: 'timing', delay: 560 }}
+            style={styles.card}
+          >
+            <View style={styles.cardInner}>
+              <Text style={[styles.cardTitle, { color: colors.textSecondary, marginBottom: SPACING.md }]}>Quick Actions</Text>
+              <View style={styles.quickGrid}>
+                {quickActions.map((item) => (
+                  <TouchableOpacity
+                    key={item.label}
+                    style={[styles.quickCard, { backgroundColor: colors.primaryPale, borderColor: colors.primaryGlow }]}
+                    onPress={() => { navigation?.navigate(item.route); light(); }}
+                    activeOpacity={0.82}
+                  >
+                    <Text style={[styles.quickLabel, { color: colors.primary }]}>{item.label.toUpperCase()}</Text>
+                    <Text style={[styles.quickHint, { color: colors.textMuted }]}>Open workspace</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
             </View>
           </MotiView>
 
@@ -366,10 +626,10 @@ export default function ProfileScreen({ navigation }: any) {
               </View>
 
               {[
-                { icon: '🔔', label: t('profile.notifications'), onPress: () => navigation?.navigate('Settings') },
-                { icon: '🌍', label: t('profile.language'), onPress: () => navigation?.navigate('Settings') },
-                { icon: '🔒', label: t('profile.changePassword'), onPress: () => navigation?.navigate('Settings') },
-                { icon: '📋', label: t('profile.terms'), onPress: () => navigation?.navigate('Settings') },
+                { icon: '🔔', label: t('profile.notifications'), onPress: () => navigation?.navigate(ROUTES.Settings) },
+                { icon: '🌍', label: t('profile.language'), onPress: () => navigation?.navigate(ROUTES.Settings) },
+                { icon: '🔒', label: t('profile.changePassword'), onPress: () => navigation?.navigate(ROUTES.Settings) },
+                { icon: '📋', label: t('profile.terms'), onPress: () => navigation?.navigate(ROUTES.Settings) },
               ].map((item, i, arr) => (
                 <TouchableOpacity
                   key={i}
@@ -392,12 +652,12 @@ export default function ProfileScreen({ navigation }: any) {
             transition={{ type: 'timing', delay: 720 }}
             style={styles.footer}
           >
-            <TouchableOpacity onPress={handleSignOut} style={[styles.signOutBtn, { borderColor: 'rgba(239,68,68,0.2)', borderWidth: 1 }]} activeOpacity={0.8}>
+            <TouchableOpacity onPress={handleSignOut} disabled={authLoading} style={[styles.signOutBtn, { borderColor: 'rgba(239,68,68,0.2)', borderWidth: 1 }, authLoading && { opacity: 0.6 }]} activeOpacity={0.8}>
               <LinearGradient
                 colors={['rgba(239,68,68,0.1)', 'transparent']}
                 style={styles.signOutGrad}
               >
-                <Text style={styles.signOutText}>🚪 {t('profile.signOut')}</Text>
+                <Text style={styles.signOutText}>🚪 {authLoading ? 'Signing Out...' : t('profile.signOut')}</Text>
               </LinearGradient>
             </TouchableOpacity>
 
@@ -421,6 +681,12 @@ const getStyles = (colors: any) => StyleSheet.create({
     alignItems: 'center',
     position: 'relative',
     overflow: 'hidden',
+  },
+  heroBack: {
+    position: 'absolute',
+    left: SPACING.md,
+    top: Platform.OS === 'ios' ? 52 : 40,
+    zIndex: 4,
   },
   heroGlow: {
     position: 'absolute',
@@ -491,6 +757,30 @@ const getStyles = (colors: any) => StyleSheet.create({
     marginTop: -SPACING.lg,
     marginBottom: SPACING.lg,
   },
+  statsWrap: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: SPACING.sm,
+    paddingHorizontal: SPACING.xl,
+    marginBottom: SPACING.lg,
+  },
+  statsCard: {
+    width: '47%',
+    borderWidth: 1,
+    borderRadius: RADIUS.md,
+    padding: SPACING.md,
+  },
+  statsValue: {
+    fontFamily: FONT_FAMILY.display,
+    fontSize: FONT_SIZE.xl,
+    marginBottom: 4,
+  },
+  statsLabel: {
+    fontFamily: FONT_FAMILY.bodyBold,
+    fontSize: 10,
+    letterSpacing: LETTER_SPACING.wider,
+    textTransform: 'uppercase',
+  },
   statusChip: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -515,6 +805,23 @@ const getStyles = (colors: any) => StyleSheet.create({
     borderColor: colors.border,
   },
   cardInner: { padding: SPACING.lg },
+  quickGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: SPACING.sm },
+  quickCard: {
+    width: '47%',
+    borderWidth: 1,
+    borderRadius: RADIUS.md,
+    padding: SPACING.md,
+  },
+  quickLabel: {
+    fontFamily: FONT_FAMILY.bodyBold,
+    fontSize: 10,
+    letterSpacing: LETTER_SPACING.wider,
+    marginBottom: 6,
+  },
+  quickHint: {
+    fontFamily: FONT_FAMILY.body,
+    fontSize: FONT_SIZE.xs,
+  },
   cardHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',

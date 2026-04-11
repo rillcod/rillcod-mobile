@@ -33,10 +33,10 @@ export function PremiumInput({
           borderColor: error
             ? COLORS.error
             : focused
-              ? COLORS.primaryMid
+              ? COLORS.primary
               : COLORS.border,
           backgroundColor: focused
-            ? 'rgba(122,6,6,0.06)'
+            ? COLORS.primaryGlow
             : COLORS.bgCard,
         }}
         transition={{ type: 'timing', duration: 180 }}

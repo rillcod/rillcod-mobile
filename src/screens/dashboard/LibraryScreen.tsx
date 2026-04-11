@@ -1,16 +1,17 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import {
   View, Text, StyleSheet, FlatList, TouchableOpacity,
-  RefreshControl, ActivityIndicator, TextInput, Alert,
+  RefreshControl, ActivityIndicator, TextInput, Alert, Modal,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { MotiView } from 'moti';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useAuth } from '../../contexts/AuthContext';
-import { supabase } from '../../lib/supabase';
+import { libraryService } from '../../services/library.service';
 import { COLORS } from '../../constants/colors';
 import { FONT_FAMILY, FONT_SIZE } from '../../constants/typography';
 import { SPACING, RADIUS } from '../../constants/spacing';
+import { IconBackButton } from '../../components/ui/IconBackButton';
 
 type ContentType = 'video' | 'document' | 'presentation' | 'interactive' | 'image';
 
@@ -40,6 +41,8 @@ interface ContentItem {
   metadata: any;
   created_at: string;
   usage_count: number | null;
+  rating_average: number | null;
+  rating_count: number | null;
 }
 
 function formatDate(d: string): string {
@@ -53,17 +56,30 @@ export default function LibraryScreen({ navigation }: any) {
   const [refreshing, setRefreshing] = useState(false);
   const [search, setSearch] = useState('');
   const [filterType, setFilterType] = useState<string>('all');
+  const [ratingModalItem, setRatingModalItem] = useState<ContentItem | null>(null);
+  const [ratingBusy, setRatingBusy] = useState(false);
 
   const isStaff = profile?.role === 'admin' || profile?.role === 'teacher';
 
   const load = useCallback(async () => {
     try {
-      const { data, error } = await supabase
-        .from('content_library')
-        .select('id, title, type, url, metadata, created_at, usage_count')
-        .order('created_at', { ascending: false });
-      if (error) throw error;
-      setItems((data ?? []) as ContentItem[]);
+      const data = await libraryService.listContent({
+        role: profile?.role,
+        schoolId: profile?.school_id,
+      });
+      setItems(
+        ((data ?? []) as any[]).map((item) => ({
+          id: item.id,
+          title: item.title,
+          type: item.content_type ?? 'document',
+          url: item.files?.public_url ?? null,
+          metadata: { description: item.description ?? null, tags: item.tags ?? [] },
+          created_at: item.created_at ?? new Date().toISOString(),
+          usage_count: item.usage_count ?? 0,
+          rating_average: typeof item.rating_average === 'number' ? item.rating_average : null,
+          rating_count: typeof item.rating_count === 'number' ? item.rating_count : null,
+        })) as ContentItem[]
+      );
     } catch (e: any) {
       Alert.alert('Error', e.message);
     } finally {
@@ -75,6 +91,20 @@ export default function LibraryScreen({ navigation }: any) {
   useEffect(() => { load(); }, [load]);
 
   const onRefresh = () => { setRefreshing(true); load(); };
+
+  const submitRating = async (stars: number) => {
+    if (!profile?.id || !ratingModalItem) return;
+    setRatingBusy(true);
+    try {
+      await libraryService.rateContent(profile.id, ratingModalItem.id, stars);
+      setRatingModalItem(null);
+      await load();
+    } catch (e: any) {
+      Alert.alert('Could not save rating', e?.message ?? 'Try again.');
+    } finally {
+      setRatingBusy(false);
+    }
+  };
 
   const filtered = items.filter(i => {
     const matchSearch = i.title.toLowerCase().includes(search.toLowerCase());
@@ -91,34 +121,46 @@ export default function LibraryScreen({ navigation }: any) {
         animate={{ opacity: 1, translateY: 0 }}
         transition={{ delay: index * 35, type: 'timing', duration: 280 }}
       >
-        <TouchableOpacity
-          style={styles.card}
-          onPress={() => {
-            if (item.url) {
-              Alert.alert(item.title, `URL: ${item.url}\n\nOpen this link in a browser to access this resource.`);
-            } else {
-              Alert.alert('No URL', 'This content item has no associated URL.');
-            }
-          }}
-          activeOpacity={0.75}
-        >
-          <View style={[styles.typeBox, { backgroundColor: `${color}20` }]}>
-            <Text style={styles.typeIcon}>{icon}</Text>
-          </View>
-          <View style={styles.cardBody}>
-            <View style={styles.cardTop}>
-              <View style={[styles.typePill, { backgroundColor: `${color}20` }]}>
-                <Text style={[styles.typePillText, { color }]}>{item.type}</Text>
-              </View>
-              <Text style={styles.usageText}>
-                {item.usage_count ?? 0} {(item.usage_count ?? 0) === 1 ? 'use' : 'uses'}
-              </Text>
+        <View style={styles.card}>
+          <TouchableOpacity
+            style={styles.cardMainPress}
+            onPress={() => {
+              if (item.url) {
+                Alert.alert(item.title, `URL: ${item.url}\n\nOpen this link in a browser to access this resource.`);
+              } else {
+                Alert.alert('No URL', 'This content item has no associated URL.');
+              }
+            }}
+            activeOpacity={0.75}
+          >
+            <View style={[styles.typeBox, { backgroundColor: `${color}20` }]}>
+              <Text style={styles.typeIcon}>{icon}</Text>
             </View>
-            <Text style={styles.itemTitle} numberOfLines={2}>{item.title}</Text>
-            <Text style={styles.itemDate}>{formatDate(item.created_at)}</Text>
-          </View>
-          <Text style={styles.cardArrow}>›</Text>
-        </TouchableOpacity>
+            <View style={styles.cardBody}>
+              <View style={styles.cardTop}>
+                <View style={[styles.typePill, { backgroundColor: `${color}20` }]}>
+                  <Text style={[styles.typePillText, { color }]}>{item.type}</Text>
+                </View>
+                <Text style={styles.usageText}>
+                  {item.usage_count ?? 0} {(item.usage_count ?? 0) === 1 ? 'use' : 'uses'}
+                </Text>
+              </View>
+              <Text style={styles.itemTitle} numberOfLines={2}>{item.title}</Text>
+              <Text style={styles.ratingLine}>
+                {item.rating_average != null && item.rating_count != null && item.rating_count > 0
+                  ? `★ ${item.rating_average.toFixed(1)} · ${item.rating_count} rating${item.rating_count === 1 ? '' : 's'}`
+                  : 'No ratings yet'}
+              </Text>
+              <Text style={styles.itemDate}>{formatDate(item.created_at)}</Text>
+            </View>
+            <Text style={styles.cardArrow}>›</Text>
+          </TouchableOpacity>
+          {profile?.id ? (
+            <TouchableOpacity style={styles.ratePill} onPress={() => setRatingModalItem(item)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+              <Text style={styles.rateLinkText}>Rate</Text>
+            </TouchableOpacity>
+          ) : null}
+        </View>
       </MotiView>
     );
   };
@@ -127,9 +169,7 @@ export default function LibraryScreen({ navigation }: any) {
     <SafeAreaView style={styles.safe}>
       {/* Header */}
       <View style={styles.header}>
-        <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}>
-          <Text style={styles.backArrow}>←</Text>
-        </TouchableOpacity>
+          <IconBackButton onPress={() => navigation.goBack()} color={COLORS.textPrimary} style={styles.backBtn} />
         <Text style={styles.headerTitle}>Library</Text>
         {isStaff && (
           <TouchableOpacity
@@ -208,6 +248,32 @@ export default function LibraryScreen({ navigation }: any) {
           showsVerticalScrollIndicator={false}
         />
       )}
+
+      <Modal visible={!!ratingModalItem} transparent animationType="fade" onRequestClose={() => setRatingModalItem(null)}>
+        <TouchableOpacity style={styles.modalBackdrop} activeOpacity={1} onPress={() => !ratingBusy && setRatingModalItem(null)}>
+          <TouchableOpacity style={[styles.modalCard, { borderColor: COLORS.border, backgroundColor: COLORS.bgCard }]} activeOpacity={1} onPress={() => {}}>
+            <Text style={[styles.modalTitle, { color: COLORS.textPrimary }]} numberOfLines={2}>
+              Rate “{ratingModalItem?.title ?? ''}”
+            </Text>
+            <Text style={[styles.modalHint, { color: COLORS.textMuted }]}>Tap a score (1–5). This updates the library average.</Text>
+            <View style={styles.starRow}>
+              {[1, 2, 3, 4, 5].map((n) => (
+                <TouchableOpacity
+                  key={n}
+                  style={[styles.starBtn, { borderColor: COLORS.primary }]}
+                  disabled={ratingBusy}
+                  onPress={() => submitRating(n)}
+                >
+                  <Text style={[styles.starBtnText, { color: COLORS.primary }]}>{n}★</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+            <TouchableOpacity style={styles.modalCancel} disabled={ratingBusy} onPress={() => setRatingModalItem(null)}>
+              <Text style={{ color: COLORS.textMuted, fontFamily: FONT_FAMILY.bodySemi }}>Cancel</Text>
+            </TouchableOpacity>
+          </TouchableOpacity>
+        </TouchableOpacity>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -216,7 +282,6 @@ const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: COLORS.bg },
   header: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: SPACING.base, paddingVertical: SPACING.md, gap: SPACING.sm },
   backBtn: { width: 36, height: 36, borderRadius: RADIUS.md, borderWidth: 1, borderColor: COLORS.border, alignItems: 'center', justifyContent: 'center' },
-  backArrow: { fontSize: 18, color: COLORS.textPrimary },
   headerTitle: { flex: 1, fontSize: FONT_SIZE.lg, fontFamily: FONT_FAMILY.heading, color: COLORS.textPrimary },
   addBtn: { borderRadius: RADIUS.md, overflow: 'hidden' },
   addBtnInner: { paddingHorizontal: SPACING.md, paddingVertical: SPACING.sm },
@@ -235,7 +300,8 @@ const styles = StyleSheet.create({
   emptyEmoji: { fontSize: 48, marginBottom: SPACING.md },
   emptyTitle: { fontSize: FONT_SIZE.md, fontFamily: FONT_FAMILY.heading, color: COLORS.textPrimary, marginBottom: SPACING.sm },
   emptySubtitle: { fontSize: FONT_SIZE.sm, fontFamily: FONT_FAMILY.body, color: COLORS.textMuted },
-  card: { flexDirection: 'row', alignItems: 'center', backgroundColor: COLORS.bgCard, borderRadius: RADIUS.lg, borderWidth: 1, borderColor: COLORS.border, padding: SPACING.md, marginBottom: SPACING.sm, gap: SPACING.md },
+  card: { flexDirection: 'row', alignItems: 'center', backgroundColor: COLORS.bgCard, borderRadius: RADIUS.lg, borderWidth: 1, borderColor: COLORS.border, paddingVertical: SPACING.sm, paddingLeft: SPACING.md, paddingRight: SPACING.sm, marginBottom: SPACING.sm, gap: SPACING.sm },
+  cardMainPress: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: SPACING.md },
   typeBox: { width: 48, height: 48, borderRadius: RADIUS.md, alignItems: 'center', justifyContent: 'center' },
   typeIcon: { fontSize: 22 },
   cardBody: { flex: 1 },
@@ -244,6 +310,17 @@ const styles = StyleSheet.create({
   typePillText: { fontSize: FONT_SIZE.xs, fontFamily: FONT_FAMILY.bodySemi },
   usageText: { fontSize: FONT_SIZE.xs, fontFamily: FONT_FAMILY.body, color: COLORS.textMuted },
   itemTitle: { fontSize: FONT_SIZE.base, fontFamily: FONT_FAMILY.bodySemi, color: COLORS.textPrimary, marginBottom: 4 },
+  ratingLine: { fontSize: FONT_SIZE.xs, fontFamily: FONT_FAMILY.body, color: COLORS.warning, marginBottom: 2 },
   itemDate: { fontSize: FONT_SIZE.xs, fontFamily: FONT_FAMILY.body, color: COLORS.textMuted },
+  ratePill: { borderWidth: 1, borderColor: COLORS.primary, borderRadius: RADIUS.md, paddingVertical: 8, paddingHorizontal: 10 },
+  rateLinkText: { fontSize: FONT_SIZE.xs, fontFamily: FONT_FAMILY.bodySemi, color: COLORS.primary },
   cardArrow: { fontSize: 20, color: COLORS.textMuted },
+  modalBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', padding: SPACING.lg },
+  modalCard: { borderRadius: RADIUS.lg, borderWidth: 1, padding: SPACING.lg, gap: SPACING.sm },
+  modalTitle: { fontFamily: FONT_FAMILY.bodySemi, fontSize: FONT_SIZE.md },
+  modalHint: { fontFamily: FONT_FAMILY.body, fontSize: FONT_SIZE.sm, lineHeight: 20 },
+  starRow: { flexDirection: 'row', flexWrap: 'wrap', gap: SPACING.sm, marginTop: SPACING.sm },
+  starBtn: { borderWidth: 1, borderRadius: RADIUS.md, paddingVertical: SPACING.sm, paddingHorizontal: SPACING.md },
+  starBtnText: { fontFamily: FONT_FAMILY.bodySemi, fontSize: FONT_SIZE.sm },
+  modalCancel: { alignItems: 'center', marginTop: SPACING.md },
 });

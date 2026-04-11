@@ -6,9 +6,9 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { MotiView } from 'moti';
-import { useAuth } from '../../contexts/AuthContext';
-import { supabase } from '../../lib/supabase';
 import { ScreenHeader } from '../../components/ui/ScreenHeader';
+import { schoolService } from '../../services/school.service';
+import type { Database } from '../../types/supabase';
 import { COLORS } from '../../constants/colors';
 import { FONT_FAMILY, FONT_SIZE } from '../../constants/typography';
 import { SPACING, RADIUS } from '../../constants/spacing';
@@ -69,7 +69,6 @@ function SelectRow({ label, options, value, onChange }: { label: string; options
 }
 
 export default function AddSchoolScreen({ navigation, route }: any) {
-  const { profile } = useAuth();
   const [saving, setSaving] = useState(false);
   const [credentials, setCredentials] = useState<{ email: string; password: string; name: string } | null>(null);
   const [selectedEnrollTypes, setSelectedEnrollTypes] = useState<string[]>(['school']);
@@ -92,30 +91,32 @@ export default function AddSchoolScreen({ navigation, route }: any) {
 
   useEffect(() => {
     const schoolId = route.params?.schoolId;
-    if (schoolId) {
-      supabase.from('schools').select('*').eq('id', schoolId).single()
-        .then(({ data }) => {
-          if (data) {
-            setForm({
-              name: data.name || '',
-              school_type: data.school_type || '',
-              contact_person: data.contact_person || '',
-              address: data.address || '',
-              lga: data.lga || '',
-              city: data.city || '',
-              state: data.state || '',
-              phone: data.phone || '',
-              email: data.email || '',
-              password: '', // Don't show existing password
-              program_interest: Array.isArray(data.program_interest) ? data.program_interest.join(', ') : '',
-              rillcod_quota_percent: String(data.rillcod_quota_percent || 10),
-              status: data.status || 'pending',
-            });
-            if (data.enrollment_types) setSelectedEnrollTypes(data.enrollment_types);
-          }
+    if (!schoolId) return;
+    schoolService
+      .getSchoolDetail(schoolId)
+      .then((data) => {
+        setForm({
+          name: data.name || '',
+          school_type: data.school_type || '',
+          contact_person: data.contact_person || '',
+          address: data.address || '',
+          lga: data.lga || '',
+          city: data.city || '',
+          state: data.state || '',
+          phone: data.phone || '',
+          email: data.email || '',
+          password: '',
+          program_interest: Array.isArray(data.program_interest) ? data.program_interest.join(', ') : '',
+          rillcod_quota_percent: String(data.rillcod_quota_percent || 10),
+          status: data.status || 'pending',
         });
-    }
-  }, [route.params?.schoolId]);
+        if (data.enrollment_types) setSelectedEnrollTypes(data.enrollment_types);
+      })
+      .catch(() => {
+        Alert.alert('Error', 'Could not load school.');
+        navigation.goBack();
+      });
+  }, [route.params?.schoolId, navigation]);
 
   const set = (key: string) => (val: string) => setForm(f => ({ ...f, [key]: val }));
 
@@ -131,7 +132,7 @@ export default function AddSchoolScreen({ navigation, route }: any) {
 
     setSaving(true);
 
-    const payload = {
+    const payload: Database['public']['Tables']['schools']['Update'] = {
       name: form.name.trim(),
       school_type: form.school_type || null,
       contact_person: form.contact_person.trim(),
@@ -150,17 +151,38 @@ export default function AddSchoolScreen({ navigation, route }: any) {
     };
 
     if (route.params?.schoolId) {
-      const { error } = await supabase.from('schools').update(payload).eq('id', route.params.schoolId);
-      if (error) { Alert.alert('Error', error.message); setSaving(false); return; }
-      Alert.alert('School Updated', 'Changes saved successfully.', [{ text: 'OK', onPress: () => navigation.goBack() }]);
-      setSaving(false);
+      try {
+        await schoolService.updateSchool(route.params.schoolId, payload);
+        Alert.alert('School Updated', 'Changes saved successfully.', [{ text: 'OK', onPress: () => navigation.goBack() }]);
+      } catch (e: any) {
+        Alert.alert('Error', e?.message ?? 'Update failed');
+      } finally {
+        setSaving(false);
+      }
       return;
     }
 
-    const { data: insertedSchool, error } = await supabase.from('schools').insert(payload).select('id, name').single();
+    const insertRow: Database['public']['Tables']['schools']['Insert'] = {
+      name: payload.name!,
+      school_type: payload.school_type,
+      contact_person: payload.contact_person ?? undefined,
+      address: payload.address,
+      lga: payload.lga,
+      city: payload.city,
+      state: payload.state,
+      phone: payload.phone,
+      email: payload.email,
+      program_interest: payload.program_interest,
+      rillcod_quota_percent: payload.rillcod_quota_percent,
+      enrollment_types: payload.enrollment_types,
+      status: payload.status,
+    };
 
-    if (error) {
-      Alert.alert('Error', error.message);
+    let insertedSchool: { id: string; name: string };
+    try {
+      insertedSchool = await schoolService.insertSchoolReturningIdName(insertRow);
+    } catch (e: any) {
+      Alert.alert('Error', e?.message ?? 'Could not create school');
       setSaving(false);
       return;
     }
@@ -168,19 +190,19 @@ export default function AddSchoolScreen({ navigation, route }: any) {
     const email = form.email.trim().toLowerCase() ||
       `${form.name.trim().toLowerCase().replace(/\s+/g, '.')}@rillcod.school`;
 
-    if (form.status === 'approved' && insertedSchool) {
-      const { error: accountError } = await supabase.from('portal_users').upsert({
-        email,
-        full_name: form.contact_person.trim() || insertedSchool.name,
-        role: 'school',
-        is_active: true,
-        is_deleted: false,
-        school_id: insertedSchool.id,
-        school_name: insertedSchool.name,
-      }, { onConflict: 'email' });
-
-      if (accountError) {
-        Alert.alert('Account setup warning', `School was created, but portal account setup failed: ${accountError.message}`);
+    if (form.status === 'approved') {
+      try {
+        await schoolService.upsertSchoolPortalUserByEmail({
+          email,
+          full_name: form.contact_person.trim() || insertedSchool.name,
+          school_id: insertedSchool.id,
+          school_name: insertedSchool.name,
+        });
+      } catch (e: any) {
+        Alert.alert(
+          'Account setup warning',
+          `School was created, but portal account setup failed: ${e?.message ?? 'Unknown error'}`,
+        );
       }
     }
 

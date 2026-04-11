@@ -8,10 +8,11 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { MotiView } from 'moti';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useAuth } from '../../contexts/AuthContext';
-import { supabase } from '../../lib/supabase';
+import { engageService } from '../../services/engage.service';
 import { COLORS } from '../../constants/colors';
 import { FONT_FAMILY, FONT_SIZE } from '../../constants/typography';
 import { SPACING, RADIUS } from '../../constants/spacing';
+import { IconBackButton } from '../../components/ui/IconBackButton';
 
 interface EngagePost {
   id: string;
@@ -70,12 +71,7 @@ export default function EngageScreen({ navigation }: any) {
 
   const load = useCallback(async () => {
     try {
-      const { data, error } = await supabase
-        .from('engage_posts')
-        .select('id, user_id, title, content, code_snippet, likes, created_at, portal_users!engage_posts_user_id_fkey(full_name, role)')
-        .order('created_at', { ascending: false })
-        .limit(100);
-      if (error) throw error;
+      const data = await engageService.listEngagePostsWithAuthors(100);
       setPosts(((data ?? []) as any[]).map((post) => ({ ...post, codeExpanded: false })));
     } catch (e: any) {
       Alert.alert('Error', e.message || 'Could not load community posts.');
@@ -114,7 +110,7 @@ export default function EngageScreen({ navigation }: any) {
   const handleLike = async (post: EngagePost) => {
     const nextLikes = (post.likes ?? 0) + 1;
     setPosts((prev) => prev.map((item) => item.id === post.id ? { ...item, likes: nextLikes } : item));
-    await supabase.from('engage_posts').update({ likes: nextLikes }).eq('id', post.id);
+    await engageService.incrementPostLikes(post.id, nextLikes);
   };
 
   const handleDelete = (post: EngagePost) => {
@@ -127,9 +123,10 @@ export default function EngageScreen({ navigation }: any) {
           text: 'Delete',
           style: 'destructive',
           onPress: async () => {
-            const { error } = await supabase.from('engage_posts').delete().eq('id', post.id);
-            if (error) {
-              Alert.alert('Error', error.message);
+            try {
+              await engageService.deleteEngagePost(post.id);
+            } catch (err: any) {
+              Alert.alert('Error', err?.message ?? 'Delete failed');
               return;
             }
             setPosts((prev) => prev.filter((item) => item.id !== post.id));
@@ -140,6 +137,10 @@ export default function EngageScreen({ navigation }: any) {
   };
 
   const handlePost = async () => {
+    if (!profile?.id || !profile.full_name) {
+      Alert.alert('Profile required', 'Your account profile is not ready yet.');
+      return;
+    }
     if (!formTitle.trim()) {
       Alert.alert('Validation', 'Title is required');
       return;
@@ -150,14 +151,15 @@ export default function EngageScreen({ navigation }: any) {
     }
     setSaving(true);
     try {
-      const { error } = await supabase.from('engage_posts').insert({
-        user_id: profile?.id,
+      await engageService.insertEngagePost({
+        user_id: profile.id,
+        author_name: profile.full_name,
         title: formTitle.trim(),
         content: formContent.trim(),
         code_snippet: formCode.trim() || null,
+        language: formCode.trim() ? 'text' : null,
         likes: 0,
       });
-      if (error) throw error;
       setShowModal(false);
       setFormTitle('');
       setFormContent('');
@@ -241,9 +243,7 @@ export default function EngageScreen({ navigation }: any) {
   return (
     <SafeAreaView style={styles.safe}>
       <View style={styles.header}>
-        <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}>
-          <Text style={styles.backArrow}>?</Text>
-        </TouchableOpacity>
+        <IconBackButton onPress={() => navigation.goBack()} color={COLORS.textPrimary} style={styles.backBtn} />
         <Text style={styles.headerTitle}>Engage</Text>
         <TouchableOpacity style={styles.headerAction} onPress={() => setShowModal(true)}>
           <Text style={styles.headerActionText}>POST</Text>
@@ -381,7 +381,6 @@ const styles = StyleSheet.create({
   list: { paddingHorizontal: SPACING.base, paddingBottom: 110 },
   header: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: SPACING.base, paddingVertical: SPACING.md, gap: SPACING.sm },
   backBtn: { width: 36, height: 36, borderRadius: RADIUS.md, borderWidth: 1, borderColor: COLORS.border, alignItems: 'center', justifyContent: 'center' },
-  backArrow: { fontSize: 18, color: COLORS.textPrimary },
   headerTitle: { flex: 1, fontSize: FONT_SIZE.lg, fontFamily: FONT_FAMILY.bodySemi, color: COLORS.textPrimary },
   headerAction: { borderRadius: RADIUS.full, borderWidth: 1, borderColor: COLORS.primary, paddingHorizontal: 12, paddingVertical: 6, backgroundColor: COLORS.primaryPale },
   headerActionText: { fontSize: FONT_SIZE.xs, fontFamily: FONT_FAMILY.bodySemi, color: COLORS.primaryLight },

@@ -14,11 +14,25 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { MotiView } from 'moti';
 import { useAuth } from '../../contexts/AuthContext';
-import { supabase } from '../../lib/supabase';
-import { callAI, pollinationsImageUrl, type ChatMessage } from '../../lib/openrouter';
+import { callAI, type ChatMessage } from '../../lib/openrouter';
+import { analyticsService } from '../../services/analytics.service';
+import { assignmentService } from '../../services/assignment.service';
+import { cbtService } from '../../services/cbt.service';
+import { courseService } from '../../services/course.service';
+import { gamificationService } from '../../services/gamification.service';
+import { appSettingsService } from '../../services/app-settings.service';
+import { LESSON_AI_PRESET_SUBJECTS, lessonCoverImageUrl } from '../../lib/lessonAiPort';
+import {
+  buildQuickLessonAiRequest,
+  runLessonAiFullGeneration,
+  runLessonAiNotesGeneration,
+  trackLessonAiEvent,
+} from '../../lib/lessonAiIntegration';
 import { COLORS } from '../../constants/colors';
 import { FONT_FAMILY, FONT_SIZE } from '../../constants/typography';
 import { SPACING, RADIUS } from '../../constants/spacing';
+import { IconBackButton } from '../../components/ui/IconBackButton';
+import { ROUTES } from '../../navigation/routes';
 import type { Database, Json } from '../../types/supabase';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -64,16 +78,32 @@ type AIProfile = {
   school_name?: string | null;
 };
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
+type TutorContext = {
+  activeCourse: string | null;
+  activeProgram: string | null;
+  recentLessonTitles: string[];
+  recentAssignmentTitles: string[];
+  totalPoints: number;
+  streak: number;
+};
 
-async function fetchApiKey(): Promise<string> {
-  const { data } = await supabase
-    .from('app_settings')
-    .select('value')
-    .eq('key', 'openrouter_api_key')
-    .single();
-  return data?.value ?? '';
-}
+type CodeCategory = 'coding' | 'web' | 'ai' | 'design' | 'hardware' | 'research';
+
+type BuilderMessage = {
+  role: 'user' | 'ai';
+  text: string;
+};
+
+const CODE_CATEGORIES: { key: CodeCategory; label: string }[] = [
+  { key: 'coding', label: 'Coding' },
+  { key: 'web', label: 'Web' },
+  { key: 'ai', label: 'AI' },
+  { key: 'design', label: 'Design' },
+  { key: 'hardware', label: 'Hardware' },
+  { key: 'research', label: 'Research' },
+];
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
 
 async function runCode(lang: string, version: string, code: string): Promise<string> {
   try {
@@ -90,6 +120,54 @@ async function runCode(lang: string, version: string, code: string): Promise<str
   } catch {
     return 'Could not connect to code runner.';
   }
+}
+
+async function logAIEvent(profile: AIProfile | null | undefined, eventType: string, metadata: Json) {
+  if (!profile?.id) return;
+  await analyticsService.trackEvent(
+    profile.id,
+    eventType,
+    metadata as Record<string, unknown>,
+    { schoolId: profile.school_id, userAgent: Platform.OS },
+  );
+}
+
+function extractCodeBlock(content: string): string | null {
+  const match = content.match(/```[\w+-]*\n([\s\S]*?)```/);
+  if (match?.[1]?.trim()) return match[1].trim();
+  const stripped = content.replace(/^```[\w+-]*\n?/i, '').replace(/\n?```$/i, '').trim();
+  return stripped || null;
+}
+
+async function fetchTutorContext(profile: AIProfile | null | undefined): Promise<TutorContext> {
+  if (!profile?.id) {
+    return {
+      activeCourse: null,
+      activeProgram: null,
+      recentLessonTitles: [],
+      recentAssignmentTitles: [],
+      totalPoints: 0,
+      streak: 0,
+    };
+  }
+
+  const [contentCtx, pointsData] = await Promise.all([
+    courseService.getAiTutorContentContext({
+      id: profile.id,
+      role: profile.role,
+      school_id: profile.school_id,
+    }),
+    gamificationService.getUserStats(profile.id),
+  ]);
+
+  return {
+    activeCourse: contentCtx.activeCourse,
+    activeProgram: contentCtx.activeProgram,
+    recentLessonTitles: contentCtx.recentLessonTitles,
+    recentAssignmentTitles: contentCtx.recentAssignmentTitles,
+    totalPoints: pointsData?.total_points ?? 0,
+    streak: pointsData?.current_streak ?? 0,
+  };
 }
 
 function buildCreatePrompt(type: string, topic: string, grade: string, subject: string): string {
@@ -211,12 +289,35 @@ function ChatBubble({ role, text, loading }: { role: 'user' | 'ai'; text?: strin
 
 // ── Tab: Tutor ────────────────────────────────────────────────────────────────
 
-function TutorTab({ apiKey, profile }: { apiKey: string; profile: any }) {
+function TutorTab({ profile }: { profile: any }) {
   const [input, setInput] = useState('');
   const [topic, setTopic] = useState('');
   const [messages, setMessages] = useState<{ role: 'user' | 'ai'; text: string }[]>([]);
   const [loading, setLoading] = useState(false);
+  const [contextLoading, setContextLoading] = useState(true);
+  const [context, setContext] = useState<TutorContext>({
+    activeCourse: null,
+    activeProgram: null,
+    recentLessonTitles: [],
+    recentAssignmentTitles: [],
+    totalPoints: 0,
+    streak: 0,
+  });
   const scrollRef = useRef<ScrollView>(null);
+
+  const loadContext = useCallback(async () => {
+    setContextLoading(true);
+    try {
+      const next = await fetchTutorContext(profile);
+      setContext(next);
+    } finally {
+      setContextLoading(false);
+    }
+  }, [profile]);
+
+  useEffect(() => {
+    loadContext();
+  }, [loadContext]);
 
   const send = async () => {
     const msg = input.trim();
@@ -233,13 +334,28 @@ function TutorTab({ apiKey, profile }: { apiKey: string; profile: any }) {
       }));
 
       const aiMessages: ChatMessage[] = [
-        { role: 'system', content: SYSTEM_TUTOR(profile?.full_name) + (topic ? `\nCurrent topic: ${topic}` : '') },
+        {
+          role: 'system',
+          content:
+            SYSTEM_TUTOR(profile?.full_name) +
+            (topic ? `\nCurrent topic: ${topic}` : '') +
+            (context.activeCourse ? `\nActive course: ${context.activeCourse}` : '') +
+            (context.activeProgram ? `\nProgramme: ${context.activeProgram}` : '') +
+            (context.recentLessonTitles.length ? `\nRecent lessons: ${context.recentLessonTitles.slice(0, 3).join(', ')}` : '') +
+            (context.recentAssignmentTitles.length ? `\nRecent assignments: ${context.recentAssignmentTitles.slice(0, 3).join(', ')}` : ''),
+        },
         ...history,
         { role: 'user', content: msg },
       ];
 
-      const reply = await callAI({ messages: aiMessages, maxTokens: 512, temperature: 0.7, apiKey });
+      const reply = await callAI({ messages: aiMessages, maxTokens: 512, temperature: 0.7 });
       setMessages(prev => [...prev, { role: 'ai', text: reply }]);
+      await logAIEvent(profile, 'ai_tutor_message', {
+        topic: topic || null,
+        prompt: msg,
+        activeCourse: context.activeCourse,
+        activeProgram: context.activeProgram,
+      } as Json);
     } catch (err: any) {
       setMessages(prev => [...prev, { role: 'ai', text: `⚠️ ${err.message}` }]);
     } finally {
@@ -247,6 +363,15 @@ function TutorTab({ apiKey, profile }: { apiKey: string; profile: any }) {
       setTimeout(() => scrollRef.current?.scrollToEnd({ animated: true }), 100);
     }
   };
+
+  const suggestionPool = [
+    context.activeCourse ? `Break down ${context.activeCourse} for me in simple steps` : null,
+    context.recentLessonTitles[0] ? `Help me revise ${context.recentLessonTitles[0]}` : null,
+    context.recentAssignmentTitles[0] ? `How should I approach ${context.recentAssignmentTitles[0]}?` : null,
+    profile?.role === 'teacher' ? 'Turn this topic into a clear class explanation' : 'Explain Python for loops with an example',
+    profile?.role === 'student' ? 'Give me 3 quick practice questions from my current lessons' : 'What is artificial intelligence?',
+    'Help me understand binary numbers',
+  ].filter(Boolean) as string[];
 
   return (
     <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={{ flex: 1 }}>
@@ -263,16 +388,30 @@ function TutorTab({ apiKey, profile }: { apiKey: string; profile: any }) {
       </View>
 
       <ScrollView ref={scrollRef} style={{ flex: 1 }} contentContainerStyle={styles.chatScroll} showsVerticalScrollIndicator={false}>
+        <View style={styles.contextStrip}>
+          <View style={styles.contextCard}>
+            <Text style={styles.contextLabel}>Role</Text>
+            <Text style={styles.contextValue}>{profile?.role || 'user'}</Text>
+          </View>
+          <View style={styles.contextCard}>
+            <Text style={styles.contextLabel}>Course</Text>
+            <Text style={styles.contextValue}>{contextLoading ? 'Loading...' : context.activeCourse || 'Not linked yet'}</Text>
+          </View>
+          <View style={styles.contextCard}>
+            <Text style={styles.contextLabel}>Streak</Text>
+            <Text style={styles.contextValue}>{contextLoading ? '...' : `${context.streak} day${context.streak === 1 ? '' : 's'}`}</Text>
+          </View>
+          <View style={styles.contextCard}>
+            <Text style={styles.contextLabel}>XP</Text>
+            <Text style={styles.contextValue}>{contextLoading ? '...' : String(context.totalPoints)}</Text>
+          </View>
+        </View>
         {messages.length === 0 && (
           <MotiView from={{ opacity: 0 }} animate={{ opacity: 1 }} style={styles.emptyChat}>
             <Image source={require('../../../assets/rillcod-icon.png')} style={{ width: 56, height: 56, borderRadius: 14 }} resizeMode="cover" />
             <Text style={styles.emptyChatTitle}>AI Study Tutor</Text>
             <Text style={styles.emptyChatSub}>Ask me anything about your lessons — coding, science, maths, AI, robotics.</Text>
-            {[
-              'Explain Python for loops with an example',
-              'What is artificial intelligence?',
-              'Help me understand binary numbers',
-            ].map(s => (
+            {suggestionPool.slice(0, 5).map(s => (
               <TouchableOpacity key={s} onPress={() => { setInput(s); }} style={styles.suggChip}>
                 <Text style={styles.suggText}>{s}</Text>
               </TouchableOpacity>
@@ -308,7 +447,7 @@ function TutorTab({ apiKey, profile }: { apiKey: string; profile: any }) {
 
 // ── Tab: Create ───────────────────────────────────────────────────────────────
 
-function CreateTab({ apiKey, profile, navigation }: { apiKey: string; profile: AIProfile | null; navigation: any }) {
+function CreateTab({ profile, navigation }: { profile: AIProfile | null; navigation: any }) {
   const [type, setType] = useState('lesson');
   const [topic, setTopic] = useState('');
   const [grade, setGrade] = useState('JSS 1');
@@ -323,7 +462,6 @@ function CreateTab({ apiKey, profile, navigation }: { apiKey: string; profile: A
 
   const generate = async () => {
     if (!topic.trim()) { Alert.alert('Enter a topic', 'Please type a topic before generating.'); return; }
-    if (!apiKey) { Alert.alert('AI not configured', 'OpenRouter API key is missing in app settings.'); return; }
     Keyboard.dismiss();
     setLoading(true);
     setResult(null);
@@ -331,17 +469,43 @@ function CreateTab({ apiKey, profile, navigation }: { apiKey: string; profile: A
     setLastSavedId(null);
 
     try {
-      const prompt = buildCreatePrompt(type, topic.trim(), grade, subject.trim());
-      const messages: ChatMessage[] = [
-        { role: 'system', content: SYSTEM_CREATOR },
-        { role: 'user', content: prompt },
-      ];
-      const raw = await callAI({ messages, maxTokens: 2048, temperature: 0.8, apiKey });
-      setResult(raw);
+      if (type === 'lesson') {
+        const req = buildQuickLessonAiRequest({
+          topic: topic.trim(),
+          gradeLevel: grade,
+          subject: subject.trim() || undefined,
+          durationMinutes: 60,
+          lessonMode: 'academic',
+        });
+        const { payload: data } = await runLessonAiFullGeneration(req);
+        setResult(JSON.stringify(data));
+        void trackLessonAiEvent(profile?.id ?? null, profile?.school_id ?? null, 'full', {
+          source: 'ai_screen_create',
+        });
+      } else if (type === 'lesson-notes') {
+        const req = buildQuickLessonAiRequest({
+          topic: topic.trim(),
+          gradeLevel: grade,
+          subject: subject.trim() || undefined,
+          durationMinutes: 60,
+        });
+        const data = await runLessonAiNotesGeneration(req);
+        setResult(JSON.stringify(data));
+        void trackLessonAiEvent(profile?.id ?? null, profile?.school_id ?? null, 'notes', {
+          source: 'ai_screen_create',
+        });
+      } else {
+        const prompt = buildCreatePrompt(type, topic.trim(), grade, subject.trim());
+        const messages: ChatMessage[] = [
+          { role: 'system', content: SYSTEM_CREATOR },
+          { role: 'user', content: prompt },
+        ];
+        const raw = await callAI({ messages, maxTokens: 2048, temperature: 0.8 });
+        setResult(raw);
+      }
 
-      // Auto-generate illustration for lesson types
       if (type === 'lesson' || type === 'lesson-notes') {
-        setImageUrl(pollinationsImageUrl(`${subject || 'STEM'} - ${topic}`));
+        setImageUrl(lessonCoverImageUrl(topic, subject || undefined));
       }
     } catch (err: any) {
       Alert.alert('Generation Failed', err.message);
@@ -363,26 +527,63 @@ function CreateTab({ apiKey, profile, navigation }: { apiKey: string; profile: A
     setSaving(true);
     try {
       if (type === 'lesson' || type === 'lesson-notes') {
+        const webLayout = type === 'lesson' && Array.isArray(parsedResult.content_layout) ? parsedResult.content_layout : null;
         const lessonInsert: Database['public']['Tables']['lessons']['Insert'] = {
           title: parsedResult.title || topic.trim(),
-          description: parsedResult.hook || parsedResult.description || `AI-generated lesson for ${topic.trim()}`,
-          content: type === 'lesson' ? JSON.stringify(parsedResult) : parsedResult.lesson_notes || result,
-          content_layout: type === 'lesson' ? buildLessonLayout(parsedResult) : null,
-          lesson_notes: type === 'lesson-notes' ? parsedResult.lesson_notes || result : null,
-          lesson_type: type === 'lesson-notes' ? 'notes' : 'interactive',
+          description:
+            parsedResult.description ||
+            parsedResult.hook ||
+            (type === 'lesson-notes' ? `Study notes: ${topic.trim()}` : `AI lesson for ${topic.trim()}`),
+          content: type === 'lesson' ? JSON.stringify(parsedResult) : String(parsedResult.lesson_notes ?? result ?? ''),
+          content_layout:
+            type === 'lesson' ? (webLayout ? (webLayout as unknown as Json) : buildLessonLayout(parsedResult)) : null,
+          lesson_notes:
+            type === 'lesson-notes'
+              ? String(parsedResult.lesson_notes ?? '')
+              : parsedResult.lesson_notes
+                ? String(parsedResult.lesson_notes)
+                : null,
+          lesson_type:
+            type === 'lesson-notes'
+              ? 'reading'
+              : typeof parsedResult.lesson_type === 'string'
+                ? parsedResult.lesson_type
+                : 'hands-on',
           status: 'draft',
-          duration_minutes: 60,
+          duration_minutes:
+            typeof parsedResult.duration_minutes === 'number' ? parsedResult.duration_minutes : 60,
           created_by: profile.id,
           school_id: profile.school_id ?? null,
           school_name: profile.school_name ?? null,
         };
 
-        const { data, error } = await supabase.from('lessons').insert(lessonInsert).select('id').single();
-        if (error || !data) throw error || new Error('Failed to save lesson');
-        setLastSavedId(data.id);
+        const lessonId = await courseService.insertLessonReturningId(lessonInsert);
+        setLastSavedId(lessonId);
+
+        if (type === 'lesson' && Array.isArray(parsedResult.objectives)) {
+          const objs = parsedResult.objectives.filter((x: unknown) => typeof x === 'string') as string[];
+          const layoutArr = (webLayout ?? []) as any[];
+          const activityText = layoutArr
+            .filter((b) => b?.type === 'activity')
+            .map((b) => [b.title, b.instructions].filter(Boolean).join('\n'))
+            .join('\n\n');
+          const assessmentText = layoutArr
+            .filter((b) => b?.type === 'quiz' || b?.type === 'assignment-block')
+            .map((b) => (b.type === 'quiz' ? `Quiz: ${b.question}` : `${b.title || 'Assignment'}: ${b.instructions || ''}`))
+            .join('\n\n');
+          if (objs.length || activityText || assessmentText) {
+            await courseService.upsertLessonPlan({
+              lesson_id: lessonId,
+              objectives: objs.length ? objs.join('\n') : null,
+              activities: activityText || null,
+              assessment_methods: assessmentText || null,
+            });
+          }
+        }
+
         Alert.alert('Saved', 'Lesson draft created successfully.', [
           { text: 'Stay here' },
-          { text: 'Open lesson', onPress: () => navigation.navigate('LessonDetail', { lessonId: data.id }) },
+          { text: 'Open lesson', onPress: () => navigation.navigate(ROUTES.LessonDetail, { lessonId: lessonId }) },
         ]);
       } else if (type === 'assignment') {
         const assignmentInsert: Database['public']['Tables']['assignments']['Insert'] = {
@@ -402,12 +603,11 @@ function CreateTab({ apiKey, profile, navigation }: { apiKey: string; profile: A
           school_name: profile.school_name ?? null,
         };
 
-        const { data, error } = await supabase.from('assignments').insert(assignmentInsert).select('id,title').single();
-        if (error || !data) throw error || new Error('Failed to save assignment');
-        setLastSavedId(data.id);
+        const savedAsgn = await assignmentService.createAssignmentReturningSummary(assignmentInsert);
+        setLastSavedId(savedAsgn.id);
         Alert.alert('Saved', 'Assignment draft created successfully.', [
           { text: 'Close' },
-          { text: 'Open assignment', onPress: () => navigation.navigate('AssignmentDetail', { assignmentId: data.id, title: data.title }) },
+          { text: 'Open assignment', onPress: () => navigation.navigate(ROUTES.AssignmentDetail, { assignmentId: savedAsgn.id, title: savedAsgn.title }) },
         ]);
       } else if (type === 'cbt') {
         const questions = asArray(parsedResult.questions);
@@ -423,12 +623,11 @@ function CreateTab({ apiKey, profile, navigation }: { apiKey: string; profile: A
           metadata: parsedResult as Json,
         };
 
-        const { data: exam, error: examError } = await supabase.from('cbt_exams').insert(examInsert).select('id').single();
-        if (examError || !exam) throw examError || new Error('Failed to save CBT');
+        const examId = await cbtService.createExamReturningId(examInsert);
 
         if (questions.length) {
           const questionRows: Database['public']['Tables']['cbt_questions']['Insert'][] = questions.map((question: any, index: number) => ({
-            exam_id: exam.id,
+            exam_id: examId,
             question_text: question?.question || `Question ${index + 1}`,
             options: asArray(question?.options) as unknown as Json,
             correct_answer: question?.answer !== undefined ? String(question.answer) : null,
@@ -437,14 +636,13 @@ function CreateTab({ apiKey, profile, navigation }: { apiKey: string; profile: A
             order_index: index + 1,
             metadata: { explanation: question?.explanation ?? '' } as unknown as Json,
           }));
-          const { error: questionError } = await supabase.from('cbt_questions').insert(questionRows);
-          if (questionError) throw questionError;
+          await cbtService.insertCbtQuestions(questionRows);
         }
 
-        setLastSavedId(exam.id);
+        setLastSavedId(examId);
         Alert.alert('Saved', 'CBT draft created successfully.', [
           { text: 'Close' },
-          { text: 'Open CBT', onPress: () => navigation.navigate('CBTExamination', { examId: exam.id }) },
+          { text: 'Open CBT', onPress: () => navigation.navigate(ROUTES.CBTExamination, { examId: examId }) },
         ]);
       } else {
         Alert.alert('Generated', 'This content type is ready to copy into your workflow, but it does not map directly to a saved table yet.');
@@ -582,6 +780,27 @@ function CreateTab({ apiKey, profile, navigation }: { apiKey: string; profile: A
         placeholder="e.g. Python, Mathematics, Robotics"
         placeholderTextColor={COLORS.textMuted}
       />
+      <ScrollView
+        horizontal
+        nestedScrollEnabled
+        showsHorizontalScrollIndicator={false}
+        contentContainerStyle={{ gap: 8, marginBottom: SPACING.sm }}
+      >
+        {LESSON_AI_PRESET_SUBJECTS.map((s) => (
+          <TouchableOpacity
+            key={s}
+            onPress={() => setSubject(s)}
+            style={[
+              styles.subjectChip,
+              subject === s && { borderColor: COLORS.primary, backgroundColor: COLORS.primary + '18' },
+            ]}
+          >
+            <Text style={[styles.subjectChipText, subject === s && { color: COLORS.primaryLight }]} numberOfLines={1}>
+              {s}
+            </Text>
+          </TouchableOpacity>
+        ))}
+      </ScrollView>
 
       <Text style={styles.quickPromptLabel}>Quick prompts</Text>
       <SelectPill
@@ -618,10 +837,12 @@ function CreateTab({ apiKey, profile, navigation }: { apiKey: string; profile: A
 
 // ── Tab: Code Lab ─────────────────────────────────────────────────────────────
 
-function CodeTab({ apiKey }: { apiKey: string }) {
+function CodeTab({ profile }: { profile: AIProfile | null }) {
   const [lang, setLang] = useState(CODE_LANGS[0]);
   const [code, setCode] = useState(CODE_LANGS[0].starter);
   const [aiPrompt, setAiPrompt] = useState('');
+  const [category, setCategory] = useState<CodeCategory>('coding');
+  const [builderMessages, setBuilderMessages] = useState<BuilderMessage[]>([]);
   const [output, setOutput] = useState<string | null>(null);
   const [running, setRunning] = useState(false);
   const [generating, setGenerating] = useState(false);
@@ -646,18 +867,30 @@ function CodeTab({ apiKey }: { apiKey: string }) {
     if (!aiPrompt.trim()) { Alert.alert('Enter a task', 'Describe what you want the code to do.'); return; }
     setGenerating(true);
     try {
+      const history = builderMessages.slice(-8).map(message => ({
+        role: message.role === 'user' ? 'user' : 'assistant',
+        content: message.text,
+      })) as ChatMessage[];
+
       const messages: ChatMessage[] = [
         {
           role: 'system',
           content: `You are a coding instructor at Rillcod Academy. Generate clean, well-commented ${lang.label} code for Nigerian students.
 Output ONLY the code — no explanation, no markdown fences. Start directly with the code.`,
         },
+        ...history,
         { role: 'user', content: `Write ${lang.label} code that: ${aiPrompt.trim()}` },
       ];
-      const result = await callAI({ messages, maxTokens: 512, temperature: 0.5, apiKey });
-      // Strip any accidental markdown fences
-      setCode(result.replace(/^```[\w]*\n?/i, '').replace(/\n?```$/i, '').trim());
+      const result = await callAI({ messages, maxTokens: 1400, temperature: 0.5 });
+      const extractedCode = extractCodeBlock(result);
+      if (extractedCode) setCode(extractedCode);
+      setBuilderMessages(prev => [...prev, { role: 'user', text: aiPrompt.trim() }, { role: 'ai', text: result }]);
       setOutput(null);
+      await logAIEvent(profile, 'ai_code_builder', {
+        language: lang.key,
+        category,
+        prompt: aiPrompt.trim(),
+      } as Json);
     } catch (err: any) {
       Alert.alert('AI Error', err.message);
     } finally {
@@ -667,6 +900,17 @@ Output ONLY the code — no explanation, no markdown fences. Start directly with
 
   return (
     <ScrollView contentContainerStyle={styles.codeScroll} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
+      <Text style={styles.sectionLabel}>Builder Mode</Text>
+      <SelectPill
+        options={CODE_CATEGORIES.map(item => item.label)}
+        value={CODE_CATEGORIES.find(item => item.key === category)?.label || 'Coding'}
+        onSelect={(label) => {
+          const next = CODE_CATEGORIES.find(item => item.label === label);
+          if (next) setCategory(next.key);
+        }}
+        size="xs"
+      />
+
       {/* Language selector */}
       <View style={{ flexDirection: 'row', gap: 8, marginBottom: SPACING.md }}>
         {CODE_LANGS.map(l => (
@@ -694,6 +938,14 @@ Output ONLY the code — no explanation, no markdown fences. Start directly with
           </LinearGradient>
         </TouchableOpacity>
       </View>
+
+      {builderMessages.length > 0 && (
+        <View style={styles.builderThread}>
+          {builderMessages.slice(-4).map((message, index) => (
+            <ChatBubble key={`${message.role}-${index}`} role={message.role === 'user' ? 'user' : 'ai'} text={message.text} />
+          ))}
+        </View>
+      )}
 
       {/* Code editor */}
       <View style={styles.editorWrap}>
@@ -762,61 +1014,50 @@ Output ONLY the code — no explanation, no markdown fences. Start directly with
 export default function AIScreen({ navigation }: any) {
   const { profile } = useAuth();
   const [tab, setTab] = useState<Tab>(TABS[0]);
-  const [apiKey, setApiKey] = useState('');
-  const [keyLoading, setKeyLoading] = useState(true);
+  const [openRouterReady, setOpenRouterReady] = useState<boolean | null>(null);
 
   const isStaff = profile?.role === 'admin' || profile?.role === 'teacher';
 
+  const visibleTabs = isStaff ? TABS : [TABS[0], TABS[2]];
+
   useEffect(() => {
-    handleRefreshKey();
+    let cancelled = false;
+    appSettingsService.isOpenRouterConfigured().then((ok) => {
+      if (!cancelled) setOpenRouterReady(ok);
+    });
+    return () => {
+      cancelled = true;
+    };
   }, []);
-
-  const handleRefreshKey = () => {
-    setKeyLoading(true);
-    fetchApiKey()
-      .then(k => setApiKey(k))
-      .finally(() => setKeyLoading(false));
-  };
-
-  const visibleTabs = isStaff ? TABS : TABS.filter(t => t !== '✨ Create');
 
   return (
     <SafeAreaView style={styles.safe}>
       {/* Header */}
       <View style={styles.header}>
-        <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}>
-          <Text style={styles.backArrow}>←</Text>
-        </TouchableOpacity>
+        <IconBackButton onPress={() => navigation.goBack()} color={COLORS.textPrimary} size={20} style={styles.backBtn} />
         <View style={{ flex: 1 }}>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-            <Image source={require('../../../assets/rillcod-icon.png')} style={styles.headerLogo} resizeMode="cover" />
+            <Image source={require('../../../assets/rillcod-icon.png')} style={styles.headerLogo} resizeMode="contain" />
             <Text style={styles.headerTitle}>AI Studio</Text>
           </View>
           <Text style={styles.headerSub}>Web-grade AI workflows, tuned for mobile</Text>
         </View>
-        {keyLoading ? (
-          <ActivityIndicator color={COLORS.primaryLight} size="small" />
-        ) : (
-          <TouchableOpacity onPress={handleRefreshKey} style={styles.refreshBtn}>
-            <Text style={styles.refreshBtnText}>Refresh</Text>
-          </TouchableOpacity>
-        )}
       </View>
 
-      {/* No key warning */}
-      {!keyLoading && !apiKey && (
-        <View style={styles.noKeyBanner}>
-          <Text style={styles.noKeyText}>⚠️ AI API key not configured — contact your admin.</Text>
-        </View>
-      )}
+      <View style={styles.engineBanner}>
+        <Text style={styles.engineBannerText}>
+          AI runs through a secure server proxy; your OpenRouter key is not stored on the device.
+        </Text>
+      </View>
 
-      {!keyLoading && !!apiKey && (
-        <View style={styles.engineBanner}>
-          <Text style={styles.engineBannerText}>
-            Multi-model OpenRouter engine active for tutoring, drafting, CBT, and coding.
+      {openRouterReady === false ? (
+        <View style={styles.noKeyBanner}>
+          <Text style={styles.noKeyText}>
+            Cloud AI is not configured for this project yet (missing server OpenRouter key in app settings). Tutor and Create may fail until an
+            admin sets `openrouter_api_key` in the dashboard or deployment secrets.
           </Text>
         </View>
-      )}
+      ) : null}
 
       {/* Tab bar */}
       <View style={styles.tabRow}>
@@ -829,9 +1070,9 @@ export default function AIScreen({ navigation }: any) {
 
       {/* Content */}
       <View style={{ flex: 1 }}>
-        {tab === '🧠 Tutor' && <TutorTab apiKey={apiKey} profile={profile} />}
-        {tab === '✨ Create' && isStaff && <CreateTab apiKey={apiKey} profile={profile} navigation={navigation} />}
-        {tab === '💻 Code' && <CodeTab apiKey={apiKey} />}
+        {tab === TABS[0] && <TutorTab profile={profile} />}
+        {tab === TABS[1] && isStaff && <CreateTab profile={profile} navigation={navigation} />}
+        {tab === TABS[2] && <CodeTab profile={profile} />}
       </View>
     </SafeAreaView>
   );
@@ -844,8 +1085,7 @@ const styles = StyleSheet.create({
 
   header: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: SPACING.xl, paddingTop: SPACING.md, paddingBottom: SPACING.sm, gap: SPACING.md },
   backBtn: { width: 36, height: 36, borderRadius: RADIUS.md, borderWidth: 1, borderColor: COLORS.border, alignItems: 'center', justifyContent: 'center' },
-  backArrow: { fontSize: 18, color: COLORS.textPrimary },
-  headerLogo: { width: 28, height: 28, borderRadius: 8 },
+  headerLogo: { width: 36, height: 36, borderRadius: 10 },
   headerTitle: { fontFamily: FONT_FAMILY.display, fontSize: FONT_SIZE['2xl'], color: COLORS.textPrimary },
   headerSub: { fontFamily: FONT_FAMILY.body, fontSize: FONT_SIZE.xs, color: COLORS.textMuted, marginTop: 2 },
   refreshBtn: { paddingHorizontal: SPACING.sm, paddingVertical: 8, borderRadius: RADIUS.md, borderWidth: 1, borderColor: COLORS.border, backgroundColor: COLORS.bgCard },
@@ -873,6 +1113,10 @@ const styles = StyleSheet.create({
   emptyChatSub: { fontFamily: FONT_FAMILY.body, fontSize: FONT_SIZE.sm, color: COLORS.textMuted, textAlign: 'center', lineHeight: 20, maxWidth: 280 },
   suggChip: { backgroundColor: COLORS.bgCard, borderWidth: 1, borderColor: COLORS.border, borderRadius: RADIUS.lg, paddingHorizontal: SPACING.md, paddingVertical: SPACING.sm },
   suggText: { fontFamily: FONT_FAMILY.body, fontSize: FONT_SIZE.xs, color: COLORS.textSecondary },
+  contextStrip: { flexDirection: 'row', flexWrap: 'wrap', gap: SPACING.sm, marginBottom: SPACING.md },
+  contextCard: { minWidth: 110, paddingHorizontal: SPACING.md, paddingVertical: SPACING.sm, borderRadius: RADIUS.lg, backgroundColor: COLORS.bgCard, borderWidth: 1, borderColor: COLORS.border },
+  contextLabel: { fontFamily: FONT_FAMILY.bodySemi, fontSize: FONT_SIZE.xs, color: COLORS.textMuted, textTransform: 'uppercase', letterSpacing: 0.6, marginBottom: 4 },
+  contextValue: { fontFamily: FONT_FAMILY.bodySemi, fontSize: FONT_SIZE.sm, color: COLORS.textPrimary },
 
   bubble: { flexDirection: 'row', marginBottom: SPACING.sm, alignItems: 'flex-end', gap: 8 },
   bubbleUser: { justifyContent: 'flex-end' },
@@ -902,6 +1146,16 @@ const styles = StyleSheet.create({
   typeRowLabel: { fontFamily: FONT_FAMILY.bodySemi, fontSize: FONT_SIZE.sm, color: COLORS.textPrimary },
   typeRowDesc: { fontFamily: FONT_FAMILY.body, fontSize: FONT_SIZE.xs, color: COLORS.textMuted, marginTop: 2 },
   fieldInput: { backgroundColor: COLORS.bgCard, borderWidth: 1, borderColor: COLORS.border, borderRadius: RADIUS.md, paddingHorizontal: SPACING.md, paddingVertical: Platform.OS === 'ios' ? 10 : 6, fontFamily: FONT_FAMILY.body, fontSize: FONT_SIZE.sm, color: COLORS.textPrimary, marginBottom: SPACING.sm },
+  subjectChip: {
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: RADIUS.full,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    backgroundColor: COLORS.bgCard,
+    maxWidth: 200,
+  },
+  subjectChipText: { fontFamily: FONT_FAMILY.bodySemi, fontSize: FONT_SIZE.xs, color: COLORS.textMuted },
   quickPromptLabel: { fontFamily: FONT_FAMILY.bodySemi, fontSize: FONT_SIZE.xs, color: COLORS.textMuted, marginBottom: 4 },
   genBtn: { borderRadius: RADIUS.lg, overflow: 'hidden', marginTop: SPACING.md },
   genBtnGrad: { flexDirection: 'row', paddingVertical: 14, alignItems: 'center', justifyContent: 'center', gap: 6 },
@@ -933,6 +1187,7 @@ const styles = StyleSheet.create({
   aiPromptInput: { flex: 1, backgroundColor: COLORS.bgCard, borderWidth: 1, borderColor: COLORS.border, borderRadius: RADIUS.md, paddingHorizontal: SPACING.md, paddingVertical: Platform.OS === 'ios' ? 10 : 6, fontFamily: FONT_FAMILY.body, fontSize: FONT_SIZE.sm, color: COLORS.textPrimary },
   aiGenBtn: { borderRadius: RADIUS.md, overflow: 'hidden' },
   aiGenBtnGrad: { paddingHorizontal: SPACING.md, paddingVertical: Platform.OS === 'ios' ? 10 : 8, alignItems: 'center', justifyContent: 'center' },
+  builderThread: { marginBottom: SPACING.md },
 
   editorWrap: { backgroundColor: '#0d1117', borderRadius: RADIUS.lg, overflow: 'hidden', marginBottom: SPACING.sm },
   editorHeader: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: SPACING.md, paddingVertical: 8, backgroundColor: '#161b22', gap: SPACING.sm },
