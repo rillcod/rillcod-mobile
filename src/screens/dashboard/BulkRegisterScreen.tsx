@@ -23,6 +23,8 @@ import type { Database } from '../../types/supabase';
 import { COLORS } from '../../constants/colors';
 import { FONT_FAMILY, FONT_SIZE, LETTER_SPACING } from '../../constants/typography';
 import { SPACING, RADIUS } from '../../constants/spacing';
+import { ROUTES } from '../../navigation/routes';
+import { goBackOrTo } from '../../navigation/goBackOrTo';
 
 interface School {
   id: string;
@@ -385,7 +387,7 @@ export default function BulkRegisterScreen({ navigation }: any) {
     <SafeAreaView style={styles.safe}>
       <ScreenHeader
         title="Bulk Register"
-        onBack={() => navigation.goBack()}
+        onBack={() => goBackOrTo(navigation, ROUTES.PeopleHub)}
         accentColor={COLORS.primary}
         rightAction={{ label: 'History', onPress: () => setStep('history') }}
       />

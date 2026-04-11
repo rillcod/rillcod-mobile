@@ -190,7 +190,7 @@ export default function PeopleHubScreen({
         >
           {insight ? (
             <View style={[styles.insight, { borderColor: borderInsight, backgroundColor: colors.bgCard }]}>
-              <Text style={[styles.insightEyebrow, { color: colors.primary }]}>SMART DIRECTORY</Text>
+              <Text style={[styles.insightEyebrow, { color: colors.primary }]}>OVERVIEW</Text>
               <Text style={[styles.insightTitle, { color: colors.textPrimary }]}>{insight.title}</Text>
               <Text style={[styles.insightBody, { color: colors.textSecondary }]}>{insight.detail}</Text>
             </View>

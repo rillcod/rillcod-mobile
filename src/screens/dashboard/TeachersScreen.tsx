@@ -13,6 +13,7 @@ import { FONT_FAMILY, FONT_SIZE, LETTER_SPACING } from '../../constants/typograp
 import { SPACING, RADIUS } from '../../constants/spacing';
 import { AdminCollectionHeader } from '../../components/ui/AdminCollectionHeader';
 import { ROUTES } from '../../navigation/routes';
+import { goBackOrTo } from '../../navigation/goBackOrTo';
 
 interface Teacher {
   id: string;
@@ -118,7 +119,7 @@ export default function TeachersScreen({ navigation }: any) {
       <AdminCollectionHeader
         title="Teachers"
         subtitle={`${teachers.length} active records`}
-        onBack={() => navigation.goBack()}
+        onBack={() => goBackOrTo(navigation, ROUTES.PeopleHub)}
         secondaryAction={isAdmin ? { label: 'Bulk', onPress: () => navigation.navigate(ROUTES.BulkRegister) } : undefined}
         primaryAction={isAdmin ? { label: 'Add', onPress: () => navigation.navigate(ROUTES.AddTeacher) } : undefined}
         colors={COLORS}

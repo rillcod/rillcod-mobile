@@ -1,6 +1,7 @@
 import React from 'react';
 import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '../../contexts/AuthContext';
 import { COLORS } from '../../constants/colors';
 import { FONT_FAMILY, FONT_SIZE } from '../../constants/typography';
@@ -32,7 +33,7 @@ export function RoleGuard({ allow, children, navigation }: RoleGuardProps) {
       <SafeAreaView style={styles.safe}>
         <View style={styles.container}>
           <View style={styles.iconWrap}>
-            <Text style={styles.iconText}>LK</Text>
+            <Ionicons name="lock-closed-outline" size={36} color={COLORS.error} accessibilityLabel="Restricted" />
           </View>
           <Text style={styles.title}>Access Restricted</Text>
           <Text style={styles.sub}>
@@ -77,11 +78,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     marginBottom: SPACING.sm,
-  },
-  iconText: {
-    fontFamily: FONT_FAMILY.display,
-    fontSize: FONT_SIZE.xl,
-    color: COLORS.error,
   },
   title: {
     fontFamily: FONT_FAMILY.display,

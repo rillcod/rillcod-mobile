@@ -15,6 +15,7 @@ import { SPACING, RADIUS } from '../../constants/spacing';
 import { IconBackButton } from '../../components/ui/IconBackButton';
 import { RoleGuard } from '../../components/ui/RoleGuard';
 import { ROUTES } from '../../navigation/routes';
+import { goBackOrTo } from '../../navigation/goBackOrTo';
 
 interface User {
   id: string;
@@ -202,7 +203,7 @@ export default function UsersScreen({ navigation }: any) {
     <SafeAreaView style={styles.safe}>
       {/* Header */}
       <View style={styles.header}>
-          <IconBackButton onPress={() => navigation.goBack()} color={COLORS.textPrimary} style={styles.backBtn} />
+          <IconBackButton onPress={() => goBackOrTo(navigation, ROUTES.PeopleHub)} color={COLORS.textPrimary} style={styles.backBtn} />
         <View style={{ flex: 1 }}>
           <Text style={styles.title}>Users</Text>
           <Text style={styles.subtitle}>{users.length} portal accounts</Text>

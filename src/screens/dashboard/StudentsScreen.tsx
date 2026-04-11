@@ -14,6 +14,7 @@ import { SPACING, RADIUS } from '../../constants/spacing';
 import { Alert } from 'react-native';
 import { AdminCollectionHeader } from '../../components/ui/AdminCollectionHeader';
 import { ROUTES } from '../../navigation/routes';
+import { goBackOrTo } from '../../navigation/goBackOrTo';
 import { shareCsv } from '../../lib/csv';
 
 interface Student {
@@ -158,7 +159,7 @@ export default function StudentsScreen({ navigation }: any) {
       <AdminCollectionHeader
         title="Students"
         subtitle={`${total} registered learners`}
-        onBack={() => navigation.goBack()}
+        onBack={() => goBackOrTo(navigation, ROUTES.PeopleHub)}
         secondaryAction={canAdd ? { label: 'Bulk reg.', onPress: () => navigation.navigate(ROUTES.BulkRegister) } : undefined}
         primaryAction={canAdd ? { label: 'Add', onPress: () => navigation.navigate(ROUTES.AddStudent) } : undefined}
         colors={COLORS}

@@ -128,15 +128,17 @@ export function BankTransferProofActions({ invoiceId, invoiceNumber, amount, cur
           style={[styles.btn, { borderColor: colors.primary, backgroundColor: colors.primary }]}
           disabled={busy}
           onPress={() => void runPick('camera')}
+          activeOpacity={0.88}
         >
-          {busy ? <ActivityIndicator color="#fff" /> : <Text style={styles.btnPrimary}>CAMERA</Text>}
+          {busy ? <ActivityIndicator color="#fff" /> : <Text style={styles.btnPrimary}>Camera</Text>}
         </TouchableOpacity>
         <TouchableOpacity
-          style={[styles.btn, { borderColor: colors.border, backgroundColor: colors.bg }]}
+          style={[styles.btn, styles.btnGhostWrap, { borderColor: colors.border, backgroundColor: colors.bgCard }]}
           disabled={busy}
           onPress={() => void runPick('library')}
+          activeOpacity={0.85}
         >
-          <Text style={[styles.btnGhost, { color: colors.textPrimary }]}>UPLOAD PHOTO</Text>
+          <Text style={[styles.btnGhost, { color: colors.textPrimary }]}>Upload photo</Text>
         </TouchableOpacity>
       </View>
     </View>
@@ -151,14 +153,17 @@ function makeStyles() {
     row: { flexDirection: 'row', gap: SPACING.sm },
     btn: {
       flex: 1,
-      paddingVertical: 12,
-      borderRadius: RADIUS.sm,
-      borderWidth: 1,
+      paddingVertical: 14,
+      borderRadius: RADIUS.lg,
+      borderWidth: 1.5,
       alignItems: 'center',
       justifyContent: 'center',
-      minHeight: 44,
+      minHeight: 48,
     },
-    btnPrimary: { fontFamily: FONT_FAMILY.bodyBold, fontSize: 12, color: '#fff' },
-    btnGhost: { fontFamily: FONT_FAMILY.bodyBold, fontSize: 12 },
+    btnGhostWrap: {
+      borderWidth: 2,
+    },
+    btnPrimary: { fontFamily: FONT_FAMILY.bodyBold, fontSize: 13, color: '#fff' },
+    btnGhost: { fontFamily: FONT_FAMILY.bodyBold, fontSize: 13 },
   });
 }

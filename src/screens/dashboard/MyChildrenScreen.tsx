@@ -16,6 +16,7 @@ import { FONT_FAMILY, FONT_SIZE } from '../../constants/typography';
 import { SPACING, RADIUS } from '../../constants/spacing';
 import { IconBackButton } from '../../components/ui/IconBackButton';
 import { ROUTES } from '../../navigation/routes';
+import { goBackOrTo } from '../../navigation/goBackOrTo';
 
 interface Child {
   id: string;
@@ -133,7 +134,7 @@ export default function MyChildrenScreen({ navigation }: any) {
       >
         {/* Header */}
         <View style={styles.header}>
-          <IconBackButton onPress={() => navigation.goBack()} color={COLORS.textPrimary} style={styles.backBtn} />
+          <IconBackButton onPress={() => goBackOrTo(navigation, ROUTES.PeopleHub)} color={COLORS.textPrimary} style={styles.backBtn} />
           <View>
             <Text style={styles.title}>My Children</Text>
             <Text style={styles.subtitle}>Children linked to your account</Text>

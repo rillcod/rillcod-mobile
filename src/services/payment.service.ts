@@ -315,9 +315,42 @@ export class PaymentService {
     return data ?? null;
   }
 
+  /**
+   * Public Edge calls (no session): use fetch so HTTP 4xx/5xx bodies show `error` instead of a generic
+   * "Edge Function returned a non-2xx status code" from `functions.invoke`.
+   */
+  private async invokePublicFunctionJson<T extends Record<string, unknown>>(
+    functionName: string,
+    body: Record<string, unknown>,
+  ): Promise<T> {
+    const base = process.env.EXPO_PUBLIC_SUPABASE_URL?.replace(/\/$/, '');
+    const key = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY ?? '';
+    if (!base || !key) {
+      throw new Error('App is missing EXPO_PUBLIC_SUPABASE_URL or EXPO_PUBLIC_SUPABASE_ANON_KEY.');
+    }
+    const res = await fetch(`${base}/functions/v1/${functionName}`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${key}`,
+        apikey: key,
+      },
+      body: JSON.stringify(body),
+    });
+    const json = (await res.json().catch(() => ({}))) as T & { error?: string };
+    if (!res.ok) {
+      const msg =
+        typeof json.error === 'string' && json.error.trim()
+          ? json.error.trim()
+          : `Payment service error (${res.status}). Try again or contact support.`;
+      throw new Error(msg);
+    }
+    return json as T;
+  }
+
   /** Public registration checkout (no logged-in user). Creates/links invoice then returns Paystack URL. */
   async initializePublicRegistrationCheckout(params: { studentInterestId: string; payerEmail: string }) {
-    const { data, error } = await supabase.functions.invoke<{
+    return this.invokePublicFunctionJson<{
       authorization_url?: string;
       reference?: string;
       access_code?: string;
@@ -325,30 +358,19 @@ export class PaymentService {
       amount_ngn?: number;
       error?: string;
     }>('paystack-initialize-public-registration', {
-      body: {
-        student_interest_id: params.studentInterestId,
-        payer_email: params.payerEmail.trim().toLowerCase(),
-      },
+      student_interest_id: params.studentInterestId,
+      payer_email: params.payerEmail.trim().toLowerCase(),
     });
-
-    if (error) throw error;
-    if (data && typeof (data as { error?: string }).error === 'string') {
-      throw new Error((data as { error: string }).error);
-    }
-    return data ?? null;
   }
 
   /** After public registration Paystack WebView (no session). Same fulfillment as webhook. */
   async verifyPaystackReferencePublic(reference: string) {
-    const { data, error } = await supabase.functions.invoke<{
+    return this.invokePublicFunctionJson<{
       fulfilled?: boolean;
       alreadyDone?: boolean;
       reason?: string;
       error?: string;
-    }>('paystack-verify-public', { body: { reference } });
-
-    if (error) throw error;
-    return data ?? null;
+    }>('paystack-verify-public', { reference: reference.trim() });
   }
 
   async listReceiptRecords(params: number | { limit?: number; schoolId?: string | null } = 100) {

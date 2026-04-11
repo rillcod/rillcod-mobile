@@ -9,6 +9,7 @@ import {
 } from 'react-native';
 import { WebView } from 'react-native-webview';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { COLORS } from '../../constants/colors';
 
 /**
  * Detect Paystack checkout completion inside an in-app WebView.
@@ -71,7 +72,11 @@ export function PaystackCheckoutModal({ visible, checkoutUrl, reference, onClose
           <TouchableOpacity onPress={onClose} style={styles.toolbarBtn} hitSlop={12}>
             <Text style={styles.toolbarBtnText}>Close</Text>
           </TouchableOpacity>
-          <Text style={styles.toolbarTitle}>Paystack</Text>
+          <View style={styles.toolbarTitleWrap}>
+            <Text style={styles.toolbarTitle} numberOfLines={1}>
+              Rillcod · Paystack
+            </Text>
+          </View>
           <TouchableOpacity onPress={onFinish} style={styles.toolbarBtn} hitSlop={12}>
             <Text style={[styles.toolbarBtnText, styles.toolbarPrimary]}>I finished paying</Text>
           </TouchableOpacity>
@@ -80,7 +85,7 @@ export function PaystackCheckoutModal({ visible, checkoutUrl, reference, onClose
         <View style={styles.webWrap}>
           {webLoading ? (
             <View style={styles.loader}>
-              <ActivityIndicator size="large" color="#c65d2e" />
+              <ActivityIndicator size="large" color={COLORS.primary} />
             </View>
           ) : null}
           <WebView
@@ -106,7 +111,7 @@ export function PaystackCheckoutModal({ visible, checkoutUrl, reference, onClose
 }
 
 const styles = StyleSheet.create({
-  shell: { flex: 1, backgroundColor: '#111' },
+  shell: { flex: 1, backgroundColor: COLORS.bg },
   toolbar: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -114,19 +119,20 @@ const styles = StyleSheet.create({
     paddingHorizontal: 8,
     paddingVertical: 10,
     borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: '#333',
-    backgroundColor: '#1a1a1a',
+    borderBottomColor: COLORS.border,
+    backgroundColor: COLORS.bgCard,
   },
-  toolbarTitle: { color: '#fff', fontWeight: '600', fontSize: 16 },
+  toolbarTitleWrap: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 4 },
+  toolbarTitle: { color: COLORS.textPrimary, fontWeight: '600', fontSize: 14 },
   toolbarBtn: { paddingHorizontal: 8, paddingVertical: 6, minWidth: 72 },
-  toolbarBtnText: { color: '#aaa', fontSize: 14 },
-  toolbarPrimary: { color: '#f08a4b', fontWeight: '600', textAlign: 'right' },
+  toolbarBtnText: { color: COLORS.textMuted, fontSize: 14 },
+  toolbarPrimary: { color: COLORS.primary, fontWeight: '600', textAlign: 'right' },
   webWrap: { flex: 1 },
   loader: {
     ...StyleSheet.absoluteFillObject,
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: '#fff',
+    backgroundColor: COLORS.bgCard,
     zIndex: 1,
   },
 });

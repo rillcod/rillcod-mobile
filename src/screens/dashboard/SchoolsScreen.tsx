@@ -13,6 +13,7 @@ import { FONT_FAMILY, FONT_SIZE, LETTER_SPACING } from '../../constants/typograp
 import { SPACING, RADIUS } from '../../constants/spacing';
 import { AdminCollectionHeader } from '../../components/ui/AdminCollectionHeader';
 import { ROUTES } from '../../navigation/routes';
+import { goBackOrTo } from '../../navigation/goBackOrTo';
 
 interface School {
   id: string;
@@ -117,7 +118,7 @@ export default function SchoolsScreen({ navigation }: any) {
       <AdminCollectionHeader
         title="Schools"
         subtitle={`${schools.length} partner schools`}
-        onBack={() => navigation.goBack()}
+        onBack={() => goBackOrTo(navigation, ROUTES.PeopleHub)}
         secondaryAction={canOpenApprovals ? { label: 'Approvals', onPress: () => navigation.navigate(ROUTES.Approvals) } : undefined}
         primaryAction={isAdmin ? { label: 'Add', onPress: () => navigation.navigate(ROUTES.AddSchool) } : undefined}
         colors={COLORS}

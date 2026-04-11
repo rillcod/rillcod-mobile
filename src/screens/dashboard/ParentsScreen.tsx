@@ -23,6 +23,7 @@ import { FONT_FAMILY, FONT_SIZE, LETTER_SPACING } from '../../constants/typograp
 import { SPACING, RADIUS } from '../../constants/spacing';
 import { AdminCollectionHeader } from '../../components/ui/AdminCollectionHeader';
 import { ROUTES } from '../../navigation/routes';
+import { goBackOrTo } from '../../navigation/goBackOrTo';
 
 interface Parent {
   id: string;
@@ -501,7 +502,7 @@ export default function ParentsScreen({ navigation }: any) {
       <AdminCollectionHeader
         title="Parents"
         subtitle={`${parents.length} accounts · ${hubSubtitle}`}
-        onBack={() => navigation.goBack()}
+        onBack={() => goBackOrTo(navigation, ROUTES.PeopleHub)}
         primaryAction={canManage ? { label: 'Add', onPress: () => { setEditingParent(null); setModalVisible(true); } } : undefined}
         colors={COLORS}
       />

@@ -38,7 +38,7 @@ export function ScreenHeader({ title, subtitle, onBack, rightAction, showLogo = 
 
         <View style={styles.titleWrap}>
           <Text style={styles.title} numberOfLines={1}>{title}</Text>
-          {subtitle ? <Text style={styles.subtitle} numberOfLines={1}>{subtitle}</Text> : null}
+          {subtitle ? <Text style={styles.subtitle} numberOfLines={2}>{subtitle}</Text> : null}
         </View>
 
         {rightAction ? (

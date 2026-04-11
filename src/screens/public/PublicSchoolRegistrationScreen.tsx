@@ -13,6 +13,7 @@ import { COLORS } from '../../constants/colors';
 import { FONT_FAMILY, FONT_SIZE } from '../../constants/typography';
 import { SPACING, RADIUS } from '../../constants/spacing';
 import { ROUTES } from '../../navigation/routes';
+import { goBackOrTo } from '../../navigation/goBackOrTo';
 
 // ── Data ─────────────────────────────────────────────────────────────────────
 
@@ -280,6 +281,25 @@ export default function PublicSchoolRegistrationScreen({ navigation }: any) {
     );
   };
 
+  const resetPartnershipForm = () => {
+    setSuccessVisible(false);
+    setTermsAccepted(false);
+    setTermsVisible(false);
+    setActiveTab('register');
+    setSchoolName('');
+    setSchoolType('');
+    setPrincipalName('');
+    setAddress('');
+    setLga('');
+    setCity('');
+    setState('');
+    setPhone('');
+    setEmail('');
+    setStudentCount('');
+    setSelectedProgrammes([]);
+    setNotes('');
+  };
+
   const handleSubmit = async () => {
     if (!schoolName.trim()) { Alert.alert('Required', 'Please enter the school name.'); return; }
     if (!principalName.trim()) { Alert.alert('Required', 'Please enter the principal name.'); return; }
@@ -331,9 +351,9 @@ export default function PublicSchoolRegistrationScreen({ navigation }: any) {
           >
             {/* Header */}
             <MotiView from={{ opacity: 0, translateY: -10 }} animate={{ opacity: 1, translateY: 0 }}>
-              <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn} activeOpacity={0.7}>
+              <TouchableOpacity onPress={() => goBackOrTo(navigation, ROUTES.Login)} style={styles.backBtn} activeOpacity={0.7}>
                 <Ionicons name="chevron-back" size={20} color={COLORS.primaryLight} />
-                <Text style={styles.backText}>Back to Login</Text>
+                <Text style={styles.backText}>{navigation.canGoBack?.() ? 'Back' : 'Sign in'}</Text>
               </TouchableOpacity>
 
               <View style={styles.brandRow}>
@@ -550,13 +570,20 @@ export default function PublicSchoolRegistrationScreen({ navigation }: any) {
               <Text style={styles.successInfoRow}>✉️ partnerships@rillcod.com</Text>
               <Text style={styles.successInfoRow}>🌐 www.rillcod.com</Text>
             </View>
-            <TouchableOpacity
-              style={styles.primaryBtn}
-              onPress={() => { setSuccessVisible(false); navigation.navigate(ROUTES.Login); }}
-            >
+            <TouchableOpacity style={styles.primaryBtn} onPress={resetPartnershipForm} activeOpacity={0.85}>
               <LinearGradient colors={COLORS.gradPrimary as any} style={styles.primaryBtnGrad}>
-                <Text style={styles.primaryBtnText}>Back to Login</Text>
+                <Text style={styles.primaryBtnText}>Submit another application</Text>
               </LinearGradient>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.modalGhostBtn}
+              onPress={() => {
+                setSuccessVisible(false);
+                navigation.navigate(ROUTES.Login);
+              }}
+              activeOpacity={0.75}
+            >
+              <Text style={styles.modalGhostBtnText}>I already have an account — Sign in</Text>
             </TouchableOpacity>
           </MotiView>
         </View>
@@ -654,6 +681,15 @@ const styles = StyleSheet.create({
   successSub: { fontFamily: FONT_FAMILY.body, fontSize: FONT_SIZE.sm, color: COLORS.textMuted, textAlign: 'center', lineHeight: 22 },
   successInfoBox: { backgroundColor: COLORS.bg, borderRadius: RADIUS.lg, padding: SPACING.md, width: '100%', gap: 6 },
   successInfoRow: { fontFamily: FONT_FAMILY.body, fontSize: FONT_SIZE.sm, color: COLORS.textSecondary },
+
+  modalGhostBtn: { paddingVertical: SPACING.md, paddingHorizontal: SPACING.sm },
+  modalGhostBtnText: {
+    fontFamily: FONT_FAMILY.bodySemi,
+    fontSize: FONT_SIZE.sm,
+    color: COLORS.primaryLight,
+    textAlign: 'center',
+    textDecorationLine: 'underline',
+  },
 
   footer: { fontFamily: FONT_FAMILY.body, fontSize: 10, color: COLORS.textMuted, textAlign: 'center', marginTop: SPACING.xl, opacity: 0.5 },
 });

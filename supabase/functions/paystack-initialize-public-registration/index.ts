@@ -92,10 +92,30 @@ Deno.serve(async (req) => {
       return json({ error: 'This registration is not awaiting payment' }, 400);
     }
 
-    const pe = normalizeEmail(stu.parent_email);
-    const se = normalizeEmail(stu.student_email);
-    if (payerEmail !== pe && payerEmail !== se) {
-      return json({ error: 'Email does not match this registration' }, 403);
+    let pe = normalizeEmail(stu.parent_email);
+    let se = normalizeEmail(stu.student_email);
+    if (!pe && !se) {
+      const { error: patchErr } = await admin
+        .from('students')
+        .update({
+          parent_email: payerEmail,
+          student_email: payerEmail,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', studentId);
+      if (patchErr) {
+        return json({ error: patchErr.message || 'Could not attach payer email to this registration' }, 500);
+      }
+      pe = payerEmail;
+      se = payerEmail;
+    } else if (payerEmail !== pe && payerEmail !== se) {
+      return json(
+        {
+          error:
+            'Email does not match this registration. Pay with the same address you used on the form, or contact support to update it.',
+        },
+        403,
+      );
     }
 
     const feeNgn = feeNgnForEnrollmentType(stu.enrollment_type);

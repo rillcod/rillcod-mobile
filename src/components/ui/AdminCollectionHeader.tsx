@@ -69,10 +69,10 @@ const styles = StyleSheet.create({
     paddingBottom: SPACING.sm,
   },
   backBtn: {
-    width: 44,
+    width: 36,
     height: 36,
     borderWidth: 1,
-    borderRadius: RADIUS.sm,
+    borderRadius: RADIUS.md,
     alignItems: 'center',
     justifyContent: 'center',
   },

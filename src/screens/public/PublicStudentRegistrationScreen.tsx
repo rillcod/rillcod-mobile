@@ -16,6 +16,7 @@ import { COLORS } from '../../constants/colors';
 import { FONT_FAMILY, FONT_SIZE } from '../../constants/typography';
 import { SPACING, RADIUS } from '../../constants/spacing';
 import { ROUTES } from '../../navigation/routes';
+import { goBackOrTo } from '../../navigation/goBackOrTo';
 
 // ── Data ─────────────────────────────────────────────────────────────────────
 
@@ -205,9 +206,30 @@ export default function PublicStudentRegistrationScreen({ navigation }: any) {
   };
 
   const goBack = () => {
-    if (step === 0) navigation.goBack();
+    if (step === 0) goBackOrTo(navigation, ROUTES.Login);
     else setStep(s => s - 1);
   };
+
+  const resetRegistrationFlow = useCallback(() => {
+    setSuccessVisible(false);
+    setRegisteredStudentId(null);
+    setCheckoutSession(null);
+    pendingPayRef.current = null;
+    setStep(0);
+    setEnrollmentType('');
+    setFullName('');
+    setDateOfBirth('');
+    setGender('');
+    setGradeLevel('');
+    setSchoolName('');
+    setState('');
+    setParentName('');
+    setParentPhone('');
+    setParentEmail('');
+    setSelectedProgrammes([]);
+    setMessage('');
+    setPayStarting(false);
+  }, []);
 
   const runVerifyPublicPaystack = useCallback(async (ref: string, fromCheckoutFinish = false) => {
     if (verifyInFlightRef.current) return;
@@ -251,9 +273,14 @@ export default function PublicStudentRegistrationScreen({ navigation }: any) {
       Alert.alert('Required', 'Please fill in parent/guardian name and phone number.');
       return;
     }
+    const emailTrim = parentEmail.trim().toLowerCase();
+    if (!emailTrim || !emailTrim.includes('@')) {
+      Alert.alert('Email required', 'Add a valid parent/guardian email so we can match your Paystack payment to this application.');
+      return;
+    }
     setSubmitting(true);
     try {
-      const emailNorm = parentEmail.trim().toLowerCase() || null;
+      const emailNorm = emailTrim;
       const { id } = await studentService.insertPublicStudentInterestRow({
         name: fullName.trim(),
         full_name: fullName.trim(),
@@ -287,7 +314,7 @@ export default function PublicStudentRegistrationScreen({ navigation }: any) {
     if (!registeredStudentId) return;
     const email = parentEmail.trim().toLowerCase();
     if (!email) {
-      Alert.alert('Email required', 'Add your email on the form (step 3) so we can match your Paystack payment to this registration, then submit again or go back and add it.');
+      Alert.alert('Email required', 'Add your parent email on the form (programme & parent step), then submit again so we can match your Paystack payment.');
       return;
     }
     setPayStarting(true);
@@ -335,7 +362,9 @@ export default function PublicStudentRegistrationScreen({ navigation }: any) {
             <MotiView from={{ opacity: 0, translateY: -10 }} animate={{ opacity: 1, translateY: 0 }}>
               <TouchableOpacity onPress={goBack} style={styles.backBtn} activeOpacity={0.7}>
                 <Ionicons name="chevron-back" size={20} color={COLORS.primaryLight} />
-                <Text style={styles.backText}>{step === 0 ? 'Back to Login' : 'Back'}</Text>
+                <Text style={styles.backText}>
+                  {step === 0 ? (navigation.canGoBack?.() ? 'Back' : 'Sign in') : 'Back'}
+                </Text>
               </TouchableOpacity>
 
               <View style={styles.brandRow}>
@@ -499,7 +528,7 @@ export default function PublicStudentRegistrationScreen({ navigation }: any) {
                 <FieldLabel>Phone Number *</FieldLabel>
                 <TextBox value={parentPhone} onChangeText={setParentPhone} placeholder="+234 800 000 0000" keyboard="phone-pad" capitalize="none" />
 
-                <FieldLabel>Email Address (optional)</FieldLabel>
+                <FieldLabel>Email Address *</FieldLabel>
                 <TextBox value={parentEmail} onChangeText={setParentEmail} placeholder="parent@email.com" keyboard="email-address" capitalize="none" />
 
                 <FieldLabel>Additional Message (optional)</FieldLabel>
@@ -578,7 +607,7 @@ export default function PublicStudentRegistrationScreen({ navigation }: any) {
                   {formatNgn(publicRegistrationFeeNgn(enrollmentType))}
                 </Text>
                 <Text style={[styles.feeNoteText, { color: COLORS.textMuted, marginTop: 6 }]}>
-                  Pay now with Paystack using the same email you entered on the form ({parentEmail.trim() || '—'}). If you did not add an email, use “Back to Login” and register again with an email, or pay via the instructions we send on WhatsApp.
+                  Pay now with Paystack using the same parent email you entered ({parentEmail.trim() || '—'}). You can also tap “Register another student” below to submit a sibling, or wait for our WhatsApp follow-up to pay offline.
                 </Text>
               </View>
             ) : null}
@@ -598,17 +627,22 @@ export default function PublicStudentRegistrationScreen({ navigation }: any) {
               </LinearGradient>
             </TouchableOpacity>
 
+            <TouchableOpacity style={styles.primaryBtn} onPress={resetRegistrationFlow} activeOpacity={0.85}>
+              <LinearGradient colors={COLORS.gradPrimary as any} style={styles.primaryBtnGrad}>
+                <Text style={styles.primaryBtnText}>Register another student</Text>
+              </LinearGradient>
+            </TouchableOpacity>
+
             <TouchableOpacity
-              style={styles.primaryBtn}
+              style={styles.modalGhostBtn}
               onPress={() => {
                 setSuccessVisible(false);
                 setRegisteredStudentId(null);
                 navigation.navigate(ROUTES.Login);
               }}
+              activeOpacity={0.75}
             >
-              <LinearGradient colors={COLORS.gradPrimary as any} style={styles.primaryBtnGrad}>
-                <Text style={styles.primaryBtnText}>Back to Login</Text>
-              </LinearGradient>
+              <Text style={styles.modalGhostBtnText}>I already have an account — Sign in</Text>
             </TouchableOpacity>
           </MotiView>
         </View>
@@ -700,6 +734,15 @@ const styles = StyleSheet.create({
   successSub: { fontFamily: FONT_FAMILY.body, fontSize: FONT_SIZE.sm, color: COLORS.textMuted, textAlign: 'center', lineHeight: 22 },
   successInfo: { backgroundColor: COLORS.bg, borderRadius: RADIUS.lg, padding: SPACING.md, width: '100%', gap: 6 },
   successInfoRow: { fontFamily: FONT_FAMILY.body, fontSize: FONT_SIZE.sm, color: COLORS.textSecondary },
+
+  modalGhostBtn: { paddingVertical: SPACING.md, paddingHorizontal: SPACING.sm },
+  modalGhostBtnText: {
+    fontFamily: FONT_FAMILY.bodySemi,
+    fontSize: FONT_SIZE.sm,
+    color: COLORS.primaryLight,
+    textAlign: 'center',
+    textDecorationLine: 'underline',
+  },
 
   footer: { fontFamily: FONT_FAMILY.body, fontSize: 10, color: COLORS.textMuted, textAlign: 'center', marginTop: SPACING.xl, opacity: 0.5 },
 });

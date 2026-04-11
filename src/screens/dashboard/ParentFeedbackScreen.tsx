@@ -18,6 +18,8 @@ import { ScreenHeader } from '../../components/ui/ScreenHeader';
 import { feedbackService } from '../../services/feedback.service';
 import { FONT_FAMILY, FONT_SIZE, LETTER_SPACING } from '../../constants/typography';
 import { SPACING, RADIUS } from '../../constants/spacing';
+import { ROUTES } from '../../navigation/routes';
+import { goBackOrTo } from '../../navigation/goBackOrTo';
 
 type FeedbackStatus = 'pending' | 'reviewed' | 'actioned';
 
@@ -161,7 +163,7 @@ export default function ParentFeedbackScreen({ navigation }: any) {
       <ScreenHeader
         title="Parent Feedback"
         subtitle={canSubmit ? 'Share your experience' : 'Review parent feedback'}
-        onBack={() => navigation.goBack()}
+        onBack={() => goBackOrTo(navigation, ROUTES.PeopleHub)}
       />
       <ScrollView
         contentContainerStyle={styles.scroll}

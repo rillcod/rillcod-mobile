@@ -4,6 +4,7 @@ import {
   Alert,
   Linking,
   Modal,
+  Platform,
   RefreshControl,
   ScrollView,
   StyleSheet,
@@ -31,6 +32,7 @@ import { SPACING, RADIUS } from '../../constants/spacing';
 import { ScreenHeader } from '../../components/ui/ScreenHeader';
 import { BankTransferProofActions } from '../../components/payment/BankTransferProofActions';
 import { ROUTES, TAB_ROUTES } from '../../navigation/routes';
+import type { ColorPalette } from '../../constants/colors';
 
 type InvoiceStatus = 'draft' | 'sent' | 'paid' | 'overdue' | 'cancelled';
 type BillingTab = 'invoices' | 'transactions' | 'receipts' | 'accounts';
@@ -144,8 +146,8 @@ function parseItems(value: unknown): InvoiceItem[] {
 
 export default function PaymentsScreen({ navigation }: any) {
   const { profile } = useAuth();
-  const { colors } = useTheme();
-  const styles = useMemo(() => getStyles(colors), [colors]);
+  const { colors, isDark } = useTheme();
+  const styles = useMemo(() => getStyles(colors, isDark), [colors, isDark]);
 
   const [invoices, setInvoices] = useState<InvoiceRow[]>([]);
   const [transactions, setTransactions] = useState<TransactionRow[]>([]);
@@ -925,14 +927,22 @@ export default function PaymentsScreen({ navigation }: any) {
             <TouchableOpacity
               style={[styles.ledgerCtaPrimary, { backgroundColor: colors.primary, borderColor: colors.primary }]}
               onPress={() => navigation.navigate(ROUTES.Transactions)}
+              activeOpacity={0.88}
             >
-              <Text style={styles.manageBtnPrimaryText}>FULL FINANCE LEDGER</Text>
+              <Text style={styles.manageBtnPrimaryText}>Full finance ledger</Text>
             </TouchableOpacity>
             <TouchableOpacity
-              style={[styles.ledgerCtaSecondary, { backgroundColor: colors.bgCard, borderColor: colors.border }]}
+              style={[
+                styles.ledgerCtaSecondary,
+                {
+                  backgroundColor: colors.bgCard,
+                  borderColor: isDark ? colors.border : colors.primaryMid,
+                },
+              ]}
               onPress={() => navigation.navigate(ROUTES.Invoices)}
+              activeOpacity={0.88}
             >
-              <Text style={[styles.ledgerCtaSecondaryText, { color: colors.textPrimary }]}>INVOICE EDITOR</Text>
+              <Text style={[styles.ledgerCtaSecondaryText, { color: colors.textPrimary }]}>Invoice editor</Text>
             </TouchableOpacity>
           </View>
           {!preview.length ? (
@@ -1075,7 +1085,9 @@ export default function PaymentsScreen({ navigation }: any) {
   return (
     <SafeAreaView style={styles.safe}>
       <ScreenHeader
-        title={canManage ? 'PAYMENTS HUB' : 'BILLING'}
+        title={canManage ? 'Payments' : 'Billing'}
+        subtitle={canManage ? 'Invoices, activity, receipts, and bank accounts' : 'Your invoices and receipts'}
+        accentColor={colors.primary}
         onBack={() =>
           typeof navigation.canGoBack === 'function' && navigation.canGoBack()
             ? navigation.goBack()
@@ -1084,38 +1096,45 @@ export default function PaymentsScreen({ navigation }: any) {
       />
 
       {canManage && isAdmin ? (
-        <View style={{ paddingHorizontal: 20, paddingBottom: 8 }}>
+        <View style={styles.adminBulkWrap}>
           <TouchableOpacity
             onPress={() => navigation.navigate(ROUTES.BulkPayments)}
-            style={[styles.manageBtn, { backgroundColor: colors.bgCard, borderColor: colors.primary, alignSelf: 'flex-start' }]}
+            style={[styles.manageBtn, styles.manageBtnOutline, { backgroundColor: colors.bgCard, borderColor: colors.primary }]}
+            activeOpacity={0.85}
           >
-            <Text style={[styles.manageBtnPrimaryText, { color: colors.primary }]}>BULK PAYMENTS WIZARD</Text>
+            <Text style={[styles.manageBtnOutlineText, { color: colors.primary }]}>Bulk payments wizard</Text>
           </TouchableOpacity>
         </View>
       ) : null}
 
-      <View style={styles.summaryRow}>
-        <View style={[styles.summaryCard, { backgroundColor: colors.bgCard, borderColor: colors.border }]}>
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.summaryScroll}>
+        <View style={[styles.summaryStat, { backgroundColor: colors.bgCard, borderColor: colors.border }]}>
           <Text style={[styles.summaryLabel, { color: colors.warning }]}>OUTSTANDING</Text>
-          <Text style={[styles.summaryValue, { color: colors.textPrimary }]}>{formatMoney(stats.outstandingAmount, stats.currency)}</Text>
+          <Text style={[styles.summaryValue, { color: colors.textPrimary }]} numberOfLines={1}>
+            {formatMoney(stats.outstandingAmount, stats.currency)}
+          </Text>
           <Text style={[styles.summaryMeta, { color: colors.textMuted }]}>Open invoices</Text>
         </View>
-        <View style={[styles.summaryCard, { backgroundColor: colors.bgCard, borderColor: colors.border }]}>
+        <View style={[styles.summaryStat, { backgroundColor: colors.bgCard, borderColor: colors.border }]}>
           <Text style={[styles.summaryLabel, { color: colors.success }]}>COLLECTED</Text>
-          <Text style={[styles.summaryValue, { color: colors.textPrimary }]}>{formatMoney(stats.paidAmount, stats.currency)}</Text>
+          <Text style={[styles.summaryValue, { color: colors.textPrimary }]} numberOfLines={1}>
+            {formatMoney(stats.paidAmount, stats.currency)}
+          </Text>
           <Text style={[styles.summaryMeta, { color: colors.textMuted }]}>Paid invoices</Text>
         </View>
-        <View style={[styles.summaryCard, { backgroundColor: colors.bgCard, borderColor: colors.border }]}>
+        <View style={[styles.summaryStat, { backgroundColor: colors.bgCard, borderColor: colors.border }]}>
           <Text style={[styles.summaryLabel, { color: colors.primary }]}>SETTLED TX</Text>
           <Text style={[styles.summaryValue, { color: colors.textPrimary }]}>{billingSignals.settledTxCount}</Text>
-          <Text style={[styles.summaryMeta, { color: colors.textMuted }]}>{formatMoney(billingSignals.settledTxAmount, stats.currency)}</Text>
+          <Text style={[styles.summaryMeta, { color: colors.textMuted }]} numberOfLines={1}>
+            {formatMoney(billingSignals.settledTxAmount, stats.currency)}
+          </Text>
         </View>
-        <View style={[styles.summaryCard, { backgroundColor: colors.bgCard, borderColor: colors.border }]}>
+        <View style={[styles.summaryStat, { backgroundColor: colors.bgCard, borderColor: colors.border }]}>
           <Text style={[styles.summaryLabel, { color: colors.error }]}>REFUNDS</Text>
           <Text style={[styles.summaryValue, { color: colors.textPrimary }]}>{stats.refundedTransactions}</Text>
-          <Text style={[styles.summaryMeta, { color: colors.textMuted }]}>Finance reversals</Text>
+          <Text style={[styles.summaryMeta, { color: colors.textMuted }]}>Reversals</Text>
         </View>
-      </View>
+      </ScrollView>
 
       <View style={[styles.searchWrap, { backgroundColor: colors.bgCard, borderColor: colors.border }]}> 
         <Text style={[styles.searchLabel, { color: colors.primary }]}>FIND</Text>
@@ -1124,17 +1143,22 @@ export default function PaymentsScreen({ navigation }: any) {
 
       <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.tabsRow}>
         {[
-          { key: 'invoices', label: 'INVOICES' },
-          { key: 'transactions', label: canManage ? 'ACTIVITY' : 'TRANSACTIONS' },
-          { key: 'receipts', label: 'RECEIPTS' },
-          { key: 'accounts', label: 'ACCOUNTS' },
+          { key: 'invoices', label: 'Invoices' },
+          { key: 'transactions', label: canManage ? 'Activity' : 'Transactions' },
+          { key: 'receipts', label: 'Receipts' },
+          { key: 'accounts', label: 'Accounts' },
         ].map((item) => (
-          <TouchableOpacity key={item.key} onPress={() => setTab(item.key as BillingTab)} style={[
-            styles.filterChip,
-            { backgroundColor: colors.bgCard, borderColor: colors.border },
-            tab === item.key && { backgroundColor: colors.primaryPale, borderColor: colors.primary },
-          ]}>
-            <Text style={[styles.filterText, { color: tab === item.key ? colors.primary : colors.textMuted }]}>{item.label}</Text>
+          <TouchableOpacity
+            key={item.key}
+            onPress={() => setTab(item.key as BillingTab)}
+            activeOpacity={0.85}
+            style={[
+              styles.filterChip,
+              { backgroundColor: colors.bgCard, borderColor: colors.border },
+              tab === item.key && { backgroundColor: colors.primaryPale, borderColor: colors.primary, borderWidth: 2 },
+            ]}
+          >
+            <Text style={[styles.filterText, { color: tab === item.key ? colors.primary : colors.textSecondary }]}>{item.label}</Text>
           </TouchableOpacity>
         ))}
       </ScrollView>
@@ -1142,17 +1166,30 @@ export default function PaymentsScreen({ navigation }: any) {
       {canManage && (tab === 'accounts' || tab === 'receipts') ? (
         <View style={styles.adminActionsRow}>
           {tab === 'accounts' ? (
-            <TouchableOpacity style={[styles.manageBtn, { backgroundColor: colors.primary, borderColor: colors.primary }]} onPress={() => openAccountEditor()}>
-              <Text style={styles.manageBtnPrimaryText}>ADD ACCOUNT</Text>
+            <TouchableOpacity
+              style={[styles.manageBtn, { backgroundColor: colors.primary, borderColor: colors.primary }]}
+              onPress={() => openAccountEditor()}
+              activeOpacity={0.88}
+            >
+              <Text style={styles.manageBtnPrimaryText}>Add account</Text>
             </TouchableOpacity>
           ) : null}
           {tab === 'receipts' ? (
             <>
-              <TouchableOpacity style={[styles.manageBtn, { backgroundColor: colors.primary, borderColor: colors.primary }]} onPress={() => setShowReceiptModal(true)}>
-                <Text style={styles.manageBtnPrimaryText}>ISSUE RECEIPT</Text>
+              <TouchableOpacity
+                style={[styles.manageBtn, { backgroundColor: colors.primary, borderColor: colors.primary }]}
+                onPress={() => setShowReceiptModal(true)}
+                activeOpacity={0.88}
+              >
+                <Text style={styles.manageBtnPrimaryText}>Issue receipt</Text>
               </TouchableOpacity>
-              <TouchableOpacity style={[styles.manageBtn, { backgroundColor: colors.bgCard, borderColor: colors.primary }]} onPress={saveBulkReceipts} disabled={savingReceipt}>
-                <Text style={[styles.manageBtnPrimaryText, { color: colors.primary }]}>{savingReceipt ? 'RUNNING...' : 'BULK RECEIPTS'}</Text>
+              <TouchableOpacity
+                style={[styles.manageBtn, styles.manageBtnOutline, { backgroundColor: colors.bgCard, borderColor: colors.primary }]}
+                onPress={saveBulkReceipts}
+                disabled={savingReceipt}
+                activeOpacity={0.85}
+              >
+                <Text style={[styles.manageBtnOutlineText, { color: colors.primary }]}>{savingReceipt ? 'Running…' : 'Bulk receipts'}</Text>
               </TouchableOpacity>
             </>
           ) : null}
@@ -1162,18 +1199,23 @@ export default function PaymentsScreen({ navigation }: any) {
       {tab === 'invoices' ? (
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filtersRow}>
           {[
-            { key: 'all', label: 'ALL' },
-            { key: 'sent', label: 'SENT' },
-            { key: 'paid', label: 'PAID' },
-            { key: 'overdue', label: 'OVERDUE' },
-            { key: 'draft', label: 'DRAFT' },
+            { key: 'all', label: 'All' },
+            { key: 'sent', label: 'Sent' },
+            { key: 'paid', label: 'Paid' },
+            { key: 'overdue', label: 'Overdue' },
+            { key: 'draft', label: 'Draft' },
           ].map((item) => (
-            <TouchableOpacity key={item.key} onPress={() => setStatusFilter(item.key as 'all' | InvoiceStatus)} style={[
-              styles.filterChip,
-              { backgroundColor: colors.bgCard, borderColor: colors.border },
-              statusFilter === item.key && { backgroundColor: colors.primaryPale, borderColor: colors.primary },
-            ]}>
-              <Text style={[styles.filterText, { color: statusFilter === item.key ? colors.primary : colors.textMuted }]}>{item.label}</Text>
+            <TouchableOpacity
+              key={item.key}
+              onPress={() => setStatusFilter(item.key as 'all' | InvoiceStatus)}
+              activeOpacity={0.85}
+              style={[
+                styles.filterChip,
+                { backgroundColor: colors.bgCard, borderColor: colors.border },
+                statusFilter === item.key && { backgroundColor: colors.primaryPale, borderColor: colors.primary, borderWidth: 2 },
+              ]}
+            >
+              <Text style={[styles.filterText, { color: statusFilter === item.key ? colors.primary : colors.textSecondary }]}>{item.label}</Text>
             </TouchableOpacity>
           ))}
         </ScrollView>
@@ -1184,14 +1226,19 @@ export default function PaymentsScreen({ navigation }: any) {
           <TouchableOpacity
             style={[styles.ledgerCtaPrimary, { backgroundColor: colors.primary, borderColor: colors.primary }]}
             onPress={() => navigation.navigate(ROUTES.Invoices)}
+            activeOpacity={0.88}
           >
-            <Text style={styles.manageBtnPrimaryText}>CREATE INVOICES</Text>
+            <Text style={styles.manageBtnPrimaryText}>Create invoices</Text>
           </TouchableOpacity>
           <TouchableOpacity
-            style={[styles.ledgerCtaSecondary, { backgroundColor: colors.bgCard, borderColor: colors.border }]}
+            style={[
+              styles.ledgerCtaSecondary,
+              { backgroundColor: colors.bgCard, borderColor: isDark ? colors.border : colors.primaryMid },
+            ]}
             onPress={() => navigation.navigate(ROUTES.Transactions)}
+            activeOpacity={0.88}
           >
-            <Text style={[styles.ledgerCtaSecondaryText, { color: colors.textPrimary }]}>FINANCE LEDGER</Text>
+            <Text style={[styles.ledgerCtaSecondaryText, { color: colors.textPrimary }]}>Finance ledger</Text>
           </TouchableOpacity>
         </View>
       ) : null}
@@ -1622,26 +1669,131 @@ export default function PaymentsScreen({ navigation }: any) {
     </SafeAreaView>
   );
 }
-const getStyles = (colors: any) =>
+function statShadow(isDark: boolean) {
+  return Platform.select({
+    ios: {
+      shadowColor: '#000',
+      shadowOffset: { width: 0, height: 4 },
+      shadowOpacity: isDark ? 0.35 : 0.1,
+      shadowRadius: 12,
+    },
+    android: { elevation: isDark ? 5 : 3 },
+    default: {},
+  });
+}
+
+function cardShadow(isDark: boolean) {
+  return Platform.select({
+    ios: {
+      shadowColor: '#000',
+      shadowOffset: { width: 0, height: 2 },
+      shadowOpacity: isDark ? 0.25 : 0.06,
+      shadowRadius: 8,
+    },
+    android: { elevation: isDark ? 3 : 2 },
+    default: {},
+  });
+}
+
+const getStyles = (colors: ColorPalette, isDark: boolean) =>
   StyleSheet.create({
     safe: { flex: 1, backgroundColor: colors.bg },
-    adminActionsRow: { paddingHorizontal: SPACING.xl, paddingBottom: SPACING.sm },
-    manageBtn: { minHeight: 44, borderWidth: 1, borderRadius: RADIUS.lg, alignItems: 'center', justifyContent: 'center', paddingHorizontal: SPACING.md },
-    manageBtnPrimaryText: { color: colors.white100, fontFamily: FONT_FAMILY.bodyBold, fontSize: 10, letterSpacing: LETTER_SPACING.wider },
-    summaryRow: { flexDirection: 'row', gap: SPACING.sm, paddingHorizontal: SPACING.xl, marginBottom: SPACING.md },
-    summaryCard: { flex: 1, borderWidth: 1, borderRadius: RADIUS.lg, padding: SPACING.md },
+    adminBulkWrap: { paddingHorizontal: SPACING.xl, paddingBottom: SPACING.sm },
+    adminActionsRow: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: SPACING.sm,
+      paddingHorizontal: SPACING.xl,
+      paddingBottom: SPACING.sm,
+    },
+    manageBtn: {
+      minHeight: 48,
+      borderWidth: 1.5,
+      borderRadius: RADIUS.lg,
+      alignItems: 'center',
+      justifyContent: 'center',
+      paddingHorizontal: SPACING.lg,
+      ...cardShadow(isDark),
+    },
+    manageBtnOutline: {
+      borderWidth: 2,
+    },
+    manageBtnPrimaryText: {
+      color: colors.white100,
+      fontFamily: FONT_FAMILY.bodyBold,
+      fontSize: 11,
+      letterSpacing: LETTER_SPACING.wide,
+    },
+    manageBtnOutlineText: {
+      fontFamily: FONT_FAMILY.bodyBold,
+      fontSize: 11,
+      letterSpacing: LETTER_SPACING.wide,
+    },
+    summaryScroll: {
+      flexDirection: 'row',
+      gap: SPACING.sm,
+      paddingHorizontal: SPACING.xl,
+      paddingBottom: SPACING.md,
+      alignItems: 'stretch',
+    },
+    summaryStat: {
+      width: 162,
+      minHeight: 112,
+      borderWidth: 1,
+      borderRadius: RADIUS.xl,
+      padding: SPACING.md,
+      justifyContent: 'space-between',
+      ...statShadow(isDark),
+    },
     summaryLabel: { fontFamily: FONT_FAMILY.bodyBold, fontSize: 10, letterSpacing: LETTER_SPACING.wider, marginBottom: 8 },
     summaryValue: { fontFamily: FONT_FAMILY.display, fontSize: FONT_SIZE.base },
     summaryMeta: { marginTop: 4, fontFamily: FONT_FAMILY.body, fontSize: FONT_SIZE.xs },
-    smartBanner: { marginHorizontal: SPACING.xl, marginBottom: SPACING.md, borderWidth: 1, borderRadius: RADIUS.lg, padding: SPACING.lg, gap: 6 },
+    smartBanner: {
+      marginHorizontal: SPACING.xl,
+      marginBottom: SPACING.md,
+      borderWidth: 1,
+      borderRadius: RADIUS.xl,
+      padding: SPACING.lg,
+      gap: 6,
+      ...cardShadow(isDark),
+    },
     smartBannerEyebrow: { fontFamily: FONT_FAMILY.bodyBold, fontSize: 9, letterSpacing: LETTER_SPACING.wider },
     smartBannerTitle: { fontFamily: FONT_FAMILY.bodyBold, fontSize: FONT_SIZE.base },
     smartBannerBody: { fontFamily: FONT_FAMILY.body, fontSize: FONT_SIZE.sm, lineHeight: 20 },
     ledgerCtaRow: { flexDirection: 'row', flexWrap: 'wrap', gap: SPACING.sm, marginHorizontal: SPACING.xl, marginBottom: SPACING.md },
-    ledgerCtaPrimary: { flex: 1, minWidth: 140, minHeight: 44, borderWidth: 1, borderRadius: RADIUS.lg, alignItems: 'center', justifyContent: 'center', paddingHorizontal: SPACING.md },
-    ledgerCtaSecondary: { flex: 1, minWidth: 120, minHeight: 44, borderWidth: 1, borderRadius: RADIUS.lg, alignItems: 'center', justifyContent: 'center', paddingHorizontal: SPACING.md },
-    ledgerCtaSecondaryText: { fontFamily: FONT_FAMILY.bodyBold, fontSize: 10, letterSpacing: LETTER_SPACING.wider },
-    previewCard: { flexDirection: 'row', alignItems: 'center', gap: SPACING.sm, borderWidth: 1, borderRadius: RADIUS.lg, padding: SPACING.md, marginBottom: SPACING.sm },
+    ledgerCtaPrimary: {
+      flex: 1,
+      minWidth: 148,
+      minHeight: 50,
+      borderWidth: 1.5,
+      borderRadius: RADIUS.lg,
+      alignItems: 'center',
+      justifyContent: 'center',
+      paddingHorizontal: SPACING.md,
+      ...cardShadow(isDark),
+    },
+    ledgerCtaSecondary: {
+      flex: 1,
+      minWidth: 132,
+      minHeight: 50,
+      borderWidth: 2,
+      borderRadius: RADIUS.lg,
+      alignItems: 'center',
+      justifyContent: 'center',
+      paddingHorizontal: SPACING.md,
+      ...cardShadow(isDark),
+    },
+    ledgerCtaSecondaryText: { fontFamily: FONT_FAMILY.bodyBold, fontSize: 11, letterSpacing: LETTER_SPACING.wide },
+    previewCard: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: SPACING.sm,
+      borderWidth: 1,
+      borderRadius: RADIUS.lg,
+      padding: SPACING.md,
+      marginBottom: SPACING.sm,
+      ...cardShadow(isDark),
+    },
     previewRef: { fontFamily: FONT_FAMILY.bodyBold, fontSize: FONT_SIZE.sm },
     previewSub: { marginTop: 2, fontFamily: FONT_FAMILY.body, fontSize: FONT_SIZE.xs },
     previewAmount: { fontFamily: FONT_FAMILY.display, fontSize: FONT_SIZE.sm },
@@ -1651,12 +1803,26 @@ const getStyles = (colors: any) =>
     searchInput: { flex: 1, fontFamily: FONT_FAMILY.body, fontSize: FONT_SIZE.sm },
     tabsRow: { paddingHorizontal: SPACING.xl, paddingBottom: SPACING.sm, gap: SPACING.sm },
     filtersRow: { paddingHorizontal: SPACING.xl, paddingBottom: SPACING.md, gap: SPACING.sm },
-    filterChip: { borderWidth: 1, borderRadius: RADIUS.full, paddingHorizontal: 12, paddingVertical: 8 },
-    filterText: { fontFamily: FONT_FAMILY.bodyBold, fontSize: 10, letterSpacing: LETTER_SPACING.wider },
+    filterChip: {
+      borderWidth: 1,
+      borderRadius: RADIUS.full,
+      paddingHorizontal: 16,
+      paddingVertical: 10,
+      minHeight: 44,
+      justifyContent: 'center',
+    },
+    filterText: { fontFamily: FONT_FAMILY.bodyBold, fontSize: 11, letterSpacing: LETTER_SPACING.wide },
     loader: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 10 },
     loaderText: { fontFamily: FONT_FAMILY.body, fontSize: FONT_SIZE.sm },
     list: { paddingHorizontal: SPACING.xl, paddingBottom: SPACING.xl },
-    card: { borderWidth: 1, borderRadius: RADIUS.lg, padding: SPACING.md, marginBottom: SPACING.sm, gap: SPACING.sm },
+    card: {
+      borderWidth: 1,
+      borderRadius: RADIUS.xl,
+      padding: SPACING.md,
+      marginBottom: SPACING.sm,
+      gap: SPACING.sm,
+      ...cardShadow(isDark),
+    },
     cardHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: SPACING.sm },
     codePill: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 10, paddingVertical: 6, borderRadius: RADIUS.full, flex: 1, marginRight: SPACING.sm },
     codeText: { fontFamily: FONT_FAMILY.bodyBold, fontSize: 10, letterSpacing: LETTER_SPACING.wider },
@@ -1675,13 +1841,25 @@ const getStyles = (colors: any) =>
     emptyWrap: { alignItems: 'center', paddingVertical: 72, gap: 10 },
     emptyCode: { fontFamily: FONT_FAMILY.display, fontSize: FONT_SIZE['2xl'] },
     emptyText: { fontFamily: FONT_FAMILY.body, fontSize: FONT_SIZE.sm },
-    modalBackdrop: { flex: 1, backgroundColor: 'rgba(12,22,36,0.68)', justifyContent: 'flex-end' },
+    modalBackdrop: {
+      flex: 1,
+      backgroundColor: isDark ? 'rgba(0,0,0,0.78)' : 'rgba(15,23,42,0.5)',
+      justifyContent: 'flex-end',
+    },
     modalCard: { maxHeight: '92%', borderTopLeftRadius: 24, borderTopRightRadius: 24, borderWidth: 1, overflow: 'hidden' },
     modalHeader: { flexDirection: 'row', alignItems: 'flex-start', gap: SPACING.md, padding: SPACING.xl, borderBottomWidth: 1 },
     modalEyebrow: { fontFamily: FONT_FAMILY.bodyBold, fontSize: 10, letterSpacing: LETTER_SPACING.wider, marginBottom: 8 },
     modalTitle: { fontFamily: FONT_FAMILY.display, fontSize: FONT_SIZE.xl },
     modalSub: { marginTop: 4, fontFamily: FONT_FAMILY.body, fontSize: FONT_SIZE.xs },
-    closeBtn: { width: 40, height: 40, borderWidth: 1, borderRadius: 20, alignItems: 'center', justifyContent: 'center' },
+    closeBtn: {
+      width: 44,
+      height: 44,
+      borderWidth: 1.5,
+      borderRadius: 22,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: colors.bgCard,
+    },
     closeText: { fontFamily: FONT_FAMILY.bodyBold, fontSize: 12 },
     modalBody: { padding: SPACING.xl, gap: SPACING.lg },
     heroCard: { borderWidth: 1, borderRadius: RADIUS.lg, padding: SPACING.lg },
@@ -1710,7 +1888,23 @@ const getStyles = (colors: any) =>
     bankCard: { borderWidth: 1, borderRadius: RADIUS.md, padding: SPACING.md, marginTop: SPACING.sm },
     bankNote: { marginTop: 6, fontFamily: FONT_FAMILY.body, fontSize: 11, lineHeight: 18 },
     actionsRow: { flexDirection: 'row', flexWrap: 'wrap', gap: SPACING.sm, padding: SPACING.xl, borderTopWidth: 1 },
-    actionButton: { minHeight: 48, minWidth: 120, flexGrow: 1, borderWidth: 1, borderRadius: RADIUS.lg, alignItems: 'center', justifyContent: 'center', paddingHorizontal: SPACING.md },
-    actionText: { fontFamily: FONT_FAMILY.bodyBold, fontSize: 10, letterSpacing: LETTER_SPACING.wider },
-    actionPrimaryText: { color: colors.white100, fontFamily: FONT_FAMILY.bodyBold, fontSize: 10, letterSpacing: LETTER_SPACING.wider },
+    actionButton: {
+      minHeight: 52,
+      minWidth: 128,
+      flexGrow: 1,
+      borderWidth: 1.5,
+      borderRadius: RADIUS.lg,
+      alignItems: 'center',
+      justifyContent: 'center',
+      paddingHorizontal: SPACING.md,
+      paddingVertical: 4,
+    },
+    actionText: { fontFamily: FONT_FAMILY.bodyBold, fontSize: 11, letterSpacing: LETTER_SPACING.wide, textAlign: 'center' },
+    actionPrimaryText: {
+      color: colors.white100,
+      fontFamily: FONT_FAMILY.bodyBold,
+      fontSize: 11,
+      letterSpacing: LETTER_SPACING.wide,
+      textAlign: 'center',
+    },
   });

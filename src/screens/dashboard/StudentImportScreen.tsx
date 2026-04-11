@@ -17,13 +17,15 @@ import { shareCsv } from '../../lib/csv';
 import { parseStudentImportCsv, studentImportService, type ParsedImportStudent } from '../../services/student-import.service';
 import { FONT_FAMILY, FONT_SIZE, LETTER_SPACING } from '../../constants/typography';
 import { SPACING, RADIUS } from '../../constants/spacing';
+import { ROUTES } from '../../navigation/routes';
+import { goBackOrTo } from '../../navigation/goBackOrTo';
 
 const TEMPLATE_ROWS: string[][] = [
   ['full_name', 'student_email', 'parent_email', 'parent_name', 'parent_phone', 'grade', 'section', 'enrollment_type'],
   ['Ada Lovelace', 'ada@example.com', 'parent@example.com', 'Mrs Lovelace', '08000000000', 'JSS 2', 'A', 'school'],
 ];
 
-export default function StudentImportScreen({ navigation }: { navigation: { goBack: () => void } }) {
+export default function StudentImportScreen({ navigation }: { navigation: { goBack: () => void; canGoBack?: () => boolean; navigate: (name: string) => void } }) {
   const { profile } = useAuth();
   const { colors } = useTheme();
   const styles = useMemo(() => getStyles(colors), [colors]);
@@ -67,7 +69,7 @@ export default function StudentImportScreen({ navigation }: { navigation: { goBa
   if (!canUse) {
     return (
       <SafeAreaView style={styles.safe}>
-        <ScreenHeader title="Import students" onBack={() => navigation.goBack()} />
+        <ScreenHeader title="Import students" onBack={() => goBackOrTo(navigation, ROUTES.PeopleHub)} />
         <View style={styles.center}>
           <Text style={styles.muted}>Available to admin, teacher, and school accounts.</Text>
         </View>
@@ -80,7 +82,7 @@ export default function StudentImportScreen({ navigation }: { navigation: { goBa
       <ScreenHeader
         title="Import students"
         subtitle="Paste CSV → pending registrations (matches web columns)"
-        onBack={() => navigation.goBack()}
+        onBack={() => goBackOrTo(navigation, ROUTES.PeopleHub)}
       />
 
       <ScrollView contentContainerStyle={styles.scroll} keyboardShouldPersistTaps="handled">

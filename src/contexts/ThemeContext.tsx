@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useEffect, useState } from 'react';
+import React, { createContext, useContext, useState } from 'react';
 import { useColorScheme } from 'react-native';
 import { LIGHT_COLORS, DARK_COLORS, type ColorPalette } from '../constants/colors';
 
@@ -15,13 +15,8 @@ const ThemeContext = createContext<ThemeContextType | undefined>(undefined);
 
 export function ThemeProvider({ children }: { children: React.ReactNode }) {
   const systemScheme = useColorScheme();
+  /** Initialise from system once; manual toggle is not overwritten when the OS theme changes. */
   const [theme, setTheme] = useState<Theme>(systemScheme === 'dark' ? 'dark' : 'light');
-
-  useEffect(() => {
-    if (systemScheme) {
-      setTheme(systemScheme);
-    }
-  }, [systemScheme]);
 
   const toggleTheme = () => {
     setTheme((prev) => (prev === 'light' ? 'dark' : 'light'));

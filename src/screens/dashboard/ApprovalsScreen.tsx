@@ -21,6 +21,7 @@ import { FONT_FAMILY, FONT_SIZE, LETTER_SPACING } from '../../constants/typograp
 import { SPACING, RADIUS } from '../../constants/spacing';
 import { AdminCollectionHeader } from '../../components/ui/AdminCollectionHeader';
 import { ROUTES } from '../../navigation/routes';
+import { goBackOrTo } from '../../navigation/goBackOrTo';
 import { RoleGuard } from '../../components/ui/RoleGuard';
 
 type Tab = 'students' | 'schools' | 'prospective';
@@ -434,7 +435,7 @@ export default function ApprovalsScreen({ navigation }: any) {
       <AdminCollectionHeader
         title="Approvals"
         subtitle={`${totalPending} pending · queue oldest-first · ${isAdmin ? 'admin' : isTeacher ? 'teacher' : 'staff'}`}
-        onBack={() => navigation.goBack()}
+        onBack={() => goBackOrTo(navigation, ROUTES.PeopleHub)}
         colors={COLORS}
       />
 
