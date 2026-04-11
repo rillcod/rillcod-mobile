@@ -1,20 +1,39 @@
 {
   "cli": {
-    "version": ">= 7.0.0"
+    "version": ">= 7.0.0",
+    "appVersionSource": "remote"
   },
   "build": {
     "development": {
+      "node": "20.19.4",
       "developmentClient": true,
       "distribution": "internal",
       "android": {
+        "image": "sdk-54",
         "buildType": "apk"
+      },
+      "ios": {
+        "image": "sdk-54"
       }
     },
     "preview": {
+      "node": "20.19.4",
       "android": {
+        "image": "sdk-54",
         "buildType": "apk"
+      },
+      "ios": {
+        "image": "sdk-54"
       }
     },
-    "production": {}
+    "production": {
+      "node": "20.19.4",
+      "android": {
+        "image": "sdk-54"
+      },
+      "ios": {
+        "image": "sdk-54"
+      }
+    }
   }
 }
