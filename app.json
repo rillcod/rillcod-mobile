@@ -1,6 +1,6 @@
 {
   "expo": {
-    "name": "Rillcod",
+    "name": "Rillcod HUB",
     "slug": "rillcod-academy",
     "version": "1.0.0",
     "orientation": "portrait",
@@ -15,7 +15,8 @@
       "supportsTablet": false,
       "bundleIdentifier": "com.rillcod.academy",
       "infoPlist": {
-        "ITSAppUsesNonExemptEncryption": false
+        "ITSAppUsesNonExemptEncryption": false,
+        "CFBundleDisplayName": "Rillcod HUB"
       }
     },
     "android": {

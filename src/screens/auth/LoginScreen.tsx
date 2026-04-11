@@ -171,7 +171,7 @@ export default function LoginScreen({ navigation }: Props) {
           >
             <View style={styles.registerDividerRow}>
               <View style={styles.registerLine} />
-              <Text style={styles.registerDividerText}>New to Rillcod?</Text>
+              <Text style={styles.registerDividerText}>New to Rillcod HUB?</Text>
               <View style={styles.registerLine} />
             </View>
 
@@ -268,28 +268,28 @@ const styles = StyleSheet.create({
     marginBottom: SPACING.md,
   },
   logoWrap: {
-    width: 56,
-    height: 56,
-    borderRadius: RADIUS.lg,
+    width: 44,
+    height: 44,
+    borderRadius: RADIUS.md,
     overflow: 'hidden',
     borderWidth: 1,
     borderColor: COLORS.border,
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: COLORS.bgCard,
-    padding: 4,
+    padding: 5,
     ...SHADOW.sm,
   },
   logo: {
-    width: 48,
-    height: 48,
+    width: 34,
+    height: 34,
   },
   brandText: {
     flex: 1,
   },
   brandName: {
     fontFamily: FONT_FAMILY.display,
-    fontSize: FONT_SIZE.xl,
+    fontSize: FONT_SIZE.lg,
     color: COLORS.textPrimary,
     letterSpacing: LETTER_SPACING.wide,
     textTransform: 'uppercase',

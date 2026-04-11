@@ -338,7 +338,7 @@ export default function PublicStudentRegistrationScreen({ navigation }: any) {
 
   const STEP_TITLES = ['Choose Enrollment Type', 'Student Details', 'Programme & Parent'];
   const STEP_SUBS = [
-    'Select how your child will learn with Rillcod',
+    'Select how your child will learn with Rillcod HUB',
     'Tell us about the student',
     'Programme interest & guardian info',
   ];
@@ -369,7 +369,7 @@ export default function PublicStudentRegistrationScreen({ navigation }: any) {
 
               <View style={styles.brandRow}>
                 <Image source={require('../../../assets/rillcod-icon.png')} style={styles.brandLogo} resizeMode="contain" />
-                <Text style={styles.brandName}>Rillcod Academy</Text>
+                <Text style={styles.brandName}>Rillcod HUB</Text>
               </View>
 
               <Text style={styles.pageTitle}>{STEP_TITLES[step]}</Text>
@@ -597,7 +597,7 @@ export default function PublicStudentRegistrationScreen({ navigation }: any) {
             <Text style={styles.successEmoji}>🎉</Text>
             <Text style={styles.successTitle}>Application Submitted!</Text>
             <Text style={styles.successSub}>
-              Thank you for registering {fullName} with Rillcod Academy. Our admissions team will contact {parentName} within 24–48 hours to confirm enrollment.
+              Thank you for registering {fullName} with Rillcod HUB. Our admissions team will contact {parentName} within 24–48 hours to confirm enrollment.
             </Text>
 
             {enrollmentType ? (
@@ -677,8 +677,8 @@ const styles = StyleSheet.create({
   backBtn: { flexDirection: 'row', alignItems: 'center', gap: 4, marginBottom: SPACING.md },
   backText: { fontFamily: FONT_FAMILY.bodySemi, fontSize: FONT_SIZE.sm, color: COLORS.primaryLight },
   brandRow: { flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: SPACING.lg },
-  brandLogo: { width: 44, height: 44, borderRadius: 12, overflow: 'hidden' },
-  brandName: { fontFamily: FONT_FAMILY.display, fontSize: FONT_SIZE.xl, color: COLORS.textPrimary },
+  brandLogo: { width: 36, height: 36, borderRadius: 10, overflow: 'hidden' },
+  brandName: { fontFamily: FONT_FAMILY.display, fontSize: FONT_SIZE.lg, color: COLORS.textPrimary },
 
   pageTitle: { fontFamily: FONT_FAMILY.display, fontSize: FONT_SIZE['2xl'], color: COLORS.textPrimary, marginBottom: 4 },
   pageSub: { fontFamily: FONT_FAMILY.body, fontSize: FONT_SIZE.sm, color: COLORS.textMuted },

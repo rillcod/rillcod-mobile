@@ -1,8 +1,8 @@
 export default {
   app: {
-    name: 'Rillcod',
+    name: 'Rillcod HUB',
     /** Login header only — shown in ALL CAPS (see LoginScreen brandName style). */
-    loginBrandName: 'Rillcod Academy',
+    loginBrandName: 'Rillcod HUB',
     tagline: 'STEM · AI · Coding · Robotics',
     taglineFull: "Africa's Premier STEM & AI Learning Platform",
   },

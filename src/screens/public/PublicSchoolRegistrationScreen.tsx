@@ -106,13 +106,13 @@ function TermsModal({ visible, onAccept, onClose }: { visible: boolean; onAccept
           style={styles.termsCard}
         >
           <Text style={styles.termsTitle}>🤝 Partnership Terms</Text>
-          <Text style={styles.termsSub}>Rillcod Academy School Partnership Agreement</Text>
+          <Text style={styles.termsSub}>Rillcod HUB School Partnership Agreement</Text>
 
           <ScrollView style={{ maxHeight: 360 }} showsVerticalScrollIndicator={false}>
             {[
               {
                 heading: '1. Revenue Split',
-                body: 'Rillcod Academy and the Partner School agree to a 70/30 revenue sharing model — 70% to Rillcod (curriculum, instructors, materials) and 30% to the Partner School.',
+                body: 'Rillcod HUB and the Partner School agree to a 70/30 revenue sharing model — 70% to Rillcod (curriculum, instructors, materials) and 30% to the Partner School.',
               },
               {
                 heading: '2. Curriculum',
@@ -359,7 +359,7 @@ export default function PublicSchoolRegistrationScreen({ navigation }: any) {
               <View style={styles.brandRow}>
                 <Image source={require('../../../assets/rillcod-icon.png')} style={styles.brandLogo} resizeMode="contain" />
                 <View>
-                  <Text style={styles.brandName}>Rillcod Academy</Text>
+                  <Text style={styles.brandName}>Rillcod HUB</Text>
                   <Text style={styles.brandSub}>School Partnership Programme</Text>
                 </View>
               </View>
@@ -603,7 +603,7 @@ const styles = StyleSheet.create({
   backBtn: { flexDirection: 'row', alignItems: 'center', gap: 4, marginBottom: SPACING.md },
   backText: { fontFamily: FONT_FAMILY.bodySemi, fontSize: FONT_SIZE.sm, color: COLORS.primaryLight },
   brandRow: { flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: SPACING.lg },
-  brandLogo: { width: 48, height: 48, borderRadius: 14, overflow: 'hidden' },
+  brandLogo: { width: 36, height: 36, borderRadius: 10, overflow: 'hidden' },
   brandName: { fontFamily: FONT_FAMILY.display, fontSize: FONT_SIZE.lg, color: COLORS.textPrimary },
   brandSub: { fontFamily: FONT_FAMILY.body, fontSize: FONT_SIZE.xs, color: COLORS.textMuted },
 

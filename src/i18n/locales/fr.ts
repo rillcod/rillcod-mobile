@@ -1,7 +1,7 @@
 export default {
   app: {
-    name: 'Rillcod',
-    loginBrandName: 'Rillcod Academy',
+    name: 'Rillcod HUB',
+    loginBrandName: 'Rillcod HUB',
     tagline: 'STEM · IA · Codage · Robotique',
     taglineFull: "La première plateforme STEM & IA d'Afrique",
   },
