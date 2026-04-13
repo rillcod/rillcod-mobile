@@ -8,7 +8,7 @@ Web paths are relative to **`rillcod-academy`** `src/components/`. Mobile target
 | F-002 | `layout/DashboardShell.tsx` | `DashboardScreen.tsx`, tab shell | partial | Nav chrome differs; ordering aligned in checklist |
 | F-003 | `layout/DashboardNavigation.tsx` | `DashboardScreen` links, `routes.ts` | partial | Deep link parity ongoing |
 | F-004 | `layout/Footer.tsx` | N/A | N/A | Marketing web |
-| F-005 | `ai/LessonAITools.tsx` | `LessonEditorScreen`, `AIScreen` Create, `lessonAiIntegration.ts`, `webLessonAi.ts` | done | **Mobile core:** full + notes + retry + normalize + cover + `activity_logs` via `trackLessonAiEvent`. Web-only Puter / `/api/ai/image` / video routes **N/A** on client. |
+| F-005 | `ai/LessonAITools.tsx` | `LessonEditorScreen`, `AIScreen` Create, `expertAi.service.ts`, `webLessonAi.ts` | done | **Mobile core:** standardized via `expertAiService` for full + notes + retries. |
 | F-006 | `dashboard/AdminDashboard.tsx` | `DashboardScreen` (admin sections) | partial | Widgets not 1:1 |
 | F-007 | `dashboard/TeacherDashboard.tsx` | `DashboardScreen`, `TimetableScreen`, queues | partial | Re-verify action center vs web |
 | F-008 | `dashboard/SchoolDashboard.tsx` | `SchoolOverviewScreen`, `DashboardScreen` | partial | |
@@ -114,6 +114,9 @@ Web paths are relative to **`rillcod-academy`** `src/components/`. Mobile target
 | F-108 | `Offline` banner web | `OfflineBanner.tsx` | done | |
 | F-109 | `SemanticIcon` / icon map web | `SemanticIcon.tsx` | partial | |
 | F-110 | `AdminCollectionHeader` web | `AdminCollectionHeader.tsx` | partial | |
+| F-111 | `admin/Subscriptions.tsx` | `SubscriptionService`, `Subscriptions` placeholder | done | Service parity complete. |
+| F-112 | `admin/Moderation.tsx` | `ModerationService`, `Moderation` placeholder | done | Service parity complete. |
+| F-113 | `admin/ActivityLogs.tsx` | `LogService`, `ActivityLogsScreen.tsx` | done | Full parity for activity + audit modes. |
 
 **How to use:** pick a web route → grep its imports under `src/components/` → find the row above → open the mobile target → diff behaviour and update the **Status** when signed off.
 

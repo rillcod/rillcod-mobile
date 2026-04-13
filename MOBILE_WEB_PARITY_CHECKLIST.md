@@ -1,6 +1,6 @@
 # Mobile vs Web Parity Checklist
 
-Last updated: 2026-04-11 (Batch 7 — workflow registry + CBT session + Paystack verify)  
+Last updated: 2026-04-13 (Batch 9 — AI standardization + Admin Services parity)  
 Primary target: Mobile app is the main product surface; web is the **source of truth for behavior** until parity is signed off.
 
 ## Web source (local)
@@ -397,8 +397,6 @@ Next step: pick a gap, implement the **same** fields and Supabase calls as the w
 
 ## Appendix E — Workflow registry (50+ user-visible flows)
 
-Each row is a **discrete product workflow** (auth, navigation, mutation, or read-heavy task). **`[x]`** = implemented on mobile with service-layer or screen wiring aligned to web intent; **`[~]`** = implemented but strict web sign-off or edge cases remain. **`[ ]`** = not started or blocked. *Counts: 55 rows; 54 `[x]`, 1 `[~]` — update this line when the matrix changes.*
-
 | # | Workflow | Status |
 |---|----------|--------|
 | E-01 | Public student registration submit | [x] |
@@ -456,6 +454,9 @@ Each row is a **discrete product workflow** (auth, navigation, mutation, or read
 | E-53 | Parent: results, grades, attendance, invoices, certificates | [x] |
 | E-54 | Parent feedback submit + staff status | [x] |
 | E-55 | Learn tab + library + engage + vault + playground + portfolio | [x] |
+| E-56 | System Activity Logs directory & logic | [x] |
+| E-57 | School Subscription Service parity | [x] |
+| E-58 | Content Moderation Service parity | [x] |
 
 ---
 
@@ -603,6 +604,19 @@ Services and UI only; tables/columns already exist in `src/types/supabase.ts` an
 - [x] `screen` `LessonEditorScreen` / `AIScreen` — wired through **`lessonAiIntegration`**; subject quick-picks; editor cover thumbnail when topic + subject set.
 - [x] `lib` **`reportShare.ts`** — text summary + share sheet; **`ReportBuilderScreen`** “Share report (text)” beside PDF export.
 - [x] `doc` **Appendix F** — registry rows **F-005** / **F-016** marked **done** where integrated; “Mobile integration modules” table in registry.
+
+---
+
+## Batch 9 — AI Standardisation + Admin Services (2026-04-13)
+
+- [x] `service` `expertAi.service` — Centralized multi-model engine with 3x retries and 50s timeouts.
+- [x] `parity` Standardized Lessons, Assignments, CBT, Feedback, and Newsletters across all generator modals.
+- [x] `service` `log.service` — Full activity + audit log parity with web API.
+- [x] `service` `subscription.service` — School plan management service.
+- [x] `service` `moderation.service` — Content review and flagging service.
+- [x] `screen` `ActivityLogsScreen.tsx` — Dynamic log directory for admins.
+- [x] `nav` `routes.ts` + `types.ts` — Added Subscriptions and Moderation routes; re-linked dashboard tiles.
+- [x] `migration` `unlink_parent_rpc` — Safety drop/recreate for Postgres parameter stability.
 
 ---
 
