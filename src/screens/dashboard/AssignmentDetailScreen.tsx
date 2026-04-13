@@ -18,6 +18,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { MotiView } from 'moti';
 import { useAuth } from '../../contexts/AuthContext';
 import { assignmentService } from '../../services/assignment.service';
+import { expertAiService } from '../../services/expertAi.service';
 import { ScreenHeader } from '../../components/ui/ScreenHeader';
 import { COLORS } from '../../constants/colors';
 import { FONT_FAMILY, FONT_SIZE } from '../../constants/typography';
@@ -201,6 +202,7 @@ export default function AssignmentDetailScreen({ route, navigation }: any) {
   const [gradingId, setGradingId] = useState<string | null>(null);
   const [gradeInput, setGradeInput] = useState('');
   const [feedbackInput, setFeedbackInput] = useState('');
+  const [generatingFeedback, setGeneratingFeedback] = useState(false);
 
   const canGrade = profile?.role === 'admin' || profile?.role === 'teacher' || profile?.role === 'school';
 
@@ -265,6 +267,30 @@ export default function AssignmentDetailScreen({ route, navigation }: any) {
       cancelled = true;
     };
   }, [filePublicUrl, filePreviewUri]);
+  
+  const generateAiFeedback = async (submission: Submission) => {
+    if (!assignment || !gradeInput) {
+      Alert.alert('Grade required', 'Enter a score first to help the AI contextualize feedback.');
+      return;
+    }
+    setGeneratingFeedback(true);
+    try {
+      const result = await expertAiService.generate({
+        type: 'report-feedback',
+        topic: assignment.title,
+        studentName: submission.student_name,
+        overallScore: gradeInput,
+        courseName: assignment.courses?.title ?? 'this course',
+        programName: assignment.courses?.programs?.name ?? undefined,
+      });
+      const comment = result.key_strengths + ' ' + result.areas_for_growth;
+      setFeedbackInput(comment.trim());
+    } catch (error: any) {
+      Alert.alert('AI Feedback', error.message || 'Generation failed');
+    } finally {
+      setGeneratingFeedback(false);
+    }
+  };
 
   const saveGrade = async (submissionId: string) => {
     const grade = Number(gradeInput);
@@ -591,6 +617,16 @@ export default function AssignmentDetailScreen({ route, navigation }: any) {
                             ))}
                           </ScrollView>
                           <TextInput style={styles.gradeInput} value={gradeInput} onChangeText={setGradeInput} keyboardType="numeric" placeholder={`Score (max ${assignment.max_points ?? 100})`} placeholderTextColor={COLORS.textMuted} />
+                          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 4 }}>
+                            <Text style={styles.instructionsLabel}>FEEDBACK</Text>
+                            <TouchableOpacity onPress={() => generateAiFeedback(submission)} disabled={generatingFeedback}>
+                              {generatingFeedback ? (
+                                <ActivityIndicator size="small" color={COLORS.primary} />
+                              ) : (
+                                <Text style={{ fontFamily: FONT_FAMILY.bodyBold, fontSize: 10, color: COLORS.primary }}>✦ GENERATE WITH AI</Text>
+                              )}
+                            </TouchableOpacity>
+                          </View>
                           <TextInput style={[styles.gradeInput, styles.feedbackInput]} value={feedbackInput} onChangeText={setFeedbackInput} placeholder="Feedback (optional)" placeholderTextColor={COLORS.textMuted} multiline />
                           <View style={styles.gradeActions}>
                             <TouchableOpacity onPress={() => { setGradingId(null); setGradeInput(''); setFeedbackInput(''); }} style={styles.cancelBtn}><Text style={styles.cancelText}>Cancel</Text></TouchableOpacity>

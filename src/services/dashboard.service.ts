@@ -245,11 +245,21 @@ export class DashboardService {
     return (data ?? []).map((r: { id: string }) => r.id);
   }
 
-  async listSchoolInvoicePreviews(schoolId: string, limit = 6) {
+  async listSchoolInvoicePreviews(school_id: string, limit = 6) {
     const { data, error } = await supabase
       .from('invoices')
       .select('id, invoice_number, amount, currency, status, due_date, schools(name)')
-      .eq('school_id', schoolId)
+      .eq('school_id', school_id)
+      .order('created_at', { ascending: false })
+      .limit(limit);
+    if (error) throw error;
+    return data ?? [];
+  }
+
+  async listAdminSchoolInvoicePreviews(limit = 6) {
+    const { data, error } = await supabase
+      .from('invoices')
+      .select('id, invoice_number, amount, currency, status, due_date, schools(name)')
       .order('created_at', { ascending: false })
       .limit(limit);
     if (error) throw error;

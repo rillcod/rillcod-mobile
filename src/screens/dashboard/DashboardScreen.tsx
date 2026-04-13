@@ -228,6 +228,7 @@ const ACTION_SCREENS: Record<string, string> = {
   'Parent Attendance': ROUTES.ParentAttendance,
   IoT: ROUTES.IoT,
   'People hub': ROUTES.PeopleHub,
+  'Activity logs': ROUTES.ActivityLogs,
 };
 
 /**
@@ -245,6 +246,7 @@ const ADMIN_HOME_LINKS = [
   { icon: 'CB', label: 'CBT', screen: ROUTES.CBT, color: COLORS.warning },
   { icon: 'AN', label: 'Analytics', screen: ROUTES.Analytics, color: COLORS.success },
   { icon: 'IT', label: 'IoT', screen: ROUTES.IoT, color: COLORS.info },
+  { icon: 'LG', label: 'Activity logs', screen: ROUTES.ActivityLogs, color: COLORS.primary },
   { icon: 'NW', label: 'Newsletters', screen: ROUTES.Newsletters, color: COLORS.accent },
   { icon: 'SG', label: 'Settings', screen: ROUTES.Settings, color: COLORS.textMuted },
 ];
@@ -516,12 +518,14 @@ export default function DashboardScreen({ navigation }: any) {
     try {
       setQuickLinks([]);
       setUpcomingSlots([]);
-      const [adminStats, recentActivity] = await Promise.all([
+      const [adminStats, recentActivity, invoices] = await Promise.all([
         dashboardService.getAdminStats(colors),
-        dashboardService.getRecentActivity(colors)
+        dashboardService.getRecentActivity(colors),
+        dashboardService.listAdminSchoolInvoicePreviews(6)
       ]);
       setStats(adminStats);
       setActivities(recentActivity);
+      setSchoolPayments(invoices as SchoolPayment[]);
     } catch (error) {
       console.error('Failed to load admin dashboard:', error);
     }

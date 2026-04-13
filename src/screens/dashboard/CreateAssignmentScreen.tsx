@@ -12,8 +12,9 @@ import { courseService } from '../../services/course.service';
 import { ScreenHeader } from '../../components/ui/ScreenHeader';
 import { COLORS } from '../../constants/colors';
 import { FONT_FAMILY, FONT_SIZE } from '../../constants/typography';
-import { SPACING, RADIUS } from '../../constants/spacing';
+import { RADIUS, SPACING } from '../../constants/spacing';
 import { ROUTES } from '../../navigation/routes';
+import { AiGeneratorModal } from '../../components/AiGeneratorModal';
 
 const ASSIGNMENT_TYPES = [
   { key: 'theory', label: 'Theory', emoji: '📖', color: COLORS.info },
@@ -69,6 +70,8 @@ export default function CreateAssignmentScreen({ navigation, route }: any) {
     course_id: '',
     lesson_id: '',
   });
+
+  const [aiModalVisible, setAiModalVisible] = useState(false);
 
   const set = (key: string) => (val: any) => setForm(f => ({ ...f, [key]: val }));
 
@@ -276,6 +279,22 @@ export default function CreateAssignmentScreen({ navigation, route }: any) {
         accentColor={selectedType.color}
       />
 
+      <AiGeneratorModal
+        visible={aiModalVisible}
+        onClose={() => setAiModalVisible(false)}
+        type="assignment"
+        courseName={resolvedClassName}
+        onGenerated={(data) => {
+          setForm(f => ({
+            ...f,
+            title: data.title || f.title,
+            description: data.description || f.description,
+            instructions: data.instructions || f.instructions,
+            type: data.assignment_type || f.type,
+          }));
+        }}
+      />
+
       <ScrollView
         showsVerticalScrollIndicator={false}
         contentContainerStyle={styles.scroll}
@@ -285,7 +304,16 @@ export default function CreateAssignmentScreen({ navigation, route }: any) {
 
           {/* Type picker */}
           <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Assignment Type</Text>
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: SPACING.md }}>
+              <Text style={[styles.sectionTitle, { marginBottom: 0 }]}>Assignment Type</Text>
+              <TouchableOpacity
+                onPress={() => setAiModalVisible(true)}
+                style={{ flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: COLORS.primaryGlow, paddingHorizontal: 12, paddingVertical: 6, borderRadius: RADIUS.full }}
+              >
+                <Ionicons name="sparkles" size={14} color={COLORS.primary} />
+                <Text style={{ fontFamily: FONT_FAMILY.bodyBold, fontSize: 11, color: COLORS.primary }}>GENERATE WITH AI</Text>
+              </TouchableOpacity>
+            </View>
             <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.typePills}>
               {ASSIGNMENT_TYPES.map(t => (
                 <TouchableOpacity

@@ -113,6 +113,14 @@ import CourseEditorScreen from '../screens/dashboard/CourseEditorScreen';
 import MarkAttendanceScreen from '../screens/dashboard/MarkAttendanceScreen';
 import ProgressScreen from '../screens/dashboard/ProgressScreen';
 import IoTScreen from '../screens/dashboard/IoTScreen';
+import ActivityLogsScreen from '../screens/admin/ActivityLogsScreen';
+
+const PlaceholderScreen = ({ route }: any) => (
+  <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#0f172a' }}>
+    <Text style={{ color: '#fff', fontSize: 18, fontFamily: 'Outfit-Bold' }}>{route.name}</Text>
+    <Text style={{ color: '#94a3b8', marginTop: 8 }}>Feature parity in progress...</Text>
+  </View>
+);
 
 import { COLORS } from '../constants/colors';
 import { FONT_FAMILY, FONT_SIZE } from '../constants/typography';
@@ -209,6 +217,7 @@ const StaffStudentReportScreen = withRoleGuard(StudentReportScreen, ['admin', 't
 const StaffCBTExaminationScreen = withRoleGuard(CBTExaminationScreen, ['admin', 'teacher', 'student']);
 const StaffCBTExamEditorScreen = withRoleGuard(CBTExamEditorScreen, ['admin', 'teacher']);
 const StaffCBTGradingScreen = withRoleGuard(CBTGradingScreen, ['admin', 'teacher']);
+const AdminOnlyActivityLogsScreen = withRoleGuard(ActivityLogsScreen, ['admin', 'teacher']);
 
 type IoniconName = ComponentProps<typeof Ionicons>['name'];
 
@@ -543,6 +552,9 @@ function MainStack() {
       <Stack.Screen name={ROUTES.SchoolBilling} component={StaffSchoolBillingScreen} />
       <Stack.Screen name={ROUTES.CourseDetail} component={StaffCourseDetailScreen} />
       <Stack.Screen name={ROUTES.MarkAttendance} component={StaffMarkAttendanceScreen} />
+      <Stack.Screen name={ROUTES.ActivityLogs} component={AdminOnlyActivityLogsScreen} />
+      <Stack.Screen name={ROUTES.Subscriptions} component={PlaceholderScreen} />
+      <Stack.Screen name={ROUTES.Moderation} component={PlaceholderScreen} />
     </Stack.Navigator>
   );
 }

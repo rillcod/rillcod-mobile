@@ -21,6 +21,7 @@ import { cbtService } from '../../services/cbt.service';
 import { courseService } from '../../services/course.service';
 import { gamificationService } from '../../services/gamification.service';
 import { appSettingsService } from '../../services/app-settings.service';
+import { expertAiService } from '../../services/expertAi.service';
 import { LESSON_AI_PRESET_SUBJECTS, lessonCoverImageUrl } from '../../lib/lessonAiPort';
 import {
   buildQuickLessonAiRequest,
@@ -48,7 +49,8 @@ const CREATE_TYPES = [
   { key: 'assignment', emoji: '📋', label: 'Assignment',      desc: 'Task with objectives and deliverables' },
   { key: 'cbt',        emoji: '🎯', label: 'CBT Questions',   desc: '10 multiple-choice exam questions' },
   { key: 'report-feedback', emoji: '📊', label: 'Report Feedback', desc: 'Teacher comments for a student' },
-  { key: 'daily-missions', emoji: '🚀', label: 'Daily Missions', desc: 'Progressive missions and micro tasks' },
+  { key: 'newsletter',      emoji: '🗞️', label: 'Newsletter',      desc: 'visionary school newsletters' },
+  { key: 'daily-missions',  emoji: '🚀', label: 'Daily Missions',  desc: 'Progressive missions and micro tasks' },
 ];
 
 const CODE_LANGS = [
@@ -171,23 +173,8 @@ async function fetchTutorContext(profile: AIProfile | null | undefined): Promise
 }
 
 function buildCreatePrompt(type: string, topic: string, grade: string, subject: string): string {
-  const ctx = `Grade: ${grade || 'JSS1'}, Subject: ${subject || 'STEM'}, Topic: ${topic}`;
-  switch (type) {
-    case 'lesson':
-      return `Create a complete lesson for ${ctx}. Return JSON: { title, objectives: string[], hook: string, blocks: [{type,title,content}], activities: [{title,steps:string[]}], quiz: [{question,options:string[],answer:number}] }`;
-    case 'lesson-notes':
-      return `Write concise study notes for ${ctx}. Plain text, use headers (##), bullet points. Max 400 words.`;
-    case 'assignment':
-      return `Design an assignment for ${ctx}. Return JSON: { title, description, objectives: string[], tasks: string[], deliverables: string[], dueIn: string }`;
-    case 'cbt':
-      return `Generate 10 multiple-choice questions for ${ctx}. Return JSON: { title, questions: [{question, options: string[4], answer: number, explanation: string}] }`;
-    case 'report-feedback':
-      return `Write teacher report feedback for a student studying ${ctx}. Include: strengths, areas for improvement, encouragement. Return JSON: { strengths: string[], improvements: string[], comment: string }`;
-    case 'daily-missions':
-      return `Create a daily mission pack for ${ctx}. Return JSON: { title, summary, missions: [{ title, objective, steps: string[], xp: number, difficulty: "easy" | "medium" | "hard" }] }`;
-    default:
-      return `Generate educational content for ${ctx}. Topic: ${topic}.`;
-  }
+  // Deprecated: Moving to expertAiService
+  return "";
 }
 
 function parseGenerated(result: string): any | null {
@@ -489,19 +476,19 @@ function CreateTab({ profile, navigation }: { profile: AIProfile | null; navigat
           subject: subject.trim() || undefined,
           durationMinutes: 60,
         });
-        const data = await runLessonAiNotesGeneration(req);
         setResult(JSON.stringify(data));
         void trackLessonAiEvent(profile?.id ?? null, profile?.school_id ?? null, 'notes', {
           source: 'ai_screen_create',
         });
       } else {
-        const prompt = buildCreatePrompt(type, topic.trim(), grade, subject.trim());
-        const messages: ChatMessage[] = [
-          { role: 'system', content: SYSTEM_CREATOR },
-          { role: 'user', content: prompt },
-        ];
-        const raw = await callAI({ messages, maxTokens: 2048, temperature: 0.8 });
-        setResult(raw);
+        const data = await expertAiService.generate({
+          type: type as any,
+          topic: topic.trim(),
+          gradeLevel: grade,
+          subject: subject.trim() || undefined,
+          programName: profile?.school_name ?? undefined,
+        });
+        setResult(JSON.stringify(data));
       }
 
       if (type === 'lesson' || type === 'lesson-notes') {

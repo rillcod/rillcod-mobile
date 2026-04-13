@@ -28,6 +28,7 @@ import { ScreenHeader } from '../../components/ui/ScreenHeader';
 import { FONT_FAMILY, FONT_SIZE } from '../../constants/typography';
 import { SPACING, RADIUS } from '../../constants/spacing';
 import { ROUTES } from '../../navigation/routes';
+import { AiGeneratorModal } from '../../components/AiGeneratorModal';
 
 const EXAM_TYPES = ['examination', 'evaluation', 'quiz', 'practice'] as const;
 
@@ -119,6 +120,7 @@ export default function CBTExamEditorScreen({ navigation, route }: any) {
 
   const [questions, setQuestions] = useState<QuestionDraft[]>([]);
   const [editModal, setEditModal] = useState<QuestionDraft | null>(null);
+  const [aiModalVisible, setAiModalVisible] = useState(false);
 
   const filteredCourses = useMemo(
     () => (programId ? courses.filter((c) => c.program_id === programId) : courses),
@@ -354,6 +356,35 @@ export default function CBTExamEditorScreen({ navigation, route }: any) {
         subtitle="Settings, schedule, and full question bank"
         onBack={() => navigation.goBack()}
       />
+
+      <AiGeneratorModal
+        visible={aiModalVisible}
+        onClose={() => setAiModalVisible(false)}
+        type="cbt"
+        courseName={title}
+        onGenerated={(data: any) => {
+          if (!data) return;
+          setTitle(data.title || title);
+          setDescription(data.description || description);
+          setDurationMinutes(String(data.duration_minutes || durationMinutes));
+          setPassingScore(String(data.passing_score || passingScore));
+          
+          if (data.questions && Array.isArray(data.questions)) {
+            const drafts: QuestionDraft[] = data.questions.map((q: any, i: number) => ({
+              localKey: `ai_${Date.now()}_${i}`,
+              dbId: null,
+              question_text: q.question_text || '',
+              question_type: (q.question_type as QuestionType) || 'multiple_choice',
+              points: String(q.points || 5),
+              order_index: i,
+              options: q.options && Array.isArray(q.options) ? q.options : ['', '', '', ''],
+              correct_answer: q.correct_answer || '',
+              metadataNote: q.metadata?.logic_sentence || '',
+            }));
+            setQuestions(drafts);
+          }
+        }}
+      />
       <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
         <ScrollView contentContainerStyle={styles.scroll} keyboardShouldPersistTaps="handled">
           <Text style={styles.sectionTitle}>Exam settings</Text>
@@ -508,7 +539,16 @@ export default function CBTExamEditorScreen({ navigation, route }: any) {
             <Switch value={isActive} onValueChange={setIsActive} trackColor={{ true: colors.success, false: colors.border }} />
           </View>
 
-          <Text style={[styles.sectionTitle, { marginTop: SPACING.xl }]}>Question bank ({questions.length})</Text>
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: SPACING.xl }}>
+            <Text style={[styles.sectionTitle, { marginBottom: 0 }]}>Question bank ({questions.length})</Text>
+            <TouchableOpacity
+              onPress={() => setAiModalVisible(true)}
+              style={{ flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: colors.primaryGlow, paddingHorizontal: 12, paddingVertical: 6, borderRadius: RADIUS.full }}
+            >
+              <Ionicons name="sparkles" size={14} color={colors.primary} />
+              <Text style={{ fontFamily: FONT_FAMILY.bodyBold, fontSize: 11, color: colors.primary }}>GENERATE WITH AI</Text>
+            </TouchableOpacity>
+          </View>
           <Text style={[styles.hint, { color: colors.textMuted, marginBottom: SPACING.md }]}>
             Multiple choice & true/false auto-score. Essay & coding_blocks may need manual grading in the Grade queue.
           </Text>

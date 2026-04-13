@@ -128,6 +128,8 @@ export default function PeopleHubScreen({
       { key: 'stu', title: 'Students', meta: 'Portal learners', route: ROUTES.Students },
       { key: 'par', title: 'Parents', meta: 'Parent portal accounts', route: ROUTES.Parents },
       { key: 'usr', title: 'All portal users', meta: 'Admin CRUD & activation', route: ROUTES.Users },
+      { key: 'sub', title: 'Subscription status', meta: 'Billing & plan tiers', route: ROUTES.Subscriptions },
+      { key: 'logs', title: 'Activity logs', meta: 'Audit & action history', route: ROUTES.ActivityLogs },
     ];
   }, [role]);
 
@@ -162,6 +164,7 @@ export default function PeopleHubScreen({
       { key: 'br', title: 'Bulk register', meta: 'Batch flow', route: ROUTES.BulkRegister },
       { key: 'en', title: 'Enrol students', meta: 'Programs & classes', route: ROUTES.EnrolStudents },
       { key: 'wi', title: 'Wipe students', meta: 'Danger zone · bulk deactivate', route: ROUTES.WipeStudents },
+      { key: 'logs', title: 'Activity logs', meta: 'Audit & action history', route: ROUTES.ActivityLogs },
     ];
   }, [role]);
 

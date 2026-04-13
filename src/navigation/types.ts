@@ -93,6 +93,9 @@ export type RootStackParamList = {
   SchoolOverview: undefined;
   SchoolBilling: undefined;
   MarkAttendance: { classId: string; className?: string };
+  ActivityLogs: undefined;
+  Subscriptions: undefined;
+  Moderation: undefined;
 };
 
 export type TabParamList = {

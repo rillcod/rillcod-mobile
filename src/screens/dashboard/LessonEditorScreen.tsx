@@ -29,10 +29,9 @@ import { ROUTES } from '../../navigation/routes';
 import type { Json } from '../../types/supabase';
 import type { WebLessonGenRequest, WebLessonMode } from '../../lib/webLessonAi';
 import { LESSON_AI_PRESET_SUBJECTS, lessonCoverImageUrl } from '../../lib/lessonAiPort';
+import { expertAiService } from '../../services/expertAi.service';
 import {
   requireLessonAiTopic,
-  runLessonAiFullGeneration,
-  runLessonAiNotesGeneration,
   trackLessonAiEvent,
 } from '../../lib/lessonAiIntegration';
 
@@ -238,14 +237,15 @@ export default function LessonEditorScreen({ navigation, route }: any) {
       Alert.alert('Topic required', 'Enter a lesson topic (or title) first.');
       return;
     }
-    setAiGenerating(true);
     try {
-      const siblings = await loadSiblingTitles();
-      const { payload: data, layoutJson } = await runLessonAiFullGeneration({
-        ...aiBase(),
-        topic,
-        siblingLessons: siblings,
+      const data = await expertAiService.generate({
+        type: 'lesson',
+        topic: topic.trim(),
+        gradeLevel: aiGrade,
+        subject: aiSubject.trim() || undefined,
+        programName: profile?.school_name ?? undefined,
       });
+
       if (data.objectives?.length) setAiObjectives(data.objectives);
       setForm((f) => ({
         ...f,
@@ -255,7 +255,7 @@ export default function LessonEditorScreen({ navigation, route }: any) {
         duration_minutes: data.duration_minutes != null ? String(data.duration_minutes) : f.duration_minutes,
         lesson_type: data.lesson_type ?? f.lesson_type,
         video_url: data.video_url ?? f.video_url,
-        layoutJson,
+        layoutJson: Array.isArray(data.content_layout) ? JSON.stringify(data.content_layout, null, 2) : '[]',
       }));
       setAiOpen(false);
       void trackLessonAiEvent(profile?.id ?? null, profile?.school_id ?? null, 'full', {
@@ -277,15 +277,15 @@ export default function LessonEditorScreen({ navigation, route }: any) {
       Alert.alert('Title required', 'Enter a lesson title or topic first.');
       return;
     }
-    setAiNotesLoading(true);
     try {
-      const siblings = await loadSiblingTitles();
-      const { lesson_notes } = await runLessonAiNotesGeneration({
-        ...aiBase(),
+      const data = await expertAiService.generate({
+        type: 'lesson-notes',
         topic,
-        siblingLessons: siblings,
+        gradeLevel: aiGrade,
+        subject: aiSubject.trim() || undefined,
+        programName: profile?.school_name ?? undefined,
       });
-      if (lesson_notes) setForm((f) => ({ ...f, lesson_notes }));
+      if (data.lesson_notes) setForm((f) => ({ ...f, lesson_notes: data.lesson_notes }));
       void trackLessonAiEvent(profile?.id ?? null, profile?.school_id ?? null, 'notes', {
         course_id: form.course_id || null,
         lesson_id: lessonId ?? null,

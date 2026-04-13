@@ -92,8 +92,11 @@ export const ROUTES = {
   DiscussionTopic: 'DiscussionTopic',
   LessonEditor: 'LessonEditor',
   SchoolOverview: 'SchoolOverview',
-  SchoolBilling: 'SchoolBilling',
+   SchoolBilling: 'SchoolBilling',
   MarkAttendance: 'MarkAttendance',
+  ActivityLogs: 'ActivityLogs',
+  Subscriptions: 'Subscriptions',
+  Moderation: 'Moderation',
 } as const satisfies { [K in keyof RootStackParamList]: K };
 
 export type StackRouteName = (typeof ROUTES)[keyof typeof ROUTES];
