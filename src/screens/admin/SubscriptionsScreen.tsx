@@ -19,6 +19,7 @@ import { ScreenHeader } from '../../components/ui/ScreenHeader';
 import { useAuth } from '../../contexts/AuthContext';
 import { useTheme } from '../../contexts/ThemeContext';
 import { subscriptionService } from '../../services/subscription.service';
+import { schoolService } from '../../services/school.service';
 import { SPACING, RADIUS } from '../../constants/spacing';
 import { FONT_FAMILY, FONT_SIZE, LETTER_SPACING } from '../../constants/typography';
 
@@ -32,8 +33,15 @@ interface Subscription {
   amount: number;
   currency: string;
   status: SubStatus;
+  start_date: string;
   end_date: string | null;
+  created_at: string;
   schools?: { name: string } | null;
+}
+
+interface SchoolOption {
+  id: string;
+  name: string;
 }
 
 const STATUS_CONFIG: Record<SubStatus, { label: string; color: string; bg: string }> = {
@@ -57,12 +65,24 @@ export default function SubscriptionsScreen({ navigation }: any) {
   const [statusFilter, setStatusFilter] = useState<SubStatus | 'all'>('all');
   const [searchText, setSearchText] = useState('');
   const [actingId, setActingId] = useState<string | null>(null);
+  const [showCreateModal, setShowCreateModal] = useState(false);
+  const [schoolOptions, setSchoolOptions] = useState<SchoolOption[]>([]);
+  const [savingCreate, setSavingCreate] = useState(false);
+  const [createForm, setCreateForm] = useState({
+    school_id: '',
+    plan_name: '',
+    billing_cycle: 'monthly' as Subscription['billing_cycle'],
+    amount: '',
+    currency: 'NGN',
+  });
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
       const data = await subscriptionService.listAllSubscriptions(50);
       setSubs(data || []);
+      const schools = await schoolService.listApprovedSchoolsMini(200);
+      setSchoolOptions((schools ?? []) as SchoolOption[]);
     } catch (err) {
       console.error(err);
     } finally {
@@ -71,9 +91,93 @@ export default function SubscriptionsScreen({ navigation }: any) {
     }
   }, []);
 
+  const resetCreateForm = () => {
+    setCreateForm({
+      school_id: '',
+      plan_name: '',
+      billing_cycle: 'monthly',
+      amount: '',
+      currency: 'NGN',
+    });
+  };
+
+  const handleCreateSubscription = async () => {
+    if (!createForm.school_id) {
+      Alert.alert('Subscription', 'Choose a school first.');
+      return;
+    }
+    if (!createForm.plan_name.trim()) {
+      Alert.alert('Subscription', 'Enter a plan name.');
+      return;
+    }
+    const amount = Number(createForm.amount);
+    if (!Number.isFinite(amount) || amount <= 0) {
+      Alert.alert('Subscription', 'Enter a valid amount.');
+      return;
+    }
+
+    setSavingCreate(true);
+    try {
+      const start = new Date();
+      const end = new Date(start);
+      if (createForm.billing_cycle === 'monthly') end.setMonth(end.getMonth() + 1);
+      else if (createForm.billing_cycle === 'quarterly') end.setMonth(end.getMonth() + 3);
+      else end.setFullYear(end.getFullYear() + 1);
+
+      await subscriptionService.createSubscription({
+        school_id: createForm.school_id,
+        plan_name: createForm.plan_name.trim(),
+        plan_type: 'fixed',
+        billing_cycle: createForm.billing_cycle,
+        amount,
+        currency: createForm.currency.trim() || 'NGN',
+        status: 'active',
+        start_date: start.toISOString(),
+        end_date: end.toISOString(),
+        max_students: null,
+        max_teachers: null,
+        features: {},
+      });
+
+      setShowCreateModal(false);
+      resetCreateForm();
+      await load();
+      Alert.alert('Subscription Created', 'The new school subscription is now active.');
+    } catch (err: any) {
+      Alert.alert('Subscription', err?.message ?? 'Could not create subscription.');
+    } finally {
+      setSavingCreate(false);
+    }
+  };
+
   useEffect(() => {
     load();
   }, [load]);
+
+  const confirmDeleteSubscription = (item: Subscription) => {
+    Alert.alert(
+      'Delete subscription',
+      `Delete ${item.plan_name} for ${item.schools?.name || 'this school'}? This removes the billing record permanently.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: async () => {
+            setActingId(item.id);
+            try {
+              await subscriptionService.deleteSubscription(item.id);
+              await load();
+            } catch (err: any) {
+              Alert.alert('Subscription action', err?.message ?? 'Could not delete subscription.');
+            } finally {
+              setActingId(null);
+            }
+          },
+        },
+      ],
+    );
+  };
 
   const filteredSubs = subs.filter((s) => {
     const matchesStatus = statusFilter === 'all' || s.status === statusFilter;
@@ -117,7 +221,11 @@ export default function SubscriptionsScreen({ navigation }: any) {
       setActingId(item.id);
       try {
         if (action === 'renew') {
-          await subscriptionService.renewSubscriptionCycle(item.id, item);
+          await subscriptionService.renewSubscriptionCycle(item.id, {
+            start_date: item.created_at ?? item.end_date,
+            end_date: item.end_date,
+            billing_cycle: item.billing_cycle,
+          });
         } else if (action === 'cancel') {
           await subscriptionService.cancelSubscription(item.id);
         } else if (action === 'suspend') {
@@ -204,6 +312,13 @@ export default function SubscriptionsScreen({ navigation }: any) {
               <Text style={[styles.actionBtnText, { color: colors.error }]}>Cancel</Text>
             </TouchableOpacity>
           ) : null}
+          <TouchableOpacity
+            onPress={() => confirmDeleteSubscription(item)}
+            disabled={actingId === item.id}
+            style={[styles.actionBtn, { borderColor: colors.textMuted }]}
+          >
+            <Text style={[styles.actionBtnText, { color: colors.textMuted }]}>Delete</Text>
+          </TouchableOpacity>
         </View>
       </MotiView>
     );
@@ -275,10 +390,89 @@ export default function SubscriptionsScreen({ navigation }: any) {
       {/* Floating Action Button */}
       <TouchableOpacity
         style={[styles.fab, { backgroundColor: colors.primary }]}
-        onPress={() => Alert.alert('Coming Soon', 'Subscription creation is being ported to mobile.')}
+        onPress={() => setShowCreateModal(true)}
       >
-        <Ionicons name="plus" size={28} color="#fff" />
+        <Ionicons name="add" size={28} color="#fff" />
       </TouchableOpacity>
+
+      <Modal visible={showCreateModal} animationType="slide" transparent onRequestClose={() => setShowCreateModal(false)}>
+        <View style={styles.modalBackdrop}>
+          <View style={styles.modalCard}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Create Subscription</Text>
+              <TouchableOpacity onPress={() => setShowCreateModal(false)} style={styles.modalCloseBtn}>
+                <Ionicons name="close" size={20} color={colors.textPrimary} />
+              </TouchableOpacity>
+            </View>
+
+            <Text style={styles.modalLabel}>School</Text>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.schoolPickerRow}>
+              {schoolOptions.map((school) => (
+                <TouchableOpacity
+                  key={school.id}
+                  style={[
+                    styles.schoolPill,
+                    createForm.school_id === school.id && { backgroundColor: colors.primary, borderColor: colors.primary },
+                  ]}
+                  onPress={() => setCreateForm((prev) => ({ ...prev, school_id: school.id }))}
+                >
+                  <Text style={[styles.schoolPillText, createForm.school_id === school.id && { color: '#fff' }]}>{school.name}</Text>
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+
+            <Text style={styles.modalLabel}>Plan Name</Text>
+            <TextInput
+              style={styles.modalInput}
+              placeholder="e.g. School Pro Annual"
+              placeholderTextColor={colors.textMuted}
+              value={createForm.plan_name}
+              onChangeText={(value) => setCreateForm((prev) => ({ ...prev, plan_name: value }))}
+            />
+
+            <Text style={styles.modalLabel}>Billing Cycle</Text>
+            <View style={styles.cycleRow}>
+              {(['monthly', 'quarterly', 'yearly'] as const).map((cycle) => (
+                <TouchableOpacity
+                  key={cycle}
+                  style={[
+                    styles.cyclePill,
+                    createForm.billing_cycle === cycle && { backgroundColor: colors.primary, borderColor: colors.primary },
+                  ]}
+                  onPress={() => setCreateForm((prev) => ({ ...prev, billing_cycle: cycle }))}
+                >
+                  <Text style={[styles.cyclePillText, createForm.billing_cycle === cycle && { color: '#fff' }]}>
+                    {cycle.charAt(0).toUpperCase() + cycle.slice(1)}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+
+            <Text style={styles.modalLabel}>Amount</Text>
+            <TextInput
+              style={styles.modalInput}
+              placeholder="e.g. 50000"
+              placeholderTextColor={colors.textMuted}
+              value={createForm.amount}
+              keyboardType="numeric"
+              onChangeText={(value) => setCreateForm((prev) => ({ ...prev, amount: value }))}
+            />
+
+            <View style={styles.modalActions}>
+              <TouchableOpacity style={styles.modalGhostBtn} onPress={() => setShowCreateModal(false)}>
+                <Text style={styles.modalGhostText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.modalPrimaryBtn, { backgroundColor: colors.primary }]}
+                onPress={handleCreateSubscription}
+                disabled={savingCreate}
+              >
+                <Text style={styles.modalPrimaryText}>{savingCreate ? 'Creating...' : 'Create'}</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -452,4 +646,82 @@ const getStyles = (colors: any) =>
       shadowRadius: 6,
       elevation: 8,
     },
+    modalBackdrop: { flex: 1, backgroundColor: 'rgba(15,23,42,0.55)', justifyContent: 'flex-end' },
+    modalCard: {
+      backgroundColor: colors.bgCard,
+      borderTopLeftRadius: RADIUS.xl,
+      borderTopRightRadius: RADIUS.xl,
+      padding: SPACING.xl,
+      borderTopWidth: 1,
+      borderColor: colors.border,
+      gap: SPACING.md,
+    },
+    modalHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+    modalTitle: { fontFamily: FONT_FAMILY.display, fontSize: FONT_SIZE.lg, color: colors.textPrimary },
+    modalCloseBtn: {
+      width: 34,
+      height: 34,
+      borderRadius: RADIUS.full,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: colors.bg,
+      borderWidth: 1,
+      borderColor: colors.border,
+    },
+    modalLabel: {
+      fontFamily: FONT_FAMILY.bodyBold,
+      fontSize: 11,
+      color: colors.textMuted,
+      textTransform: 'uppercase',
+      letterSpacing: LETTER_SPACING.wide,
+    },
+    modalInput: {
+      height: 48,
+      borderRadius: RADIUS.md,
+      borderWidth: 1,
+      borderColor: colors.border,
+      backgroundColor: colors.bg,
+      paddingHorizontal: SPACING.md,
+      fontFamily: FONT_FAMILY.body,
+      fontSize: FONT_SIZE.sm,
+      color: colors.textPrimary,
+    },
+    schoolPickerRow: { gap: SPACING.xs, paddingVertical: 2 },
+    schoolPill: {
+      paddingHorizontal: SPACING.md,
+      paddingVertical: 10,
+      borderRadius: RADIUS.full,
+      borderWidth: 1,
+      borderColor: colors.border,
+      backgroundColor: colors.bg,
+    },
+    schoolPillText: { fontFamily: FONT_FAMILY.bodySemi, fontSize: FONT_SIZE.sm, color: colors.textSecondary },
+    cycleRow: { flexDirection: 'row', gap: SPACING.xs, flexWrap: 'wrap' },
+    cyclePill: {
+      paddingHorizontal: SPACING.md,
+      paddingVertical: 10,
+      borderRadius: RADIUS.full,
+      borderWidth: 1,
+      borderColor: colors.border,
+      backgroundColor: colors.bg,
+    },
+    cyclePillText: { fontFamily: FONT_FAMILY.bodySemi, fontSize: FONT_SIZE.sm, color: colors.textSecondary },
+    modalActions: { flexDirection: 'row', justifyContent: 'flex-end', gap: SPACING.sm, marginTop: SPACING.sm },
+    modalGhostBtn: {
+      paddingHorizontal: SPACING.lg,
+      paddingVertical: 12,
+      borderRadius: RADIUS.full,
+      borderWidth: 1,
+      borderColor: colors.border,
+      backgroundColor: colors.bg,
+    },
+    modalGhostText: { fontFamily: FONT_FAMILY.bodySemi, fontSize: FONT_SIZE.sm, color: colors.textSecondary },
+    modalPrimaryBtn: {
+      paddingHorizontal: SPACING.lg,
+      paddingVertical: 12,
+      borderRadius: RADIUS.full,
+      minWidth: 104,
+      alignItems: 'center',
+    },
+    modalPrimaryText: { fontFamily: FONT_FAMILY.bodyBold, fontSize: FONT_SIZE.sm, color: '#fff' },
   });

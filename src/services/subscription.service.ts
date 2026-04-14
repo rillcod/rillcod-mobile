@@ -127,6 +127,15 @@ export class SubscriptionService {
     if (error) throw error;
   }
 
+  async deleteSubscription(id: string) {
+    const { error } = await supabase
+      .from('subscriptions')
+      .delete()
+      .eq('id', id);
+
+    if (error) throw error;
+  }
+
   computeNextBillingDate(row: Pick<Subscription, 'billing_cycle' | 'end_date' | 'start_date'>, now = new Date()) {
     const anchor = row.end_date ? new Date(row.end_date) : row.start_date ? new Date(row.start_date) : now;
     if (Number.isNaN(anchor.getTime())) return null;

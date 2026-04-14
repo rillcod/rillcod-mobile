@@ -12,8 +12,6 @@ export type RootStackParamList = {
   // Detail screens (accessible from tabs)
   CourseDetail: { courseId?: string; programId?: string; title?: string };
   AssignmentDetail: { assignmentId: string; title: string };
-  MessageThread: { userId: string; name: string };
-  ChildDetail: { studentId: string; name: string };
   // Parent portal detail screens
   ParentResults: { studentId: string; studentName?: string; userId?: string | null };
   ParentAttendance: { studentId: string; studentName?: string };
@@ -61,6 +59,7 @@ export type RootStackParamList = {
   Grades: undefined;
   Certificates: undefined;
   Invoices: undefined;
+  InvoiceEditor: { invoiceData?: object } | undefined;
   Messages: undefined;
   Settings: undefined;
   MyChildren: undefined;

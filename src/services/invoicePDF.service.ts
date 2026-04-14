@@ -1,6 +1,5 @@
 import * as Print from 'expo-print';
 import * as Sharing from 'expo-sharing';
-import { Asset } from 'expo-asset';
 
 export interface InvoiceItem {
   description: string;

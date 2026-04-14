@@ -38,14 +38,18 @@ export class LogService {
     const tableName = type === 'audit' ? 'audit_logs' : 'activity_logs';
     const eventField = type === 'audit' ? 'action' : 'event_type';
 
-    let query = supabase
+    let query: any = supabase
       .from(tableName)
       .select('*, portal_users(id, full_name, email, role)', { count: 'exact' })
       .order('created_at', { ascending: false })
       .range(offset, offset + limit - 1);
 
     if (userId) query = query.eq('user_id', userId);
-    if (eventType) query = query.eq(eventField, eventType);
+    if (eventType) {
+      query = type === 'audit'
+        ? query.eq('action', eventType)
+        : query.eq('event_type' as any, eventType);
+    }
     if (from) query = query.gte('created_at', from);
     if (to) query = query.lte('created_at', to);
 

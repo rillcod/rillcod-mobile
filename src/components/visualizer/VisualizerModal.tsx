@@ -153,8 +153,8 @@ export const VisualizerModal: React.FC<VisualizerModalProps> = ({
         {/* HUD: Metrics & Variables */}
         <View style={styles.metricsWrapper} pointerEvents="none">
           <MotiView
-            from={{ opacity: 0, x: -20 }}
-            animate={{ opacity: 1, x: 0 }}
+            from={{ opacity: 0, transform: [{ translateX: -20 }] }}
+            animate={{ opacity: 1, transform: [{ translateX: 0 }] }}
             style={[styles.metricCard, { borderLeftColor: accent }]}
           >
             <Text style={[styles.metricLabel, { color: accent }]}>EXECUTION REGISTRY</Text>
@@ -166,8 +166,8 @@ export const VisualizerModal: React.FC<VisualizerModalProps> = ({
 
           {Object.entries(data.variables).length > 0 && (
             <MotiView
-              from={{ opacity: 0, x: -20 }}
-              animate={{ opacity: 1, x: 0 }}
+              from={{ opacity: 0, transform: [{ translateX: -20 }] }}
+              animate={{ opacity: 1, transform: [{ translateX: 0 }] }}
               transition={{ delay: 100 }}
               style={[styles.metricCard, { borderLeftColor: '#a855f7', marginTop: SPACING.md }]}
             >

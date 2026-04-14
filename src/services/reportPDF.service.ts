@@ -235,7 +235,7 @@ export const progressReportPDFService = {
       } else {
         await Sharing.shareAsync(uri, {
           mimeType: 'application/pdf',
-          dialogTitle: \`Progress Report: \${studentName}\`,
+          dialogTitle: `Progress Report: ${studentName}`,
           UTI: 'com.adobe.pdf',
         });
       }

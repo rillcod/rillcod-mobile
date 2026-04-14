@@ -118,13 +118,6 @@ import ActivityLogsScreen from '../screens/admin/ActivityLogsScreen';
 import SubscriptionsScreen from '../screens/admin/SubscriptionsScreen';
 import ModerationScreen from '../screens/admin/ModerationScreen';
 
-const PlaceholderScreen = ({ route }: any) => (
-  <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#0f172a' }}>
-    <Text style={{ color: '#fff', fontSize: 18, fontFamily: 'Outfit-Bold' }}>{route.name}</Text>
-    <Text style={{ color: '#94a3b8', marginTop: 8 }}>Feature parity in progress...</Text>
-  </View>
-);
-
 import { COLORS } from '../constants/colors';
 import { FONT_FAMILY, FONT_SIZE } from '../constants/typography';
 import { RADIUS } from '../constants/spacing';
@@ -220,7 +213,7 @@ const StaffStudentReportScreen = withRoleGuard(StudentReportScreen, ['admin', 't
 const StaffCBTExaminationScreen = withRoleGuard(CBTExaminationScreen, ['admin', 'teacher', 'student']);
 const StaffCBTExamEditorScreen = withRoleGuard(CBTExamEditorScreen, ['admin', 'teacher']);
 const StaffCBTGradingScreen = withRoleGuard(CBTGradingScreen, ['admin', 'teacher']);
-const AdminOnlyActivityLogsScreen = withRoleGuard(ActivityLogsScreen, ['admin', 'teacher']);
+const StaffActivityLogsScreen = withRoleGuard(ActivityLogsScreen, ['admin', 'teacher']);
 const AdminOnlySubscriptionsScreen = withRoleGuard(SubscriptionsScreen, ['admin']);
 const AdminOnlyModerationScreen = withRoleGuard(ModerationScreen, ['admin']);
 
@@ -279,7 +272,7 @@ function MainTabs() {
   const isAdmin = profile?.role === 'admin';
   const isTeacher = profile?.role === 'teacher';
   const unread = useInboxUnreadCount(!isAdmin && !isTeacher ? profile?.id : undefined);
-  const showLearnTab = profile?.role === 'student';
+  const showLearnTab = profile?.role === 'student' || profile?.role === 'teacher';
 
   return (
     <Tab.Navigator
@@ -557,7 +550,7 @@ function MainStack() {
       <Stack.Screen name={ROUTES.SchoolBilling} component={StaffSchoolBillingScreen} />
       <Stack.Screen name={ROUTES.CourseDetail} component={StaffCourseDetailScreen} />
       <Stack.Screen name={ROUTES.MarkAttendance} component={StaffMarkAttendanceScreen} />
-      <Stack.Screen name={ROUTES.ActivityLogs} component={AdminOnlyActivityLogsScreen} />
+      <Stack.Screen name={ROUTES.ActivityLogs} component={StaffActivityLogsScreen} />
       <Stack.Screen name={ROUTES.Subscriptions} component={AdminOnlySubscriptionsScreen} />
       <Stack.Screen name={ROUTES.Moderation} component={AdminOnlyModerationScreen} />
       <Stack.Screen name={ROUTES.InvoiceEditor} component={InvoiceEditorScreen} />
@@ -597,7 +590,7 @@ export default function AppNavigator() {
     );
   }
 
-  const linking = {
+  const linking: any = {
     prefixes: ['rillcod://', 'https://rillcod.com/mobile'],
     config: {
       screens: {
@@ -726,4 +719,3 @@ const styles = StyleSheet.create({
     color: '#fff',
   },
 });
-

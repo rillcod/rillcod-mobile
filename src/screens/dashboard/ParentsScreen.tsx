@@ -755,6 +755,7 @@ const styles = StyleSheet.create({
   metaRow: { flexDirection: 'row', gap: 4, marginTop: 4, flexWrap: 'wrap' },
   metaChip: { backgroundColor: COLORS.border, borderRadius: RADIUS.full, paddingHorizontal: 8, paddingVertical: 2 },
   metaChipText: { fontFamily: FONT_FAMILY.body, fontSize: 10, color: COLORS.textSecondary },
+  previewNames: { fontFamily: FONT_FAMILY.body, fontSize: FONT_SIZE.xs, color: COLORS.textMuted, marginTop: 6, lineHeight: 18 },
   sideRail: { alignItems: 'flex-end' },
   statusPill: { paddingHorizontal: 8, paddingVertical: 4, borderRadius: RADIUS.full },
   statusPillText: { fontFamily: FONT_FAMILY.bodyBold, fontSize: 9, letterSpacing: LETTER_SPACING.wide },

@@ -68,7 +68,7 @@ export default function PeopleHubScreen({
 }) {
   const { profile } = useAuth();
   const { colors } = useTheme();
-  const styles = useMemo(() => getStyles(colors), [colors]);
+  const styles = useMemo(() => getStyles(colors as any), [colors]);
   const [snapshot, setSnapshot] = useState<PeopleHubSnapshot | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);

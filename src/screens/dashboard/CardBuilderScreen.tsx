@@ -373,11 +373,11 @@ export default function CardBuilderScreen({ navigation }: any) {
               <View style={styles.resultsHeader}>
                 <Text style={styles.resultsCount}>{results.length} students found</Text>
                 {mode === 'class' && (
-                  <TouchableOpacity 
-                    style={styles.bulkPrintBtn} 
-                    onPress={() => { 
-                      setIsBulk(true); 
-                      handleExportCard(results); 
+                  <TouchableOpacity
+                    style={styles.bulkPrintBtn}
+                    onPress={() => {
+                      setIsBulk(true);
+                      handleExportCard(results);
                     }}
                     disabled={exporting}
                   >
@@ -390,30 +390,30 @@ export default function CardBuilderScreen({ navigation }: any) {
                 keyExtractor={s => s.id}
                 keyboardShouldPersistTaps="handled"
                 renderItem={({ item, index }) => (
-                <MotiView
-                  from={{ opacity: 0, translateY: 6 }}
-                  animate={{ opacity: 1, translateY: 0 }}
-                  transition={{ delay: index * 40, type: 'timing', duration: 240 }}
-                >
-                  <TouchableOpacity style={styles.resultItem} onPress={() => handleSelect(item)}>
-                    <View style={styles.resultAvatar}>
-                      <Text style={styles.resultAvatarText}>{getInitials(item.full_name)}</Text>
-                    </View>
-                    <View style={styles.resultBody}>
-                      <Text style={styles.resultName}>{item.full_name}</Text>
-                      <Text style={styles.resultMeta}>
-                        {item.school_name ?? 'Rillcod Academy'} · {item.section_class ?? 'No class'}
-                      </Text>
-                    </View>
-                    <Text style={styles.resultArrow}>›</Text>
-                  </TouchableOpacity>
-                </MotiView>
-              )}
-              style={{ marginTop: SPACING.md }}
-              showsVerticalScrollIndicator={false}
-            />
+                  <MotiView
+                    from={{ opacity: 0, translateY: 6 }}
+                    animate={{ opacity: 1, translateY: 0 }}
+                    transition={{ delay: index * 40, type: 'timing', duration: 240 }}
+                  >
+                    <TouchableOpacity style={styles.resultItem} onPress={() => handleSelect(item)}>
+                      <View style={styles.resultAvatar}>
+                        <Text style={styles.resultAvatarText}>{getInitials(item.full_name)}</Text>
+                      </View>
+                      <View style={styles.resultBody}>
+                        <Text style={styles.resultName}>{item.full_name}</Text>
+                        <Text style={styles.resultMeta}>
+                          {item.school_name ?? 'Rillcod Academy'} / {item.section_class ?? 'No class'}
+                        </Text>
+                      </View>
+                      <Text style={styles.resultArrow}>Open</Text>
+                    </TouchableOpacity>
+                  </MotiView>
+                )}
+                style={{ marginTop: SPACING.md }}
+                showsVerticalScrollIndicator={false}
+              />
+            </View>
           )}
-
           {search.length >= 2 && results.length === 0 && !searching && (
             <View style={styles.noResults}>
               <Text style={styles.noResultsText}>No students found for "{search}"</Text>
@@ -450,7 +450,9 @@ export default function CardBuilderScreen({ navigation }: any) {
         <View style={styles.actionButtons}>
             <TouchableOpacity
               style={styles.shareBtn}
-              onPress={handleExportCard}
+              onPress={() => {
+                void handleExportCard();
+              }}
               disabled={exporting}
             >
               <LinearGradient colors={COLORS.gradPrimary as [string, string, ...string[]]} style={styles.shareBtnInner}>

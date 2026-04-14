@@ -201,7 +201,7 @@ const ACTION_SCREENS: Record<string, string> = {
   Analytics: ROUTES.Analytics,
   Progress: ROUTES.Progress,
   SchoolOverview: ROUTES.SchoolOverview,
-  SchoolBilling: ROUTES.Payments,
+  SchoolBilling: ROUTES.SchoolBilling,
   Grades: ROUTES.Grades,
   ManageCertificates: ROUTES.ManageCertificates,
   Certificates: ROUTES.Certificates,
@@ -211,21 +211,21 @@ const ACTION_SCREENS: Record<string, string> = {
   WipeStudents: ROUTES.WipeStudents,
   CardBuilder: ROUTES.CardBuilder,
   MyChildren: ROUTES.MyChildren,
-  ParentResults: ROUTES.ParentResults,
-  ParentAttendance: ROUTES.ParentAttendance,
-  ParentGrades: ROUTES.ParentGrades,
-  ParentInvoices: ROUTES.ParentInvoices,
+  ParentResults: ROUTES.MyChildren,
+  ParentAttendance: ROUTES.MyChildren,
+  ParentGrades: ROUTES.MyChildren,
+  ParentInvoices: ROUTES.MyChildren,
   ParentCertificates: ROUTES.ParentCertificates,
   ParentFeedback: ROUTES.ParentFeedback,
-  Courses: TAB_ROUTES.Learn,
+  Courses: ROUTES.Courses,
   Learn: TAB_ROUTES.Learn,
   AI: ROUTES.AI,
   'School Overview': ROUTES.SchoolOverview,
   'My Children': ROUTES.MyChildren,
-  'Report Cards': ROUTES.ParentResults,
-  'Parent Invoices': ROUTES.ParentInvoices,
-  'Parent Grades': ROUTES.ParentGrades,
-  'Parent Attendance': ROUTES.ParentAttendance,
+  'Report Cards': ROUTES.MyChildren,
+  'Parent Invoices': ROUTES.MyChildren,
+  'Parent Grades': ROUTES.MyChildren,
+  'Parent Attendance': ROUTES.MyChildren,
   IoT: ROUTES.IoT,
   'People hub': ROUTES.PeopleHub,
   'Activity logs': ROUTES.ActivityLogs,
@@ -289,7 +289,7 @@ const SCHOOL_QUICK_LINKS: QuickLink[] = [
   { icon: 'RP', label: 'Reports', screen: ROUTES.Reports, color: COLORS.accent, desc: 'Review published reports and outcomes' },
   { icon: 'GR', label: 'Grades', screen: ROUTES.Grades, color: COLORS.accent, desc: 'School-wide graded work' },
   { icon: 'PR', label: 'Progress', screen: ROUTES.Progress, color: COLORS.primary, desc: 'Track school-wide performance trends' },
-  { icon: 'PM', label: 'Payments', screen: ROUTES.Payments, color: COLORS.warning, desc: 'Your school invoices & receipts; network policy set by admin' },
+  { icon: 'PM', label: 'Payments', screen: ROUTES.SchoolBilling, color: COLORS.warning, desc: 'Your school invoices, receipts, and Paystack billing activity' },
   { icon: 'AL', label: 'Alerts', screen: TAB_ROUTES.Alerts, color: COLORS.info, desc: 'Announcements, alerts, and delivery preferences' },
   { icon: 'MG', label: 'Messages', screen: ROUTES.Messages, color: COLORS.info, desc: 'Coordinate with admin, staff, and parents' },
 ];
@@ -297,8 +297,8 @@ const SCHOOL_QUICK_LINKS: QuickLink[] = [
 const PARENT_QUICK_LINKS: QuickLink[] = [
   { icon: 'PH', label: 'People hub', screen: ROUTES.PeopleHub, color: COLORS.primary, desc: 'Family shortcuts, invoices, and feedback' },
   { icon: 'CH', label: 'My Children', screen: ROUTES.MyChildren, color: COLORS.accent, desc: 'See linked children and their progress' },
-  { icon: 'RP', label: 'Report Cards', screen: ROUTES.ParentResults, color: COLORS.primary, desc: 'Open published reports and term results' },
-  { icon: 'IV', label: 'Invoices', screen: ROUTES.ParentInvoices, color: COLORS.warning, desc: 'Pay fees and review invoice status' },
+  { icon: 'RP', label: 'Report Cards', screen: ROUTES.MyChildren, color: COLORS.primary, desc: 'Choose a child, then open published reports and term results' },
+  { icon: 'IV', label: 'Invoices', screen: ROUTES.MyChildren, color: COLORS.warning, desc: 'Choose a child, then review invoices and payment status' },
   { icon: 'PF', label: 'Feedback', screen: ROUTES.ParentFeedback, color: COLORS.accent, desc: 'Send feedback and keep communication active' },
   { icon: 'AL', label: 'Alerts', screen: TAB_ROUTES.Alerts, color: COLORS.info, desc: 'Announcements and inbox updates' },
   { icon: 'NW', label: 'Newsletters', screen: ROUTES.Newsletters, color: COLORS.accent, desc: 'Read school newsletters and communication posts' },
@@ -1079,7 +1079,7 @@ export default function DashboardScreen({ navigation }: any) {
                     key={payment.id}
                     style={[styles.billingCard, { borderColor: colors.border, backgroundColor: colors.bgCard }]}
                     activeOpacity={0.85}
-                    onPress={() => safeNavigate(ROUTES.Payments)}
+                    onPress={() => safeNavigate(ROUTES.SchoolBilling)}
                   >
                     <View style={styles.billingTop}>
                       <Text style={[styles.billingSchool, { color: colors.textPrimary }]} numberOfLines={1}>{school?.name ?? 'Unknown School'}</Text>

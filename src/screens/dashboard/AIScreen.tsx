@@ -476,6 +476,7 @@ function CreateTab({ profile, navigation }: { profile: AIProfile | null; navigat
           subject: subject.trim() || undefined,
           durationMinutes: 60,
         });
+        const data = await expertAiService.generate(req as any);
         setResult(JSON.stringify(data));
         void trackLessonAiEvent(profile?.id ?? null, profile?.school_id ?? null, 'notes', {
           source: 'ai_screen_create',

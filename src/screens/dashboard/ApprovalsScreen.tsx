@@ -267,7 +267,11 @@ export default function ApprovalsScreen({ navigation }: any) {
 
           try {
             const { portalUserId } = await approvalService.approvePendingStudentWithAuth({
-              student,
+              student: {
+                ...student,
+                registration_payment_at: student.registration_payment_at ?? null,
+                registration_paystack_reference: student.registration_paystack_reference ?? null,
+              },
               email,
               password,
               approvedBy: profile?.id ?? null,
@@ -877,4 +881,3 @@ const styles = StyleSheet.create({
   },
   modalButtonText: { fontFamily: FONT_FAMILY.bodySemi, fontSize: FONT_SIZE.sm, color: COLORS.white100 },
 });
-

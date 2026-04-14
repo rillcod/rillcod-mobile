@@ -15,7 +15,7 @@ interface P5WrapperProps {
  * P5Wrapper - Mobile implementation of the P5 rendering engine.
  * Uses WebView to run P5.js sketches with 1:1 web parity.
  */
-export const P5Wrapper: React.FC<P5WrapperProps> = ({ type, data, isPlaying, speed }) => {
+export const P5Wrapper: React.FC<P5WrapperProps> = ({ type, data, isPlaying, speed, onMessage }) => {
   const webViewRef = useRef<WebView>(null);
 
   // Synchronize data with the WebView sketch
@@ -324,7 +324,6 @@ export const P5Wrapper: React.FC<P5WrapperProps> = ({ type, data, isPlaying, spe
         scrollEnabled={false}
         overScrollMode="never"
         style={styles.webview}
-        transparent={true}
         startInLoadingState={true}
         renderLoading={() => (
           <View style={styles.loading}>

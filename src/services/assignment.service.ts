@@ -170,7 +170,10 @@ export class AssignmentService {
     if (assignmentError) throw assignmentError;
 
     const dueDate = assignmentRow?.due_date ? new Date(assignmentRow.due_date) : null;
-    const allowLate = assignmentRow?.metadata?.allow_late !== false;
+    const metadata = assignmentRow?.metadata && typeof assignmentRow.metadata === 'object' && !Array.isArray(assignmentRow.metadata)
+      ? assignmentRow.metadata as Record<string, unknown>
+      : null;
+    const allowLate = metadata?.allow_late !== false;
     const isLateNow = !!dueDate && dueDate.getTime() < Date.now();
     if (!allowLate && isLateNow) {
       throw new Error('This assignment is closed. Late submissions are not allowed.');
@@ -246,7 +249,7 @@ export class AssignmentService {
     const { data: assignment, error: assignmentError } = await supabase
       .from('assignments')
       .select('id, created_by, school_id')
-      .eq('id', submissionRow.assignment_id)
+      .eq('id', submissionRow.assignment_id ?? '')
       .single();
     if (assignmentError) throw assignmentError;
 

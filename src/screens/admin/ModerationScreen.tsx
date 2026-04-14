@@ -25,7 +25,7 @@ type FlagStatus = 'pending' | 'reviewed' | 'dismissed' | 'removed';
 
 interface FlaggedItem {
   id: string;
-  content_type: 'topic' | 'reply';
+  content_type: 'topic' | 'reply' | string;
   reason: string;
   status: FlagStatus;
   created_at: string;

@@ -6,7 +6,7 @@ export interface FlaggedItem {
   id: string;
   reporter_id: string;
   content_id: string;
-  content_type: string;
+  content_type: 'topic' | 'reply' | string;
   reason: string;
   status: ModerationStatus;
   moderator_notes?: string;
