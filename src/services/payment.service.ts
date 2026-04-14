@@ -175,6 +175,46 @@ export function transactionNeedsFinanceAttention(
 }
 
 export class PaymentService {
+  private async appendAuditLog(params: {
+    action: string;
+    userId?: string | null;
+    tableName: string;
+    recordId?: string | null;
+    oldValues?: Json | null;
+    newValues?: Json | null;
+  }) {
+    await supabase.from('audit_logs').insert({
+      action: params.action,
+      user_id: params.userId ?? null,
+      table_name: params.tableName,
+      record_id: params.recordId ?? null,
+      old_values: params.oldValues ?? null,
+      new_values: params.newValues ?? null,
+      created_at: new Date().toISOString(),
+    });
+  }
+
+  async autoMarkOverdueInvoices(params: { role: string; schoolId?: string | null }) {
+    const { role, schoolId } = params;
+    const today = new Date().toISOString().slice(0, 10);
+    let q = supabase
+      .from('invoices')
+      .update({ status: 'overdue', updated_at: new Date().toISOString() })
+      .lt('due_date', today)
+      .in('status', ['sent', 'pending']);
+
+    if (role === 'school') {
+      if (!schoolId) return;
+      q = q.eq('school_id', schoolId);
+    } else if (role !== 'admin') {
+      // Non-admin/school roles should not perform global sweeps.
+      return;
+    }
+
+    const { error } = await q;
+    if (error) throw error;
+  }
+
   async listInvoices(params: {
     role: string;
     userId: string;
@@ -497,9 +537,28 @@ export class PaymentService {
     if (error) throw error;
   }
 
-  async deletePaymentAccount(accountId: string) {
-    const { error } = await supabase.from('payment_accounts').delete().eq('id', accountId);
+  async deletePaymentAccount(accountId: string, actorUserId?: string) {
+    const { data: before, error: readError } = await supabase
+      .from('payment_accounts')
+      .select('*')
+      .eq('id', accountId)
+      .maybeSingle();
+    if (readError) throw readError;
+    if (!before) throw new Error('Payment account not found.');
+
+    const { error } = await supabase
+      .from('payment_accounts')
+      .update({ is_active: false, updated_at: new Date().toISOString() })
+      .eq('id', accountId);
     if (error) throw error;
+    await this.appendAuditLog({
+      action: 'finance_account_deactivated',
+      userId: actorUserId ?? null,
+      tableName: 'payment_accounts',
+      recordId: accountId,
+      oldValues: before as unknown as Json,
+      newValues: { ...before, is_active: false } as unknown as Json,
+    });
   }
 
   async insertReceipt(row: ReceiptInsert) {
@@ -512,9 +571,40 @@ export class PaymentService {
     if (error) throw error;
   }
 
-  async deleteReceipt(receiptId: string) {
-    const { error } = await supabase.from('receipts').delete().eq('id', receiptId);
+  async deleteReceipt(receiptId: string, actorUserId?: string, reason?: string) {
+    const { data: before, error: readError } = await supabase
+      .from('receipts')
+      .select('id, metadata')
+      .eq('id', receiptId)
+      .maybeSingle();
+    if (readError) throw readError;
+    if (!before) throw new Error('Receipt not found.');
+
+    const prevMeta =
+      before.metadata && typeof before.metadata === 'object' && !Array.isArray(before.metadata)
+        ? (before.metadata as Record<string, unknown>)
+        : {};
+    const metadata = {
+      ...prevMeta,
+      voided: true,
+      voided_at: new Date().toISOString(),
+      void_reason: reason ?? 'manual_void',
+      voided_by: actorUserId ?? null,
+    } as Json;
+
+    const { error } = await supabase
+      .from('receipts')
+      .update({ metadata })
+      .eq('id', receiptId);
     if (error) throw error;
+    await this.appendAuditLog({
+      action: 'finance_receipt_voided',
+      userId: actorUserId ?? null,
+      tableName: 'receipts',
+      recordId: receiptId,
+      oldValues: before as unknown as Json,
+      newValues: { ...before, metadata } as unknown as Json,
+    });
   }
 
   async countUnpaidInvoicesForPortalUser(portalUserId: string) {
@@ -522,7 +612,7 @@ export class PaymentService {
       .from('invoices')
       .select('id', { count: 'exact', head: true })
       .eq('portal_user_id', portalUserId)
-      .in('status', ['pending', 'overdue']);
+      .in('status', ['sent', 'overdue', 'pending']);
     if (error) throw error;
     return count ?? 0;
   }
@@ -596,15 +686,54 @@ export class PaymentService {
   }
 
   async financeDeleteTransactionCascade(params: { transactionId: string; invoiceId: string | null }) {
-    const { error: e1 } = await supabase.from('receipts').delete().eq('transaction_id', params.transactionId);
+    const now = new Date().toISOString();
+    const { data: oldTx } = await supabase
+      .from('payment_transactions')
+      .select('*')
+      .eq('id', params.transactionId)
+      .maybeSingle();
+
+    const { error: e1 } = await supabase
+      .from('receipts')
+      .update({
+        metadata: {
+          voided: true,
+          voided_at: now,
+          void_reason: 'transaction_reversed',
+          transaction_id: params.transactionId,
+        } as Json,
+      })
+      .eq('transaction_id', params.transactionId);
     if (e1) throw e1;
-    const { error: e2 } = await supabase.from('payment_transactions').delete().eq('id', params.transactionId);
+
+    const { error: e2 } = await supabase
+      .from('payment_transactions')
+      .update({
+        payment_status: 'refunded',
+        refunded_at: now,
+        refund_reason: 'Finance reversal (replaces destructive delete)',
+        updated_at: now,
+      })
+      .eq('id', params.transactionId);
     if (e2) throw e2;
+
+    await this.appendAuditLog({
+      action: 'finance_transaction_reversed',
+      tableName: 'payment_transactions',
+      recordId: params.transactionId,
+      oldValues: (oldTx ?? null) as Json | null,
+      newValues: {
+        payment_status: 'refunded',
+        refunded_at: now,
+        refund_reason: 'Finance reversal (replaces destructive delete)',
+      } as unknown as Json,
+    });
+
     if (params.invoiceId) {
       await this.patchInvoice(params.invoiceId, {
         payment_transaction_id: null,
         status: 'sent',
-        updated_at: new Date().toISOString(),
+        updated_at: now,
       });
     }
   }

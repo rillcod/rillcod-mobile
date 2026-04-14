@@ -42,17 +42,10 @@ export default function ParentGradesScreen({ navigation, route }: any) {
 
   const load = async () => {
     try {
-      let studentId = paramStudentId as string | undefined;
-      if (!studentId && profile?.email) {
-        studentId = (await studentService.getFirstStudentRegistrationIdForParentEmail(profile.email)) ?? undefined;
-      }
-      if (!studentId) {
-        setNoPortalAccount(true);
-        setGrades([]);
-        return;
-      }
-
-      const portalUserId = await studentService.getPortalUserIdForStudentRegistration(studentId);
+      const portalUserId = await studentService.resolveParentStudentPortalUserId({
+        explicitRegistrationId: paramStudentId,
+        parentEmail: profile?.email,
+      });
       if (!portalUserId) {
         setNoPortalAccount(true);
         setGrades([]);

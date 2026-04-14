@@ -33,6 +33,8 @@ import { ScreenHeader } from '../../components/ui/ScreenHeader';
 import { BankTransferProofActions } from '../../components/payment/BankTransferProofActions';
 import { ROUTES, TAB_ROUTES } from '../../navigation/routes';
 import type { ColorPalette } from '../../constants/colors';
+import { assertRequired } from '../../lib/validation';
+import { toAppError } from '../../lib/appError';
 
 type InvoiceStatus = 'draft' | 'sent' | 'paid' | 'overdue' | 'cancelled';
 type BillingTab = 'invoices' | 'transactions' | 'receipts' | 'accounts';
@@ -204,6 +206,13 @@ export default function PaymentsScreen({ navigation }: any) {
     }
 
     try {
+      if (isAdmin || isSchool) {
+        await paymentService.autoMarkOverdueInvoices({
+          role: profile.role,
+          schoolId: profile.school_id,
+        });
+      }
+
       const [invoiceData, transactionData, accountData, receiptRows] = await Promise.all([
         paymentService.listInvoices({ role: profile.role, userId: profile.id, schoolId: profile.school_id }),
         paymentService.listTransactions({
@@ -475,8 +484,13 @@ export default function PaymentsScreen({ navigation }: any) {
   };
 
   const saveAccount = async () => {
-    if (!accountForm.label.trim() || !accountForm.bank_name.trim() || !accountForm.account_number.trim() || !accountForm.account_name.trim()) {
-      Alert.alert('Validation', 'Label, bank, account number, and account name are required.');
+    try {
+      assertRequired(accountForm.label, 'Label');
+      assertRequired(accountForm.bank_name, 'Bank name');
+      assertRequired(accountForm.account_number, 'Account number');
+      assertRequired(accountForm.account_name, 'Account name');
+    } catch (error) {
+      Alert.alert('Validation', toAppError(error).message);
       return;
     }
 
@@ -506,23 +520,23 @@ export default function PaymentsScreen({ navigation }: any) {
       setEditingAccount(null);
       await load();
     } catch (error: any) {
-      Alert.alert('Payment account', error?.message ?? 'Could not save account.');
+      Alert.alert('Payment account', toAppError(error, 'Could not save account.').message);
     } finally {
       setSavingAccount(false);
     }
   };
 
   const deleteAccount = async (account: PaymentAccount) => {
-    Alert.alert('Delete account', `Remove ${account.label}?`, [
+    Alert.alert('Deactivate account', `Deactivate ${account.label}? You can reactivate later from admin tools.`, [
       { text: 'Cancel', style: 'cancel' },
       {
-        text: 'Delete',
+        text: 'Deactivate',
         style: 'destructive',
         onPress: async () => {
           try {
-            await paymentService.deletePaymentAccount(account.id);
+            await paymentService.deletePaymentAccount(account.id, profile?.id);
           } catch (e: any) {
-            Alert.alert('Payment account', e?.message ?? 'Delete failed');
+            Alert.alert('Payment account', e?.message ?? 'Deactivate failed');
             return;
           }
           await load();
@@ -704,7 +718,7 @@ export default function PaymentsScreen({ navigation }: any) {
       });
       await load();
     } catch (error: any) {
-      Alert.alert('Receipt builder', error?.message ?? 'Could not save receipt.');
+      Alert.alert('Receipt builder', toAppError(error, 'Could not save receipt.').message);
     } finally {
       setSavingReceipt(false);
     }
@@ -759,16 +773,16 @@ export default function PaymentsScreen({ navigation }: any) {
   };
 
   const deleteReceipt = async (receipt: ReceiptRow) => {
-    Alert.alert('Delete receipt', `Delete ${receipt.receipt_number}?`, [
+    Alert.alert('Void receipt', `Void ${receipt.receipt_number}? This keeps audit history.`, [
       { text: 'Cancel', style: 'cancel' },
       {
-        text: 'Delete',
+        text: 'Void',
         style: 'destructive',
         onPress: async () => {
           try {
-            await paymentService.deleteReceipt(receipt.id);
+            await paymentService.deleteReceipt(receipt.id, profile?.id, 'manual_void_from_finance_console');
           } catch (e: any) {
-            Alert.alert('Receipt', e?.message ?? 'Delete failed');
+            Alert.alert('Receipt', e?.message ?? 'Void failed');
             return;
           }
           await load();
@@ -1283,7 +1297,7 @@ export default function PaymentsScreen({ navigation }: any) {
                         <Text style={[styles.cardMeta, { color: colors.primary }]}>{receipt.student_id ? 'INDIVIDUAL' : 'SCHOOL'}</Text>
                         {canManage ? (
                           <TouchableOpacity onPress={() => deleteReceipt(receipt)}>
-                            <Text style={[styles.cardMeta, { color: colors.error }]}>DELETE</Text>
+                            <Text style={[styles.cardMeta, { color: colors.error }]}>VOID</Text>
                           </TouchableOpacity>
                         ) : null}
                       </View>

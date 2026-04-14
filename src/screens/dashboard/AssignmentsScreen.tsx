@@ -55,6 +55,7 @@ function isOverdue(dueDate: string | null): boolean {
 
 function statusColor(status: string): string {
   if (status === 'graded') return COLORS.success;
+  if (status === 'partially_graded') return COLORS.admin;
   if (status === 'submitted') return COLORS.info;
   if (status === 'draft') return COLORS.textMuted;
   if (status === 'pending') return COLORS.warning;
@@ -67,7 +68,7 @@ export default function AssignmentsScreen({ navigation }: any) {
   const [assignments, setAssignments] = useState<AssignmentCard[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [filter, setFilter] = useState<'all' | 'pending' | 'submitted' | 'graded' | 'overdue'>('all');
+  const [filter, setFilter] = useState<'all' | 'pending' | 'submitted' | 'partially_graded' | 'graded' | 'overdue'>('all');
   const [search, setSearch] = useState('');
 
   const isStaff = profile?.role === 'admin' || profile?.role === 'teacher' || profile?.role === 'school';
@@ -101,6 +102,8 @@ export default function AssignmentsScreen({ navigation }: any) {
           ? 'submitted'
           : assignment.gradedCount && assignment.submissionCount && assignment.gradedCount === assignment.submissionCount
           ? 'graded'
+          : assignment.gradedCount && assignment.gradedCount > 0
+          ? 'partially_graded'
           : !assignment.is_active
           ? 'pending'
           : isOverdue(assignment.due_date)
@@ -140,6 +143,7 @@ export default function AssignmentsScreen({ navigation }: any) {
     { key: 'all', label: 'All' },
     { key: 'pending', label: isStaff ? 'Needs Work' : 'Pending' },
     { key: 'submitted', label: isStaff ? 'To Grade' : 'Submitted' },
+    { key: 'partially_graded', label: 'Partially Graded' },
     { key: 'graded', label: 'Graded' },
     { key: 'overdue', label: 'Overdue' },
   ];
@@ -151,6 +155,8 @@ export default function AssignmentsScreen({ navigation }: any) {
       ? 'submitted'
       : (item.gradedCount ?? 0) > 0 && item.submissionCount === item.gradedCount
       ? 'graded'
+      : (item.gradedCount ?? 0) > 0
+      ? 'partially_graded'
       : !item.is_active
       ? 'draft'
       : overdue
@@ -161,6 +167,8 @@ export default function AssignmentsScreen({ navigation }: any) {
         ? `${item.submittedCount} awaiting review`
         : staffStatus === 'graded'
         ? 'Graded'
+        : staffStatus === 'partially_graded'
+        ? 'Partially graded'
         : staffStatus === 'draft'
         ? 'Draft'
         : staffStatus === 'overdue'

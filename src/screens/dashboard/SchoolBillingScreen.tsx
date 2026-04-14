@@ -66,6 +66,12 @@ export default function SchoolBillingScreen({ navigation }: Props) {
 
   const load = useCallback(async () => {
     if (!profile?.id || !profile.role) return;
+    if (profile.role === 'school' || profile.role === 'admin') {
+      await paymentService.autoMarkOverdueInvoices({
+        role: profile.role,
+        schoolId: profile.school_id,
+      });
+    }
     const rows = await paymentService.listInvoices({
       role: profile.role,
       userId: profile.id,

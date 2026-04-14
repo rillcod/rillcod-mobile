@@ -177,6 +177,22 @@ export class StudentService {
     return data?.user_id ?? null;
   }
 
+  /** Canonical parent -> student resolver used across parent result/grade/billing screens. */
+  async resolveParentStudentPortalUserId(params: {
+    explicitRegistrationId?: string | null;
+    explicitPortalUserId?: string | null;
+    parentEmail?: string | null;
+  }) {
+    if (params.explicitPortalUserId) return params.explicitPortalUserId;
+    if (params.explicitRegistrationId) {
+      return this.getPortalUserIdForStudentRegistration(params.explicitRegistrationId);
+    }
+    if (!params.parentEmail) return null;
+    const registrations = await this.listRegistrationsForParentEmail(params.parentEmail);
+    const firstWithPortalUser = registrations.find((row) => !!row.user_id);
+    return firstWithPortalUser?.user_id ?? null;
+  }
+
   /** Students linked to classes taught by this teacher (directory / roster). */
   async listStudentsByTeacherClasses(teacherId: string, limit = 200) {
     const { data: classes } = await supabase.from('classes').select('id').eq('teacher_id', teacherId);
@@ -265,7 +281,7 @@ export class StudentService {
     const { data, error } = await supabase
       .from('student_progress_reports')
       .select(
-        'id, course_name, report_term, overall_grade, overall_score, report_date, is_published, theory_score, practical_score, attendance_score',
+        'id, course_name, report_term, overall_grade, overall_score, report_date, is_published, theory_score, practical_score, attendance_score, participation_score',
       )
       .eq('student_id', studentId)
       .order('report_date', { ascending: false })

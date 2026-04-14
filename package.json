@@ -14,7 +14,10 @@
     "eas:android:production": "npx eas-cli@latest build --platform android --profile production",
     "workflow:preview": "npx eas-cli@latest workflow:run create-preview-builds.yml",
     "workflow:production": "npx eas-cli@latest workflow:run create-production-builds.yml",
-    "eas-build-pre-install": "node scripts/eas-ensure-package-lock.cjs"
+    "eas-build-pre-install": "node scripts/eas-ensure-package-lock.cjs",
+    "typecheck": "tsc --noEmit",
+    "ci:schema-sync-check": "npm run sync-types && git diff --exit-code -- src/types/supabase.ts",
+    "ci:migration-check": "node scripts/check-migration-timestamps.cjs"
   },
   "dependencies": {
     "@expo-google-fonts/inter": "^0.4.2",

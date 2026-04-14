@@ -15,6 +15,7 @@ import { FONT_FAMILY, FONT_SIZE } from '../../constants/typography';
 import { RADIUS, SPACING } from '../../constants/spacing';
 import { ROUTES } from '../../navigation/routes';
 import { AiGeneratorModal } from '../../components/AiGeneratorModal';
+import { Ionicons } from '@expo/vector-icons';
 
 const ASSIGNMENT_TYPES = [
   { key: 'theory', label: 'Theory', emoji: '📖', color: COLORS.info },
@@ -170,6 +171,17 @@ export default function CreateAssignmentScreen({ navigation, route }: any) {
     }
     if (!resolvedClassId) {
       Alert.alert('Missing class', 'Open this screen from a class or assignment.');
+      return;
+    }
+
+    const datePattern = /^\d{4}-\d{2}-\d{2}$/;
+    const timePattern = /^\d{2}:\d{2}$/;
+    if (form.due_date && !datePattern.test(form.due_date)) {
+      Alert.alert('Invalid due date', 'Use YYYY-MM-DD format.');
+      return;
+    }
+    if (form.due_time && !timePattern.test(form.due_time)) {
+      Alert.alert('Invalid due time', 'Use HH:MM format.');
       return;
     }
 

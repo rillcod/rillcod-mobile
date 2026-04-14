@@ -5,6 +5,37 @@ export type Assignment = Database['public']['Tables']['assignments']['Row'];
 export type Submission = Database['public']['Tables']['assignment_submissions']['Row'];
 
 export class AssignmentService {
+  private async resolveStudentAssignmentScope(userId: string): Promise<{ classIds: string[]; courseIds: string[] }> {
+    const [{ data: profile }, { data: enrollments }] = await Promise.all([
+      supabase.from('portal_users').select('class_id').eq('id', userId).maybeSingle(),
+      supabase.from('enrollments').select('program_id').eq('user_id', userId),
+    ]);
+
+    const classIds = new Set<string>();
+    const courseIds = new Set<string>();
+
+    if (profile?.class_id) classIds.add(profile.class_id);
+
+    const programIds = (enrollments ?? [])
+      .map((row: { program_id: string | null }) => row.program_id)
+      .filter(Boolean) as string[];
+
+    if (programIds.length) {
+      const [{ data: classes }, { data: courses }] = await Promise.all([
+        supabase.from('classes').select('id').in('program_id', programIds),
+        supabase.from('courses').select('id').in('program_id', programIds),
+      ]);
+      for (const row of classes ?? []) {
+        if (row.id) classIds.add(row.id);
+      }
+      for (const row of courses ?? []) {
+        if (row.id) courseIds.add(row.id);
+      }
+    }
+
+    return { classIds: Array.from(classIds), courseIds: Array.from(courseIds) };
+  }
+
   async listAssignments(params: {
     role: string;
     userId: string;
@@ -45,13 +76,27 @@ export class AssignmentService {
       }));
     } else {
       // Student view: list active assignments + their own submissions
+      const scope = await this.resolveStudentAssignmentScope(userId);
+
+      let assignmentsQuery = supabase
+        .from('assignments')
+        .select('*, courses(title, programs(name))')
+        .eq('is_active', true)
+        .order('due_date', { ascending: true })
+        .limit(80);
+
+      const scopedClass = scope.classIds.length
+        ? `class_id.in.(${scope.classIds.join(',')})`
+        : '';
+      const scopedCourse = scope.courseIds.length
+        ? `course_id.in.(${scope.courseIds.join(',')})`
+        : '';
+      const scopeFilters = [scopedClass, scopedCourse].filter(Boolean).join(',');
+      if (scopeFilters) assignmentsQuery = assignmentsQuery.or(scopeFilters);
+      else assignmentsQuery = assignmentsQuery.is('id', null);
+
       const [{ data: assignments }, { data: submissions }] = await Promise.all([
-        supabase
-          .from('assignments')
-          .select('*, courses(title, programs(name))')
-          .eq('is_active', true)
-          .order('due_date', { ascending: true })
-          .limit(80),
+        assignmentsQuery,
         supabase
           .from('assignment_submissions')
           .select('*')
@@ -87,6 +132,10 @@ export class AssignmentService {
         student_name: s.portal_users?.full_name ?? 'Student'
       }));
     } else if (userId) {
+      const visibleAssignments = await this.listAssignments({ role: 'student', userId, schoolId: null });
+      const canView = (visibleAssignments as { id: string }[]).some((assignment) => assignment.id === assignmentId);
+      if (!canView) throw new Error('You are not allowed to view this assignment.');
+
       const { data } = await supabase
         .from('assignment_submissions')
         .select('*')
@@ -112,6 +161,21 @@ export class AssignmentService {
   }) {
     const { assignmentId, userId, submissionText, existingSubmissionId, fileUrl } = params;
     const text = submissionText.trim();
+
+    const { data: assignmentRow, error: assignmentError } = await supabase
+      .from('assignments')
+      .select('due_date, metadata')
+      .eq('id', assignmentId)
+      .single();
+    if (assignmentError) throw assignmentError;
+
+    const dueDate = assignmentRow?.due_date ? new Date(assignmentRow.due_date) : null;
+    const allowLate = assignmentRow?.metadata?.allow_late !== false;
+    const isLateNow = !!dueDate && dueDate.getTime() < Date.now();
+    if (!allowLate && isLateNow) {
+      throw new Error('This assignment is closed. Late submissions are not allowed.');
+    }
+
     const base = {
       submission_text: text.length ? text : null,
       status: 'submitted' as const,
@@ -168,6 +232,32 @@ export class AssignmentService {
     feedback?: string;
   }) {
     const { submissionId, graderId, grade, feedback } = params;
+    const [{ data: grader, error: graderError }, { data: submissionRow, error: submissionError }] = await Promise.all([
+      supabase.from('portal_users').select('id, role, school_id').eq('id', graderId).single(),
+      supabase
+        .from('assignment_submissions')
+        .select('id, assignment_id')
+        .eq('id', submissionId)
+        .single(),
+    ]);
+    if (graderError) throw graderError;
+    if (submissionError) throw submissionError;
+
+    const { data: assignment, error: assignmentError } = await supabase
+      .from('assignments')
+      .select('id, created_by, school_id')
+      .eq('id', submissionRow.assignment_id)
+      .single();
+    if (assignmentError) throw assignmentError;
+
+    const role = grader.role;
+    const isAdmin = role === 'admin';
+    const isSchool = role === 'school' && !!grader.school_id && grader.school_id === assignment.school_id;
+    const isTeacherOwner = role === 'teacher' && assignment.created_by === grader.id;
+    if (!isAdmin && !isSchool && !isTeacherOwner) {
+      throw new Error('You are not authorized to grade this submission.');
+    }
+
     const { error } = await supabase
       .from('assignment_submissions')
       .update({

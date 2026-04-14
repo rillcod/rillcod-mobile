@@ -71,18 +71,75 @@ export class ReportBuilderService {
     return data as ReportBuilderStudentRow;
   }
 
-  async fetchSmartHintSignals(portalUserId: string) {
-    const [{ data: subs }, { data: att }] = await Promise.all([
+  async fetchSmartHintSignals(portalUserId: string, courseName?: string | null) {
+    const [{ data: subs }, { data: att }, { data: cbt }, { count: labCount }, { count: portfolioCount }] = await Promise.all([
       supabase
         .from('assignment_submissions')
-        .select('grade')
+        .select('grade, assignment_id')
         .eq('portal_user_id', portalUserId)
         .eq('status', 'graded')
         .not('grade', 'is', null)
         .limit(50),
       supabase.from('attendance').select('status').eq('user_id', portalUserId).limit(80),
+      supabase
+        .from('cbt_sessions')
+        .select('score, cbt_exams(metadata)')
+        .eq('user_id', portalUserId)
+        .order('score', { ascending: false })
+        .limit(30),
+      supabase
+        .from('lab_projects')
+        .select('id', { count: 'exact', head: true })
+        .eq('user_id', portalUserId),
+      supabase
+        .from('portfolio_projects')
+        .select('id', { count: 'exact', head: true })
+        .eq('user_id', portalUserId),
     ]);
-    return { submissions: subs ?? [], attendance: att ?? [] };
+
+    let courseAssignmentTotal: number | null = null;
+    let courseGradedSubmissionCount: number | null = null;
+    let courseSubmissionGrades: number[] = [];
+    const courseKey = courseName?.trim();
+    if (courseKey) {
+      const { data: courses } = await supabase
+        .from('courses')
+        .select('id')
+        .ilike('title', courseKey)
+        .limit(5);
+
+      const courseIds = (courses ?? []).map((row: { id: string }) => row.id);
+      if (courseIds.length > 0) {
+        const { data: assignments } = await supabase
+          .from('assignments')
+          .select('id')
+          .in('course_id', courseIds)
+          .eq('is_active', true);
+
+        const assignmentIds = (assignments ?? []).map((row: { id: string }) => row.id);
+        courseAssignmentTotal = assignmentIds.length;
+        if (assignmentIds.length > 0) {
+          const allowed = new Set(assignmentIds);
+          const scopedSubs = (subs ?? []).filter((row: any) => allowed.has(row.assignment_id));
+          courseGradedSubmissionCount = scopedSubs.length;
+          courseSubmissionGrades = scopedSubs
+            .map((row: any) => Number(row.grade))
+            .filter((grade) => !Number.isNaN(grade));
+        } else {
+          courseGradedSubmissionCount = 0;
+        }
+      }
+    }
+
+    return {
+      submissions: subs ?? [],
+      attendance: att ?? [],
+      cbtSessions: cbt ?? [],
+      projectCount: (labCount ?? 0) + (portfolioCount ?? 0),
+      courseAssignmentTotal,
+      courseGradedSubmissionCount,
+      courseSubmissionGrades,
+    };
   }
 
   async listProgressReportsForStudent(studentId: string, limit = 25) {

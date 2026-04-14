@@ -97,6 +97,7 @@ export const ROUTES = {
   ActivityLogs: 'ActivityLogs',
   Subscriptions: 'Subscriptions',
   Moderation: 'Moderation',
+  InvoiceEditor: 'InvoiceEditor',
 } as const satisfies { [K in keyof RootStackParamList]: K };
 
 export type StackRouteName = (typeof ROUTES)[keyof typeof ROUTES];

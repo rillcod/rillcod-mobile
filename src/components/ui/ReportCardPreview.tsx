@@ -166,6 +166,9 @@ export default function ReportCardPreview({ report, studentName, onExportPDF, ex
 
   const verifyUrl = `https://rillcod.com/verify/${(report.id || 'preview').toString().slice(0, 8)}`;
   const qrUrl     = `https://api.qrserver.com/v1/create-qr-code/?size=80x80&data=${encodeURIComponent(verifyUrl)}`;
+  const paymentAmount = report.fee_amount && String(report.fee_amount).trim().length > 0
+    ? String(report.fee_amount).trim()
+    : '20,000';
 
   return (
     <MotiView
@@ -395,8 +398,8 @@ export default function ReportCardPreview({ report, studentName, onExportPDF, ex
         {report.show_payment_notice && (
           <View style={s.paymentNotice}>
             <Text style={s.paymentNoticeTitle}>Next Term Fee Payment</Text>
-            <Text style={s.paymentAmount}>₦20,000 · RILLCOD LTD</Text>
-            <Text style={s.paymentBank}>Providus Bank · 7901178957</Text>
+            <Text style={s.paymentAmount}>₦{paymentAmount} · RILLCOD LTD</Text>
+            <Text style={s.paymentBank}>Providus · 7901178957</Text>
             <Text style={s.paymentNote}>Use student name as reference · Send proof to admin</Text>
           </View>
         )}

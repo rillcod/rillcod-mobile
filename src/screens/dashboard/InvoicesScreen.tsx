@@ -12,6 +12,7 @@ import { useTheme } from '../../contexts/ThemeContext';
 import { paymentService, finalizeInvoiceLineDrafts, type InvoiceInsert } from '../../services/payment.service';
 import { studentService } from '../../services/student.service';
 import { schoolService } from '../../services/school.service';
+import { invoicePDFService } from '../../services/invoicePDF.service';
 import type { Json } from '../../types/supabase';
 import { FONT_FAMILY, FONT_SIZE, LETTER_SPACING } from '../../constants/typography';
 import { SPACING, RADIUS } from '../../constants/spacing';
@@ -124,6 +125,13 @@ export default function InvoicesScreen({ navigation }: any) {
   const load = useCallback(async () => {
     if (!profile) return;
     try {
+      if (isAdmin || isSchool) {
+        await paymentService.autoMarkOverdueInvoices({
+          role: profile.role,
+          schoolId: profile.school_id,
+        });
+      }
+
       const [invoiceData, accountData] = await Promise.all([
         paymentService.listInvoices({
           role: profile.role,
@@ -477,63 +485,19 @@ export default function InvoicesScreen({ navigation }: any) {
   const printInvoice = async (invoice: Invoice) => {
     setExporting(true);
     try {
-      const itemRows = invoice.items.length > 0
-        ? invoice.items.map((item) => `
-            <tr>
-              <td style="padding: 8px 0; border-bottom: 1px solid #e5e7eb;">${item.description}</td>
-              <td style="padding: 8px 0; border-bottom: 1px solid #e5e7eb; text-align: center;">${item.quantity}</td>
-              <td style="padding: 8px 0; border-bottom: 1px solid #e5e7eb; text-align: right;">${formatMoney(item.unit_price, invoice.currency)}</td>
-              <td style="padding: 8px 0; border-bottom: 1px solid #e5e7eb; text-align: right;">${formatMoney(item.total, invoice.currency)}</td>
-            </tr>
-          `).join('')
-        : `<tr><td colspan="4" style="padding: 12px 0; color: #64748b;">No line items recorded.</td></tr>`;
-
-      const accountsHtml = paymentAccounts.length > 0
-        ? paymentAccounts.map((account) => `
-            <div style="margin-bottom: 10px;">
-              <strong>${account.label}</strong><br />
-              ${account.bank_name} · ${account.account_number}<br />
-              ${account.account_name}${account.payment_note ? `<br /><span style="color:#64748b;">${account.payment_note}</span>` : ''}
-            </div>
-          `).join('')
-        : '<p style="color:#64748b;">No payment account instructions available.</p>';
-
-      const html = `
-        <html>
-          <body style="font-family: Helvetica, Arial, sans-serif; padding: 32px; color: #0f172a;">
-            <h1 style="margin-bottom: 4px;">Invoice ${invoice.invoice_number}</h1>
-            <p style="margin-top: 0; color: #64748b;">${invoice.portal_users?.full_name || invoice.schools?.name || 'Billing Record'}</p>
-            <p><strong>Status:</strong> ${invoice.status.toUpperCase()}</p>
-            <p><strong>Date:</strong> ${invoice.created_at ? new Date(invoice.created_at).toLocaleDateString('en-GB') : 'N/A'}</p>
-            <p><strong>Due Date:</strong> ${invoice.due_date ? new Date(invoice.due_date).toLocaleDateString('en-GB') : 'N/A'}</p>
-            <table style="width:100%; border-collapse: collapse; margin-top: 24px;">
-              <thead>
-                <tr>
-                  <th style="text-align:left; padding-bottom: 10px;">Item</th>
-                  <th style="text-align:center; padding-bottom: 10px;">Qty</th>
-                  <th style="text-align:right; padding-bottom: 10px;">Unit Price</th>
-                  <th style="text-align:right; padding-bottom: 10px;">Total</th>
-                </tr>
-              </thead>
-              <tbody>${itemRows}</tbody>
-            </table>
-            <h2 style="text-align:right; margin-top: 24px;">Total: ${formatMoney(invoice.amount, invoice.currency)}</h2>
-            ${invoice.notes ? `<p><strong>Notes:</strong> ${invoice.notes}</p>` : ''}
-            <hr style="margin: 24px 0;" />
-            <h3>Payment Instructions</h3>
-            ${accountsHtml}
-          </body>
-        </html>
-      `;
-
-      const { uri } = await Print.printToFileAsync({ html });
-      if (await Sharing.isAvailableAsync()) {
-        await Sharing.shareAsync(uri, { UTI: '.pdf', mimeType: 'application/pdf' });
-      } else {
-        Alert.alert('Invoice Ready', uri);
-      }
+      await invoicePDFService.generateAndShare({
+        number: invoice.invoice_number,
+        date: invoice.created_at ? new Date(invoice.created_at).toLocaleDateString('en-GB') : new Date().toLocaleDateString('en-GB'),
+        items: invoice.items,
+        amount: invoice.amount,
+        currency: invoice.currency,
+        studentName: invoice.portal_users?.full_name || 'Student',
+        schoolName: invoice.schools?.name || 'Rillcod Academy',
+        status: invoice.status,
+        notes: invoice.notes || undefined,
+      }, 'classic');
     } catch (error: any) {
-      Alert.alert('Print Failed', error?.message ?? 'Could not generate invoice PDF.');
+      Alert.alert('Print Failed', error?.message ?? 'Could not generate professional PDF.');
     } finally {
       setExporting(false);
     }
@@ -834,7 +798,28 @@ export default function InvoicesScreen({ navigation }: any) {
                   ) : null}
                 </ScrollView>
 
-                <View style={[styles.actionBar, { borderTopColor: colors.border }]}> 
+                <View style={[styles.actionBar, { borderTopColor: colors.border, flexWrap: 'wrap' }]}> 
+                  {(isAdmin || isSchool) && (
+                    <TouchableOpacity
+                      style={[styles.actionBtn, { backgroundColor: colors.primary, borderColor: colors.primary }]}
+                      onPress={() => {
+                        const data = selectedInvoice;
+                        setSelectedInvoice(null);
+                        navigation.navigate(ROUTES.InvoiceEditor, {
+                          invoiceData: {
+                            ...data,
+                            number: data.invoice_number,
+                            invoice_number: data.invoice_number,
+                            studentName: data.portal_users?.full_name || 'Student',
+                            schoolName: data.schools?.name || 'Rillcod Academy',
+                          }
+                        });
+                      }}
+                    >
+                      <Text style={styles.actionPrimaryText}>✦ SMART EDIT</Text>
+                    </TouchableOpacity>
+                  )}
+
                   <TouchableOpacity
                     style={[styles.actionBtn, { backgroundColor: colors.bgCard, borderColor: colors.border }]}
                     onPress={() => printInvoice(selectedInvoice)}

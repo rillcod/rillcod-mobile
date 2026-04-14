@@ -255,7 +255,7 @@ export class CourseService {
     /** Added to time_spent_minutes when merging with existing row (e.g. on complete). */
     incrementMinutes?: number;
   }) {
-    const { userId, lessonId, status, incrementMinutes } = params;
+    const { userId, lessonId, status, incrementMinutes, courseId } = params;
 
     const { data: existing } = await supabase
       .from('lesson_progress')
@@ -285,6 +285,54 @@ export class CourseService {
     });
 
     if (error) throw error;
+
+    if (courseId) {
+      const [{ data: lessonRows }, { data: assignmentRows }] = await Promise.all([
+        supabase
+          .from('lessons')
+          .select('id')
+          .eq('course_id', courseId)
+          .in('status', ['published', 'active']),
+        supabase
+          .from('assignments')
+          .select('id')
+          .eq('course_id', courseId)
+          .eq('is_active', true),
+      ]);
+
+      const lessonIds = (lessonRows ?? []).map((item) => item.id).filter(Boolean);
+      let lessonsCompleted = 0;
+      if (lessonIds.length) {
+        const { count } = await supabase
+          .from('lesson_progress')
+          .select('id', { count: 'exact', head: true })
+          .eq('portal_user_id', userId)
+          .in('lesson_id', lessonIds)
+          .eq('status', 'completed');
+        lessonsCompleted = count ?? 0;
+      }
+
+      const totalLessons = lessonIds.length;
+      const totalAssignments = (assignmentRows ?? []).length;
+      const nowIso = new Date().toISOString();
+      const completedAt = totalLessons > 0 && lessonsCompleted >= totalLessons ? nowIso : null;
+
+      await supabase.from('student_progress').upsert(
+        {
+          portal_user_id: userId,
+          student_id: userId,
+          course_id: courseId,
+          lessons_completed: lessonsCompleted,
+          total_lessons: totalLessons,
+          total_assignments: totalAssignments,
+          started_at: existing?.last_accessed_at ?? nowIso,
+          completed_at: completedAt,
+          updated_at: nowIso,
+        },
+        { onConflict: 'portal_user_id,course_id' },
+      );
+    }
+
     return true;
   }
 

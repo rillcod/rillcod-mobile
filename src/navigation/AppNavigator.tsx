@@ -112,8 +112,11 @@ import CourseDetailScreen from '../screens/dashboard/CourseDetailScreen';
 import CourseEditorScreen from '../screens/dashboard/CourseEditorScreen';
 import MarkAttendanceScreen from '../screens/dashboard/MarkAttendanceScreen';
 import ProgressScreen from '../screens/dashboard/ProgressScreen';
+import InvoiceEditorScreen from '../screens/dashboard/InvoiceEditorScreen';
 import IoTScreen from '../screens/dashboard/IoTScreen';
 import ActivityLogsScreen from '../screens/admin/ActivityLogsScreen';
+import SubscriptionsScreen from '../screens/admin/SubscriptionsScreen';
+import ModerationScreen from '../screens/admin/ModerationScreen';
 
 const PlaceholderScreen = ({ route }: any) => (
   <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#0f172a' }}>
@@ -218,6 +221,8 @@ const StaffCBTExaminationScreen = withRoleGuard(CBTExaminationScreen, ['admin', 
 const StaffCBTExamEditorScreen = withRoleGuard(CBTExamEditorScreen, ['admin', 'teacher']);
 const StaffCBTGradingScreen = withRoleGuard(CBTGradingScreen, ['admin', 'teacher']);
 const AdminOnlyActivityLogsScreen = withRoleGuard(ActivityLogsScreen, ['admin', 'teacher']);
+const AdminOnlySubscriptionsScreen = withRoleGuard(SubscriptionsScreen, ['admin']);
+const AdminOnlyModerationScreen = withRoleGuard(ModerationScreen, ['admin']);
 
 type IoniconName = ComponentProps<typeof Ionicons>['name'];
 
@@ -553,8 +558,9 @@ function MainStack() {
       <Stack.Screen name={ROUTES.CourseDetail} component={StaffCourseDetailScreen} />
       <Stack.Screen name={ROUTES.MarkAttendance} component={StaffMarkAttendanceScreen} />
       <Stack.Screen name={ROUTES.ActivityLogs} component={AdminOnlyActivityLogsScreen} />
-      <Stack.Screen name={ROUTES.Subscriptions} component={PlaceholderScreen} />
-      <Stack.Screen name={ROUTES.Moderation} component={PlaceholderScreen} />
+      <Stack.Screen name={ROUTES.Subscriptions} component={AdminOnlySubscriptionsScreen} />
+      <Stack.Screen name={ROUTES.Moderation} component={AdminOnlyModerationScreen} />
+      <Stack.Screen name={ROUTES.InvoiceEditor} component={InvoiceEditorScreen} />
     </Stack.Navigator>
   );
 }
@@ -591,8 +597,32 @@ export default function AppNavigator() {
     );
   }
 
+  const linking = {
+    prefixes: ['rillcod://', 'https://rillcod.com/mobile'],
+    config: {
+      screens: {
+        [ROUTES.Main]: {
+          screens: {
+            [MAIN_STACK_TABS]: {
+              screens: {
+                [TAB_ROUTES.Dashboard]: 'home',
+                [TAB_ROUTES.Alerts]: 'alerts',
+              },
+            },
+            [ROUTES.Invoices]: 'invoices',
+            [ROUTES.ParentInvoices]: 'parent-invoices',
+            [ROUTES.ParentResults]: 'parent-results',
+            [ROUTES.StudentReport]: 'report/:reportId',
+            [ROUTES.CourseDetail]: 'course/:courseId',
+            [ROUTES.AssignmentDetail]: 'assignment/:assignmentId',
+          },
+        },
+      },
+    },
+  };
+
   return (
-    <NavigationContainer>
+    <NavigationContainer linking={linking}>
       <Stack.Navigator screenOptions={{ headerShown: false, animation: 'fade' }}>
         {session && profile ? (
           <Stack.Screen name={ROUTES.Main} component={MainStack} />

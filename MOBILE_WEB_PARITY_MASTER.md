@@ -1,6 +1,6 @@
 # Mobile-Web Parity Master Document
 
-**Last Updated:** 2026-04-13  
+**Last Updated:** 2026-04-14  
 **Source of Truth:** Web App (`rillcod-academy-main`) behavior and data contracts.
 
 ---
@@ -10,7 +10,7 @@
 | Category | Status | Progress |
 |----------|--------|----------|
 | **Total Workflows (Appx E)** | **58 / 58** | 🟩 100% (Logic) |
-| **Component/Route Registry** | **113 / 113** | 🟨 85% (Registry coverage) |
+| **Component/Route Registry** | **113 / 113** | 🟨 88% (Registry coverage) |
 | **Administrative Services** | **6 / 6** | 🟩 100% (Backend Parity) |
 | **UI Polish (Visual Parity)** | **N/A** | 🟧 Ongoing |
 
@@ -119,6 +119,7 @@ These items are currently **Partial** or **Pending**. They represent the remaini
 | F-111 | `admin/Subscriptions.tsx` | `SubscriptionService` | **done** | Service logic complete. |
 | F-112 | `admin/Moderation.tsx` | `ModerationService` | **done** | Service logic complete. |
 | F-113 | `admin/ActivityLogs.tsx` | `LogService`, `ActivityLogsScreen` | **done** | Full activity + audit modes. |
+| F-064 | `CardBuilder.tsx` | `CardBuilderScreen.tsx` | **done** | Class filtering + Bulk Export. |
 | ... | *(See legacy Registry for full 113-row audit list)* | | | |
 
 ---
@@ -128,7 +129,11 @@ These items are currently **Partial** or **Pending**. They represent the remaini
 <details>
 <summary>Click to expand Batch 1 - 9 History</summary>
 
-### Batch 9: AI Engine & Admin Parity (Current)
+### Batch 10: Finance & ID Card Enhancements (Current)
+- Completed `CardBuilderScreen` with Class-based filtering and Bulk Print (PDF).
+- Finalized `CardService` with specialized student selection logic.
+
+### Batch 9: AI Engine & Admin Parity
 - Implemented `ExpertAiService` (retry/timeout/centralized prompts).
 - Ported `LogService`, `SubscriptionService`, `ModerationService`.
 - Created `ActivityLogsScreen.tsx` with dual modes.

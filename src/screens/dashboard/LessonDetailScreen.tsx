@@ -105,6 +105,19 @@ const normalizeLayout = (layout: unknown): LayoutBlock[] => {
   return [];
 };
 
+const normalizeExternalUrl = (url: string) => {
+  const value = (url ?? '').trim();
+  if (!value) return '';
+  if (/^https?:\/\//i.test(value)) return value;
+  return `https://${value}`;
+};
+
+const isVideoMaterial = (material: MaterialRecord) => {
+  const type = (material.file_type ?? '').toLowerCase();
+  const url = (material.file_url ?? '').toLowerCase();
+  return type.includes('video') || /\.(mp4|mov|m3u8|webm)(\?|$)/i.test(url) || url.includes('youtube.com') || url.includes('youtu.be') || url.includes('vimeo.com');
+};
+
 function Section({ title, children, colors }: { title: string; children: React.ReactNode; colors: any }) {
   return (
     <View style={[styles.section, { backgroundColor: colors.bgCard, borderColor: colors.border }]}>
@@ -128,6 +141,7 @@ export default function LessonDetailScreen({ navigation, route }: any) {
   const [progress, setProgress] = useState<LessonProgressRecord | null>(null);
   const [loading, setLoading] = useState(true);
   const [marking, setMarking] = useState(false);
+  const [visualMode, setVisualMode] = useState<'standard' | 'cinematic'>('cinematic');
 
   const contentParagraphs = useMemo(() => splitText(lesson?.content), [lesson?.content]);
   const noteParagraphs = useMemo(() => splitText(lesson?.lesson_notes), [lesson?.lesson_notes]);
@@ -153,7 +167,8 @@ export default function LessonDetailScreen({ navigation, route }: any) {
 
   const openUrl = async (url: string | null | undefined, fallback: string) => {
     if (!url) return Alert.alert('Unavailable', fallback);
-    if (!(await Linking.canOpenURL(url))) {
+    const target = normalizeExternalUrl(url);
+    if (!(await Linking.canOpenURL(target))) {
       return Alert.alert('Unavailable', 'This link cannot be opened on the device.');
     }
     
@@ -162,11 +177,11 @@ export default function LessonDetailScreen({ navigation, route }: any) {
       analyticsService.trackEvent(profile.id, 'video_open', {
         lessonId,
         courseId: lesson?.course_id,
-        url
+        url: target
       });
     }
 
-    await Linking.openURL(url);
+    await Linking.openURL(target);
   };
 
   const loadData = useCallback(async () => {
@@ -202,6 +217,10 @@ export default function LessonDetailScreen({ navigation, route }: any) {
 
   const markComplete = async () => {
     if (marking || !profile?.id) return;
+    if ((progress?.time_spent_minutes ?? 0) < 2) {
+      Alert.alert('Keep learning', 'Spend a little more time on this lesson before marking it complete.');
+      return;
+    }
     setMarking(true);
     try {
       await courseService.updateLessonProgress({
@@ -267,11 +286,36 @@ export default function LessonDetailScreen({ navigation, route }: any) {
       />
 
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scroll}>
-        <MotiView from={{ opacity: 0, translateY: 10 }} animate={{ opacity: 1, translateY: 0 }} style={[styles.hero, { backgroundColor: colors.bgCard, borderColor: colors.border }]}>
-          <LinearGradient colors={[`${colors.primary}16`, 'transparent']} style={StyleSheet.absoluteFill} />
+        <MotiView
+          from={{ opacity: 0, translateY: 10, scale: visualMode === 'cinematic' ? 0.98 : 1 }}
+          animate={{ opacity: 1, translateY: 0, scale: 1 }}
+          transition={{ duration: visualMode === 'cinematic' ? 620 : 320 }}
+          style={[styles.hero, { backgroundColor: colors.bgCard, borderColor: colors.border }]}
+        >
+          <LinearGradient
+            colors={visualMode === 'cinematic' ? [`${colors.primary}26`, `${colors.info}14`, 'transparent'] : [`${colors.primary}16`, 'transparent']}
+            style={StyleSheet.absoluteFill}
+          />
           <Text style={[styles.eyebrow, { color: colors.primary }]}>{(lesson.courses?.title ?? 'Learning Track').toUpperCase()}</Text>
           <Text style={[styles.heroTitle, { color: colors.textPrimary }]}>{lesson.title}</Text>
           {!!lesson.description && <Text style={[styles.bodyText, { color: colors.textSecondary }]}>{lesson.description}</Text>}
+          <View style={styles.modeRow}>
+            <Text style={[styles.modeLabel, { color: colors.textMuted }]}>Visual Mode</Text>
+            <View style={[styles.modeSwitch, { borderColor: colors.border, backgroundColor: colors.bg }]}>
+              <TouchableOpacity
+                onPress={() => setVisualMode('standard')}
+                style={[styles.modeBtn, visualMode === 'standard' && { backgroundColor: colors.primary + '20' }]}
+              >
+                <Text style={[styles.modeBtnText, { color: visualMode === 'standard' ? colors.primary : colors.textMuted }]}>Standard</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={() => setVisualMode('cinematic')}
+                style={[styles.modeBtn, visualMode === 'cinematic' && { backgroundColor: colors.info + '20' }]}
+              >
+                <Text style={[styles.modeBtnText, { color: visualMode === 'cinematic' ? colors.info : colors.textMuted }]}>Cinematic</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
           <View style={styles.pillRow}>
             <View style={[styles.pill, { backgroundColor: `${colors.primary}14`, borderColor: `${colors.primary}2A` }]}><Text style={[styles.pillText, { color: colors.primary }]}>{(lesson.lesson_type ?? 'lesson').toUpperCase()}</Text></View>
             <View style={[styles.pill, { backgroundColor: `${colors.info}14`, borderColor: `${colors.info}2A` }]}><Text style={[styles.pillText, { color: colors.info }]}>{lesson.duration_minutes ?? 45} MIN</Text></View>
@@ -340,30 +384,48 @@ export default function LessonDetailScreen({ navigation, route }: any) {
         </View>
 
         {contentBlocks.length > 0 && (
-          <View style={[styles.section, { backgroundColor: colors.bgCard, borderColor: colors.border }]}>
+          <MotiView
+            from={{ opacity: 0, translateY: visualMode === 'cinematic' ? 14 : 0 }}
+            animate={{ opacity: 1, translateY: 0 }}
+            transition={{ duration: visualMode === 'cinematic' ? 620 : 320 }}
+            style={[styles.section, { backgroundColor: colors.bgCard, borderColor: colors.border }]}
+          >
+            {visualMode === 'cinematic' ? (
+              <LinearGradient colors={[`${colors.primary}12`, 'transparent']} style={StyleSheet.absoluteFill} />
+            ) : null}
             <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>Core Content</Text>
             <View style={styles.sectionBody}>
-              <LessonBlockRenderer blocks={contentBlocks as any} lessonType={lesson.lesson_type} />
+              <LessonBlockRenderer blocks={contentBlocks as any} lessonType={lesson.lesson_type} visualMode={visualMode} />
             </View>
-          </View>
+          </MotiView>
         )}
 
         {noteBlocks.length > 0 && (
-          <View style={[styles.section, { backgroundColor: colors.bgCard, borderColor: colors.border }]}>
+          <MotiView
+            from={{ opacity: 0, translateY: visualMode === 'cinematic' ? 14 : 0 }}
+            animate={{ opacity: 1, translateY: 0 }}
+            transition={{ duration: visualMode === 'cinematic' ? 620 : 320, delay: 60 }}
+            style={[styles.section, { backgroundColor: colors.bgCard, borderColor: colors.border }]}
+          >
             <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>Lesson Notes</Text>
             <View style={styles.sectionBody}>
-              <LessonBlockRenderer blocks={noteBlocks as any} lessonType={lesson.lesson_type} />
+              <LessonBlockRenderer blocks={noteBlocks as any} lessonType={lesson.lesson_type} visualMode={visualMode} />
             </View>
-          </View>
+          </MotiView>
         )}
 
         {layoutBlocks.length > 0 && (
-          <View style={[styles.section, { backgroundColor: colors.bgCard, borderColor: colors.border }]}>
+          <MotiView
+            from={{ opacity: 0, translateY: visualMode === 'cinematic' ? 14 : 0 }}
+            animate={{ opacity: 1, translateY: 0 }}
+            transition={{ duration: visualMode === 'cinematic' ? 620 : 320, delay: 90 }}
+            style={[styles.section, { backgroundColor: colors.bgCard, borderColor: colors.border }]}
+          >
             <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>Lesson Content</Text>
             <View style={styles.sectionBody}>
-              <LessonBlockRenderer blocks={layoutBlocks as any} lessonType={lesson.lesson_type} />
+              <LessonBlockRenderer blocks={layoutBlocks as any} lessonType={lesson.lesson_type} visualMode={visualMode} />
             </View>
-          </View>
+          </MotiView>
         )}
 
         {!isStudent &&
@@ -392,13 +454,21 @@ export default function LessonDetailScreen({ navigation, route }: any) {
 
         {materials.length > 0 && (
           <Section title="Materials" colors={colors}>
+            {canEditLesson ? (
+              <TouchableOpacity
+                style={[styles.materialManageBtn, { borderColor: colors.primary, backgroundColor: `${colors.primary}12` }]}
+                onPress={() => navigation.navigate(ROUTES.LessonEditor, { lessonId: lesson.id, courseId: lesson.course_id ?? undefined })}
+              >
+                <Text style={[styles.materialManageBtnText, { color: colors.primary }]}>Add / Edit lesson materials</Text>
+              </TouchableOpacity>
+            ) : null}
             {materials.map((material) => (
               <TouchableOpacity key={material.id} onPress={() => openUrl(material.file_url, 'This material does not have a valid file URL.')} style={[styles.rowCard, { backgroundColor: colors.bg, borderColor: colors.border }]}>
                 <View style={{ flex: 1 }}>
                   <Text style={[styles.cardTitle, { color: colors.textPrimary }]}>{material.title}</Text>
                   <Text style={[styles.metaText, { color: colors.textMuted }]}>{(material.file_type ?? 'resource').toUpperCase()}</Text>
                 </View>
-                <Text style={[styles.openText, { color: colors.primary }]}>OPEN</Text>
+                <Text style={[styles.openText, { color: colors.primary }]}>{isVideoMaterial(material) ? 'PLAY' : 'OPEN'}</Text>
               </TouchableOpacity>
             ))}
           </Section>
@@ -471,6 +541,11 @@ const styles = StyleSheet.create({
   eyebrow: { fontFamily: FONT_FAMILY.bodyBold, fontSize: 10, letterSpacing: 1.4 },
   heroTitle: { fontFamily: FONT_FAMILY.display, fontSize: FONT_SIZE['2xl'], lineHeight: 34 },
   bodyText: { fontFamily: FONT_FAMILY.body, fontSize: FONT_SIZE.sm, lineHeight: 22 },
+  modeRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 2 },
+  modeLabel: { fontFamily: FONT_FAMILY.bodySemi, fontSize: FONT_SIZE.xs, textTransform: 'uppercase', letterSpacing: 0.8 },
+  modeSwitch: { flexDirection: 'row', borderWidth: 1, borderRadius: RADIUS.full, padding: 3 },
+  modeBtn: { paddingHorizontal: 10, paddingVertical: 5, borderRadius: RADIUS.full },
+  modeBtnText: { fontFamily: FONT_FAMILY.bodySemi, fontSize: 11 },
   bullet: { fontFamily: FONT_FAMILY.body, fontSize: FONT_SIZE.sm, lineHeight: 22 },
   pillRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   pill: { borderWidth: 1, borderRadius: RADIUS.full, paddingHorizontal: 10, paddingVertical: 6 },
@@ -488,6 +563,8 @@ const styles = StyleSheet.create({
   sectionBody: { gap: 12 },
   card: { borderWidth: 1, borderRadius: RADIUS.lg, padding: SPACING.md, gap: 8 },
   rowCard: { borderWidth: 1, borderRadius: RADIUS.lg, padding: SPACING.md, gap: 6 },
+  materialManageBtn: { borderWidth: 1, borderRadius: RADIUS.md, paddingVertical: 10, paddingHorizontal: SPACING.md, alignItems: 'center' },
+  materialManageBtnText: { fontFamily: FONT_FAMILY.bodySemi, fontSize: FONT_SIZE.xs, textTransform: 'uppercase', letterSpacing: 0.8 },
   cardTitle: { fontFamily: FONT_FAMILY.bodyBold, fontSize: FONT_SIZE.sm, lineHeight: 20 },
   metaText: { fontFamily: FONT_FAMILY.mono, fontSize: 10 },
   openText: { fontFamily: FONT_FAMILY.bodyBold, fontSize: 11, letterSpacing: 0.6 },

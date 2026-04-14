@@ -8,7 +8,6 @@ import { MotiView } from 'moti';
 import { LinearGradient } from 'expo-linear-gradient';
 import * as Print from 'expo-print';
 import * as Sharing from 'expo-sharing';
-import { useAuth } from '../../contexts/AuthContext';
 import { cardService } from '../../services/card.service';
 import { COLORS } from '../../constants/colors';
 import { FONT_FAMILY, FONT_SIZE } from '../../constants/typography';
@@ -25,6 +24,7 @@ interface StudentRecord {
 }
 
 type Step = 'search' | 'preview';
+type Mode = 'name' | 'class';
 
 function getInitials(name: string): string {
   const parts = name.trim().split(' ');
@@ -149,13 +149,30 @@ function IDCard({ student }: { student: StudentRecord }) {
 }
 
 export default function CardBuilderScreen({ navigation }: any) {
-  const { profile } = useAuth();
   const [step, setStep] = useState<Step>('search');
   const [search, setSearch] = useState('');
   const [results, setResults] = useState<StudentRecord[]>([]);
+
+  const [mode, setMode] = useState<Mode>('name');
+  const [availableClasses, setAvailableClasses] = useState<string[]>([]);
+  const [selectedClass, setSelectedClass] = useState('');
   const [searching, setSearching] = useState(false);
   const [selected, setSelected] = useState<StudentRecord | null>(null);
+  const [isBulk, setIsBulk] = useState(false);
   const [exporting, setExporting] = useState(false);
+
+  // Load unique classes on mount
+  React.useEffect(() => {
+    const loadClasses = async () => {
+      try {
+        const cls = await cardService.listUniqueClasses();
+        setAvailableClasses(cls);
+      } catch (e) {
+        console.error('Failed to load classes', e);
+      }
+    };
+    loadClasses();
+  }, []);
 
   const handleSearch = useCallback(async (text: string) => {
     setSearch(text);
@@ -171,6 +188,19 @@ export default function CardBuilderScreen({ navigation }: any) {
     }
   }, []);
 
+  const handleClassSelect = async (className: string) => {
+    setSelectedClass(className);
+    setSearching(true);
+    try {
+      const data = await cardService.listStudentsByClass(className);
+      setResults((data ?? []) as StudentRecord[]);
+    } catch (e: any) {
+      Alert.alert('Error', e.message);
+    } finally {
+      setSearching(false);
+    }
+  };
+
   const handleSelect = (student: StudentRecord) => {
     setSelected(student);
     setStep('preview');
@@ -179,19 +209,57 @@ export default function CardBuilderScreen({ navigation }: any) {
   const handleNewCard = () => {
     setSelected(null);
     setSearch('');
+    setSelectedClass('');
     setResults([]);
     setStep('search');
+    setIsBulk(false);
   };
 
-  const handleExportCard = async () => {
-    if (!selected) return;
+  const generateCardHtml = (student: StudentRecord) => {
+    return `
+      <div class="card" style="page-break-after: always; margin-bottom: 20px;">
+        <div class="top">
+          <div class="logo">R</div>
+          <div>
+            <h1>RILLCOD ACADEMY</h1>
+            <p>Student ID Card</p>
+          </div>
+        </div>
+        <div class="body">
+          <div class="hero">
+            <div class="avatar">${getInitials(student.full_name)}</div>
+            <p class="name">${student.full_name}</p>
+            <div class="pill">Student</div>
+          </div>
+          <div class="grid">
+            <div class="item"><div class="label">ID Number</div><div class="value">${shortId(student.id)}</div></div>
+            <div class="item"><div class="label">Class / Grade</div><div class="value">${student.section_class ?? 'N/A'}</div></div>
+            <div class="item"><div class="label">School</div><div class="value">${student.school_name ?? 'Rillcod Academy'}</div></div>
+            <div class="item"><div class="label">Enrolled</div><div class="value">${enrollYear(student.created_at)}</div></div>
+          </div>
+        </div>
+        <div class="bottom">
+          <span>Valid 2025 - 2026</span>
+          <span>rillcod.com</span>
+        </div>
+      </div>
+    `;
+  };
+
+  const handleExportCard = async (targetStudents?: StudentRecord[]) => {
+    const list = targetStudents || (selected ? [selected] : []);
+    if (list.length === 0) return;
+
     try {
       setExporting(true);
+      const cardsHtml = list.map(s => generateCardHtml(s)).join('');
+
       const html = `
         <html>
           <head>
             <meta charset="utf-8" />
             <style>
+              @page { size: A4; margin: 0; }
               body { font-family: Arial, sans-serif; background: #0f172a; padding: 24px; }
               .card { width: 760px; margin: 0 auto; border-radius: 28px; overflow: hidden; background: linear-gradient(180deg, #111827, #0f172a); color: #fff; border: 1px solid rgba(244,164,98,0.3); }
               .top { padding: 24px 28px; background: linear-gradient(90deg, ${COLORS.gradPrimary[0]}, ${COLORS.gradPrimary[1]}); display: flex; align-items: center; gap: 16px; }
@@ -211,32 +279,7 @@ export default function CardBuilderScreen({ navigation }: any) {
             </style>
           </head>
           <body>
-            <div class="card">
-              <div class="top">
-                <div class="logo">R</div>
-                <div>
-                  <h1>RILLCOD ACADEMY</h1>
-                  <p>Student ID Card</p>
-                </div>
-              </div>
-              <div class="body">
-                <div class="hero">
-                  <div class="avatar">${getInitials(selected.full_name)}</div>
-                  <p class="name">${selected.full_name}</p>
-                  <div class="pill">Student</div>
-                </div>
-                <div class="grid">
-                  <div class="item"><div class="label">ID Number</div><div class="value">${shortId(selected.id)}</div></div>
-                  <div class="item"><div class="label">Class / Grade</div><div class="value">${selected.section_class ?? 'N/A'}</div></div>
-                  <div class="item"><div class="label">School</div><div class="value">${selected.school_name ?? 'Rillcod Academy'}</div></div>
-                  <div class="item"><div class="label">Enrolled</div><div class="value">${enrollYear(selected.created_at)}</div></div>
-                </div>
-              </div>
-              <div class="bottom">
-                <span>Valid 2025 - 2026</span>
-                <span>rillcod.com</span>
-              </div>
-            </div>
+            ${cardsHtml}
           </body>
         </html>
       `;
@@ -276,27 +319,77 @@ export default function CardBuilderScreen({ navigation }: any) {
               </LinearGradient>
             </View>
 
-            <Text style={styles.label}>Search Student by Name</Text>
-            <View style={styles.searchWrap}>
-              <Text style={styles.searchIcon}>🔍</Text>
-              <TextInput
-                style={styles.searchInput}
-                placeholder="Type student name..."
-                placeholderTextColor={COLORS.textMuted}
-                value={search}
-                onChangeText={handleSearch}
-                autoFocus
-              />
-              {searching && <ActivityIndicator size="small" color={COLORS.primary} />}
+            <View style={styles.modeTabs}>
+              <TouchableOpacity 
+                style={[styles.modeTab, mode === 'name' && styles.modeTabActive]} 
+                onPress={() => { setMode('name'); setResults([]); }}
+              >
+                <Text style={[styles.modeTabText, mode === 'name' && styles.modeTabTextActive]}>By Name</Text>
+              </TouchableOpacity>
+              <TouchableOpacity 
+                style={[styles.modeTab, mode === 'class' && styles.modeTabActive]} 
+                onPress={() => { setMode('class'); setResults([]); }}
+              >
+                <Text style={[styles.modeTabText, mode === 'class' && styles.modeTabTextActive]}>By Class</Text>
+              </TouchableOpacity>
             </View>
+
+            {mode === 'name' ? (
+              <>
+                <Text style={styles.label}>Search Student by Name</Text>
+                <View style={styles.searchWrap}>
+                  <Text style={styles.searchIcon}>🔍</Text>
+                  <TextInput
+                    style={styles.searchInput}
+                    placeholder="Type student name..."
+                    placeholderTextColor={COLORS.textMuted}
+                    value={search}
+                    onChangeText={handleSearch}
+                    autoFocus
+                  />
+                  {searching && <ActivityIndicator size="small" color={COLORS.primary} />}
+                </View>
+              </>
+            ) : (
+              <>
+                <Text style={styles.label}>Select Class</Text>
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.classScroll}>
+                  {availableClasses.map(cls => (
+                    <TouchableOpacity 
+                      key={cls} 
+                      style={[styles.classChip, selectedClass === cls && styles.classChipActive]}
+                      onPress={() => handleClassSelect(cls)}
+                    >
+                      <Text style={[styles.classChipText, selectedClass === cls && styles.classChipTextActive]}>{cls}</Text>
+                    </TouchableOpacity>
+                  ))}
+                </ScrollView>
+              </>
+            )}
           </MotiView>
 
           {results.length > 0 && (
-            <FlatList
-              data={results}
-              keyExtractor={s => s.id}
-              keyboardShouldPersistTaps="handled"
-              renderItem={({ item, index }) => (
+            <View style={{ flex: 1 }}>
+              <View style={styles.resultsHeader}>
+                <Text style={styles.resultsCount}>{results.length} students found</Text>
+                {mode === 'class' && (
+                  <TouchableOpacity 
+                    style={styles.bulkPrintBtn} 
+                    onPress={() => { 
+                      setIsBulk(true); 
+                      handleExportCard(results); 
+                    }}
+                    disabled={exporting}
+                  >
+                    <Text style={styles.bulkPrintBtnText}>{exporting ? '...' : 'Bulk PDF'}</Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+              <FlatList
+                data={results}
+                keyExtractor={s => s.id}
+                keyboardShouldPersistTaps="handled"
+                renderItem={({ item, index }) => (
                 <MotiView
                   from={{ opacity: 0, translateY: 6 }}
                   animate={{ opacity: 1, translateY: 0 }}
@@ -404,6 +497,23 @@ const styles = StyleSheet.create({
   resultArrow: { fontSize: 20, color: COLORS.textMuted },
   noResults: { paddingVertical: SPACING.xl, alignItems: 'center' },
   noResultsText: { fontSize: FONT_SIZE.base, fontFamily: FONT_FAMILY.body, color: COLORS.textMuted },
+
+  modeTabs: { flexDirection: 'row', backgroundColor: COLORS.bgCard, borderRadius: RADIUS.lg, padding: 4, marginBottom: SPACING.lg },
+  modeTab: { flex: 1, paddingVertical: 10, alignItems: 'center', borderRadius: RADIUS.md },
+  modeTabActive: { backgroundColor: COLORS.bg },
+  modeTabText: { fontSize: FONT_SIZE.sm, fontFamily: FONT_FAMILY.bodySemi, color: COLORS.textMuted },
+  modeTabTextActive: { color: COLORS.primaryLight },
+
+  classScroll: { marginBottom: SPACING.lg },
+  classChip: { paddingHorizontal: 16, paddingVertical: 10, borderRadius: RADIUS.full, borderWidth: 1, borderColor: COLORS.border, marginRight: 8, backgroundColor: COLORS.bgCard },
+  classChipActive: { borderColor: COLORS.primary, backgroundColor: COLORS.primary + '10' },
+  classChipText: { fontSize: FONT_SIZE.sm, fontFamily: FONT_FAMILY.bodySemi, color: COLORS.textSecondary },
+  classChipTextActive: { color: COLORS.primary },
+
+  resultsHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: SPACING.sm, paddingHorizontal: 4 },
+  resultsCount: { fontSize: FONT_SIZE.xs, fontFamily: FONT_FAMILY.body, color: COLORS.textMuted, textTransform: 'uppercase', letterSpacing: 1 },
+  bulkPrintBtn: { backgroundColor: COLORS.primary, paddingHorizontal: 12, paddingVertical: 6, borderRadius: RADIUS.md },
+  bulkPrintBtnText: { fontSize: FONT_SIZE.xs, fontFamily: FONT_FAMILY.bodyBold, color: '#fff' },
 
   // Step 2 - Preview
   previewScroll: { paddingHorizontal: SPACING.base, paddingBottom: 60, paddingTop: SPACING.md },

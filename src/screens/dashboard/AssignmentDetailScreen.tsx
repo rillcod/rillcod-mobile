@@ -26,6 +26,8 @@ import { SPACING, RADIUS } from '../../constants/spacing';
 import { ROUTES } from '../../navigation/routes';
 import { uploadToR2, mimeFromExt, getR2SignedViewUrl } from '../../lib/r2';
 import { buildAssignmentWhatsAppShareMessage } from '../../lib/assignmentShare';
+import { toAppError } from '../../lib/appError';
+import { assertNumberRange } from '../../lib/validation';
 
 interface AssignmentQuestion {
   question_text: string;
@@ -65,6 +67,8 @@ interface Submission {
   file_url?: string | null;
   answers: any;
 }
+
+type SubmissionFilter = 'all' | 'submitted' | 'graded';
 
 const TYPE_COLOR: Record<string, string> = {
   quiz: COLORS.info,
@@ -203,6 +207,8 @@ export default function AssignmentDetailScreen({ route, navigation }: any) {
   const [gradeInput, setGradeInput] = useState('');
   const [feedbackInput, setFeedbackInput] = useState('');
   const [generatingFeedback, setGeneratingFeedback] = useState(false);
+  const [submissionFilter, setSubmissionFilter] = useState<SubmissionFilter>('all');
+  const [submissionSearch, setSubmissionSearch] = useState('');
 
   const canGrade = profile?.role === 'admin' || profile?.role === 'teacher' || profile?.role === 'school';
 
@@ -295,8 +301,10 @@ export default function AssignmentDetailScreen({ route, navigation }: any) {
   const saveGrade = async (submissionId: string) => {
     const grade = Number(gradeInput);
     if (!assignment) return;
-    if (Number.isNaN(grade) || grade < 0 || grade > (assignment.max_points ?? 100)) {
-      Alert.alert('Invalid grade', `Enter a score between 0 and ${assignment.max_points ?? 100}.`);
+    try {
+      assertNumberRange(grade, 'Grade', 0, assignment.max_points ?? 100);
+    } catch (error) {
+      Alert.alert('Invalid grade', toAppError(error).message);
       return;
     }
 
@@ -313,7 +321,7 @@ export default function AssignmentDetailScreen({ route, navigation }: any) {
       setGradeInput('');
       setFeedbackInput('');
     } catch (error: any) {
-      Alert.alert('Grading failed', error?.message ?? 'Could not save grade.');
+      Alert.alert('Grading failed', toAppError(error, 'Could not save grade.').message);
     } finally {
       setSaving(false);
     }
@@ -464,7 +472,7 @@ export default function AssignmentDetailScreen({ route, navigation }: any) {
       await load();
       Alert.alert('Submitted', 'Your assignment has been submitted.');
     } catch (error: any) {
-      Alert.alert('Submission failed', error?.message ?? 'Could not submit assignment.');
+      Alert.alert('Submission failed', toAppError(error, 'Could not submit assignment.').message);
     } finally {
       setSubmitting(false);
     }
@@ -478,6 +486,19 @@ export default function AssignmentDetailScreen({ route, navigation }: any) {
     if (!assignment || !mySubmission || mySubmission.grade == null) return null;
     return Math.round((mySubmission.grade / (assignment.max_points ?? 100)) * 100);
   }, [assignment, mySubmission]);
+  const allowLate = assignment?.metadata?.allow_late !== false;
+  const lateLocked = !canGrade && isOverdue && !allowLate;
+  const filteredSubmissions = useMemo(() => {
+    const q = submissionSearch.trim().toLowerCase();
+    return submissions.filter((submission) => {
+      const matchFilter = submissionFilter === 'all' || (submission.status ?? 'submitted') === submissionFilter;
+      const matchSearch =
+        !q ||
+        (submission.student_name ?? '').toLowerCase().includes(q) ||
+        (submission.submission_text ?? '').toLowerCase().includes(q);
+      return matchFilter && matchSearch;
+    });
+  }, [submissions, submissionFilter, submissionSearch]);
 
   if (loading) {
     return <View style={styles.loadWrap}><ActivityIndicator color={COLORS.info} size="large" /></View>;
@@ -542,6 +563,9 @@ export default function AssignmentDetailScreen({ route, navigation }: any) {
               <View style={styles.metaItem}><Text style={styles.metaText}>{assignment.max_points ?? 100} pts</Text></View>
               {assignment.questions.length > 0 ? <View style={styles.metaItem}><Text style={styles.metaText}>{assignment.questions.length} questions</Text></View> : null}
             </View>
+            {!allowLate && assignment.due_date ? (
+              <Text style={styles.metaLateLock}>Late submission: disabled</Text>
+            ) : null}
           </View>
         </MotiView>
 
@@ -577,10 +601,32 @@ export default function AssignmentDetailScreen({ route, navigation }: any) {
             </View>
 
             <Text style={styles.subsTitle}>Student Submissions</Text>
+            <View style={styles.reviewToolsWrap}>
+              <TextInput
+                style={styles.reviewSearch}
+                value={submissionSearch}
+                onChangeText={setSubmissionSearch}
+                placeholder="Search student or answer..."
+                placeholderTextColor={COLORS.textMuted}
+              />
+              <View style={styles.reviewFilterRow}>
+                {(['all', 'submitted', 'graded'] as SubmissionFilter[]).map((filterValue) => (
+                  <TouchableOpacity
+                    key={filterValue}
+                    onPress={() => setSubmissionFilter(filterValue)}
+                    style={[styles.reviewChip, submissionFilter === filterValue && styles.reviewChipActive]}
+                  >
+                    <Text style={[styles.reviewChipText, submissionFilter === filterValue && styles.reviewChipTextActive]}>
+                      {filterValue === 'all' ? 'All' : filterValue === 'submitted' ? 'To grade' : 'Graded'}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            </View>
             {submissions.length === 0 ? (
               <View style={styles.emptySubmit}><Text style={styles.emptyText}>No submissions yet.</Text></View>
             ) : (
-              submissions.map((submission, index) => {
+              filteredSubmissions.map((submission, index) => {
                 const pct = submission.grade != null ? Math.round((submission.grade / (assignment.max_points ?? 100)) * 100) : null;
                 const gradeColor = pct != null ? (pct >= 70 ? COLORS.success : pct >= 50 ? COLORS.warning : COLORS.error) : COLORS.textMuted;
                 const isGrading = gradingId === submission.id;
@@ -690,6 +736,9 @@ export default function AssignmentDetailScreen({ route, navigation }: any) {
                 ) : null}
               </View>
               {uploadingFile ? <ActivityIndicator style={{ marginVertical: 8 }} color={COLORS.primary} /> : null}
+              {lateLocked ? (
+                <Text style={styles.lockedText}>This assignment has passed due date and late submissions are not allowed.</Text>
+              ) : null}
               {(filePreviewUri || filePublicUrl) && isLikelyImageUrl(filePreviewUri || filePublicUrl || '') ? (
                 <Image
                   source={{ uri: filePreviewUri || resolvedUploadViewUrl || filePublicUrl || '' }}
@@ -719,11 +768,12 @@ export default function AssignmentDetailScreen({ route, navigation }: any) {
                 placeholderTextColor={COLORS.textMuted}
                 value={submissionText}
                 onChangeText={setSubmissionText}
+                editable={!lateLocked}
               />
               <TouchableOpacity
                 style={styles.submitBtn}
                 onPress={submitAssignment}
-                disabled={submitting || uploadingFile || !!mySubmission?.grade}
+                disabled={submitting || uploadingFile || !!mySubmission?.grade || lateLocked}
               >
                 {submitting ? <ActivityIndicator color={COLORS.white100} size="small" /> : <Text style={styles.submitBtnText}>{mySubmission ? 'Save Submission' : 'Submit Work'}</Text>}
               </TouchableOpacity>
@@ -755,6 +805,7 @@ const styles = StyleSheet.create({
   metaRow: { flexDirection: 'row', gap: SPACING.md, flexWrap: 'wrap' },
   metaItem: { flexDirection: 'row', alignItems: 'center', gap: 4 },
   metaText: { fontFamily: FONT_FAMILY.body, fontSize: FONT_SIZE.xs, color: COLORS.textSecondary },
+  metaLateLock: { fontFamily: FONT_FAMILY.bodySemi, fontSize: FONT_SIZE.xs, color: COLORS.error, marginTop: 2 },
   sectionCard: { borderWidth: 1, borderColor: COLORS.border, borderRadius: RADIUS.lg, padding: SPACING.md, marginBottom: SPACING.md, backgroundColor: COLORS.bgCard },
   sectionTitle: { fontFamily: FONT_FAMILY.display, fontSize: FONT_SIZE.sm, color: COLORS.textPrimary, textTransform: 'uppercase', letterSpacing: 1, marginBottom: SPACING.sm },
   questionRow: { flexDirection: 'row', gap: SPACING.sm, marginBottom: SPACING.sm },
@@ -766,6 +817,13 @@ const styles = StyleSheet.create({
   summaryLabel: { fontFamily: FONT_FAMILY.body, fontSize: FONT_SIZE.xs, color: COLORS.textMuted },
   summaryValue: { fontFamily: FONT_FAMILY.display, fontSize: FONT_SIZE.lg, color: COLORS.textPrimary, marginTop: 4 },
   subsTitle: { fontFamily: FONT_FAMILY.display, fontSize: FONT_SIZE.base, color: COLORS.textPrimary, marginBottom: SPACING.sm },
+  reviewToolsWrap: { gap: SPACING.sm, marginBottom: SPACING.sm },
+  reviewSearch: { backgroundColor: COLORS.bg, borderWidth: 1, borderColor: COLORS.border, borderRadius: RADIUS.md, paddingHorizontal: SPACING.md, paddingVertical: 10, fontFamily: FONT_FAMILY.body, fontSize: FONT_SIZE.sm, color: COLORS.textPrimary },
+  reviewFilterRow: { flexDirection: 'row', gap: SPACING.sm },
+  reviewChip: { borderWidth: 1, borderColor: COLORS.border, borderRadius: RADIUS.full, paddingVertical: 6, paddingHorizontal: 12, backgroundColor: COLORS.bg },
+  reviewChipActive: { borderColor: COLORS.primary, backgroundColor: COLORS.primaryPale },
+  reviewChipText: { fontFamily: FONT_FAMILY.bodySemi, fontSize: FONT_SIZE.xs, color: COLORS.textMuted },
+  reviewChipTextActive: { color: COLORS.primaryLight },
   subCard: { borderWidth: 1, borderColor: COLORS.border, borderRadius: RADIUS.lg, padding: SPACING.md, marginBottom: SPACING.sm, gap: SPACING.sm, backgroundColor: COLORS.bgCard },
   subTop: { flexDirection: 'row', alignItems: 'center', gap: SPACING.sm },
   avatar: { width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center', backgroundColor: COLORS.admin },
@@ -798,6 +856,7 @@ const styles = StyleSheet.create({
   submitBtn: { marginTop: SPACING.md, backgroundColor: COLORS.primary, borderRadius: RADIUS.md, paddingVertical: 12, alignItems: 'center', justifyContent: 'center' },
   submitBtnText: { fontFamily: FONT_FAMILY.bodySemi, fontSize: FONT_SIZE.sm, color: COLORS.white100 },
   submitMeta: { fontFamily: FONT_FAMILY.body, fontSize: FONT_SIZE.xs, color: COLORS.textMuted, marginTop: 8 },
+  lockedText: { fontFamily: FONT_FAMILY.bodySemi, fontSize: FONT_SIZE.xs, color: COLORS.error, marginBottom: SPACING.sm },
   emptyWrap: { flex: 1, alignItems: 'center', justifyContent: 'center' },
   emptySubmit: { alignItems: 'center', paddingVertical: 40 },
   emptyText: { fontFamily: FONT_FAMILY.body, fontSize: FONT_SIZE.sm, color: COLORS.textMuted },

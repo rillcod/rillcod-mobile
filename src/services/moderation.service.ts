@@ -54,6 +54,24 @@ export class ModerationService {
     return data as FlaggedItem;
   }
 
+  async resolveFlag(id: string, status: ModerationStatus, notes?: string, moderatorId?: string) {
+    const actor = moderatorId ?? null;
+    const { data, error } = await supabase
+      .from('flagged_content')
+      .update({
+        status,
+        moderator_notes: notes || null,
+        moderator_id: actor,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', id)
+      .select()
+      .single();
+
+    if (error) throw error;
+    return data as FlaggedItem;
+  }
+
   async flagContent(reporterId: string, contentId: string, contentType: string, reason: string, metadata?: any) {
     const { data, error } = await supabase
       .from('flagged_content')

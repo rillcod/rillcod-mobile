@@ -1,13 +1,15 @@
 import React, { useEffect, useState } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity,
-  ActivityIndicator, RefreshControl,
+  ActivityIndicator, RefreshControl, Share, Alert,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { Ionicons } from '@expo/vector-icons';
 import { MotiView } from 'moti';
 import { useAuth } from '../../contexts/AuthContext';
 import { gradeService } from '../../services/grade.service';
 import { studentService } from '../../services/student.service';
+import { progressReportPDFService } from '../../services/reportPDF.service';
 import { COLORS } from '../../constants/colors';
 import { FONT_FAMILY, FONT_SIZE } from '../../constants/typography';
 import { SPACING, RADIUS } from '../../constants/spacing';
@@ -58,15 +60,11 @@ export default function ParentResultsScreen({ navigation, route }: any) {
 
   const load = async () => {
     try {
-      let studentId = paramStudentId as string | undefined;
-      if (!studentId && profile?.email) {
-        studentId = (await studentService.getFirstStudentRegistrationIdForParentEmail(profile.email)) ?? undefined;
-      }
-
-      let portalUserId: string | null = userId ?? null;
-      if (!portalUserId && studentId) {
-        portalUserId = await studentService.getPortalUserIdForStudentRegistration(studentId);
-      }
+      const portalUserId = await studentService.resolveParentStudentPortalUserId({
+        explicitRegistrationId: paramStudentId,
+        explicitPortalUserId: userId,
+        parentEmail: profile?.email,
+      });
 
       if (!portalUserId) {
         setNoPortalAccount(true);
@@ -80,6 +78,36 @@ export default function ParentResultsScreen({ navigation, route }: any) {
     } finally {
       setLoading(false);
       setRefreshing(false);
+    }
+  };
+
+  const handleQuickShare = async (report: Report) => {
+    const text = [
+      `📊 *Progress Report — ${studentName || 'Student'}*`,
+      `📚 Course: ${report.course_name}`,
+      `📅 Term: ${report.report_term}${report.report_date ? ` (${new Date(report.report_date).toLocaleDateString('en-GB', { month: 'short', year: 'numeric' })})` : ''}`,
+      ``,
+      report.theory_score != null ? `🔬 Theory: ${report.theory_score}%` : null,
+      report.practical_score != null ? `🛠️ Practical: ${report.practical_score}%` : null,
+      report.attendance_score != null ? `✅ Attendance: ${report.attendance_score}%` : null,
+      report.overall_score != null ? `📈 Overall: ${report.overall_score}%` : null,
+      report.overall_grade ? `🏆 Grade: ${report.overall_grade}` : null,
+      ``,
+      `_Shared from Rillcod Academy_`,
+    ].filter(Boolean).join('\n');
+
+    try {
+      await Share.share({ message: text });
+    } catch (error) {
+      console.warn('Share failed:', error);
+    }
+  };
+
+  const handleExportPDF = async (report: Report) => {
+    try {
+      await progressReportPDFService.shareReportPDF(report, studentName || 'Student');
+    } catch (error) {
+      Alert.alert('Export failed', 'Could not generate report PDF.');
     }
   };
 
@@ -165,6 +193,24 @@ export default function ParentResultsScreen({ navigation, route }: any) {
                       </View>
                       <Text style={[styles.chevron, { transform: [{ rotate: isOpen ? '180deg' : '0deg' }] }]}>▾</Text>
                     </TouchableOpacity>
+
+                    {/* Quick Actions Row */}
+                    <View style={styles.actionRow}>
+                      <TouchableOpacity 
+                        style={styles.actionBtn} 
+                        onPress={() => handleQuickShare(report)}
+                      >
+                        <Ionicons name="share-social-outline" size={16} color={COLORS.textSecondary} />
+                        <Text style={styles.actionBtnText}>SHARE</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity 
+                        style={styles.actionBtn} 
+                        onPress={() => handleExportPDF(report)}
+                      >
+                        <Ionicons name="document-text-outline" size={16} color={COLORS.textSecondary} />
+                        <Text style={styles.actionBtnText}>PDF REPORT</Text>
+                      </TouchableOpacity>
+                    </View>
 
                     {/* Expanded detail */}
                     {isOpen && (
@@ -291,4 +337,25 @@ const styles = StyleSheet.create({
   milestoneCheck: { fontFamily: FONT_FAMILY.bodySemi, fontSize: FONT_SIZE.sm, color: COLORS.success },
   milestoneText: { fontFamily: FONT_FAMILY.body, fontSize: FONT_SIZE.sm, color: COLORS.textPrimary, flex: 1, lineHeight: FONT_SIZE.sm * 1.5 },
   instructorText: { fontFamily: FONT_FAMILY.body, fontSize: FONT_SIZE.xs, color: COLORS.textMuted, textAlign: 'right' },
+  actionRow: {
+    flexDirection: 'row',
+    borderTopWidth: 1,
+    borderTopColor: COLORS.border,
+    paddingHorizontal: SPACING.base,
+    paddingVertical: SPACING.sm,
+    gap: SPACING.md,
+    backgroundColor: 'rgba(255,255,255,0.02)',
+  },
+  actionBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingVertical: 4,
+  },
+  actionBtnText: {
+    fontFamily: FONT_FAMILY.bodyBold,
+    fontSize: 9,
+    color: COLORS.textMuted,
+    letterSpacing: 1,
+  },
 });

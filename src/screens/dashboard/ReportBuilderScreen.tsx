@@ -122,17 +122,17 @@ function getMileSuggestions(course: string): string[] {
 }
 
 function calcOverall(theory: string, practical: string, attendance: string, participation: string) {
-  // Standard formula: Theory×40% + Practical×20% + Attendance×20% + Participation×20%
-  const scores = [
-    { val: parseFloat(theory), weight: 0.4 },
-    { val: parseFloat(practical), weight: 0.2 },
-    { val: parseFloat(attendance), weight: 0.2 },
-    { val: parseFloat(participation), weight: 0.2 },
-  ].filter(s => !isNaN(s.val));
-  if (scores.length === 0) return null;
-  const totalWeight = scores.reduce((s, x) => s + x.weight, 0);
-  const weighted = scores.reduce((s, x) => s + x.val * x.weight, 0);
-  return Math.round(weighted / totalWeight);
+  // Web-parity formula: always fixed 40/20/20/20 weights, unset scores are treated as 0.
+  const th = parseFloat(theory);
+  const pr = parseFloat(practical);
+  const at = parseFloat(attendance);
+  const pa = parseFloat(participation);
+  const weighted =
+    (isNaN(th) ? 0 : th) * 0.4 +
+    (isNaN(pr) ? 0 : pr) * 0.2 +
+    (isNaN(at) ? 0 : at) * 0.2 +
+    (isNaN(pa) ? 0 : pa) * 0.2;
+  return Math.round(weighted);
 }
 
 function calcGrade(score: number | null): string {
@@ -365,36 +365,72 @@ export default function ReportBuilderScreen({ navigation, route }: any) {
 
   const applySmartHints = useCallback(async (portalUserId: string) => {
     try {
-      const { submissions: subs, attendance: att } = await reportBuilderService.fetchSmartHintSignals(portalUserId);
+      const {
+        submissions: subs,
+        attendance: att,
+        cbtSessions,
+        projectCount,
+        courseAssignmentTotal,
+        courseGradedSubmissionCount,
+        courseSubmissionGrades,
+      } = await reportBuilderService.fetchSmartHintSignals(portalUserId, sessionConfig.course_name);
       const raw = (subs ?? []).map((r: any) => Number(r.grade)).filter((g) => !Number.isNaN(g));
       let practical = 0;
       let theory = 0;
-      if (raw.length) {
-        const max = Math.max(...raw);
-        const scaled = raw.map((g) => (max <= 10 ? g * 10 : max <= 20 ? g * 5 : g));
+      const examSessions = (cbtSessions ?? []).filter((r: any) => {
+        const examType = r?.cbt_exams?.metadata?.exam_type;
+        return !examType || examType === 'examination';
+      });
+      const evalSessions = (cbtSessions ?? []).filter((r: any) => r?.cbt_exams?.metadata?.exam_type === 'evaluation');
+      const cbtExamScore = Number(examSessions?.[0]?.score ?? 0);
+      const cbtEvalScore = Number(evalSessions?.[0]?.score ?? 0);
+      const normalizeGradesToPercent = (grades: number[]) => {
+        if (!grades.length) return null;
+        const max = Math.max(...grades);
+        const scaled = grades.map((g) => (max <= 10 ? g * 10 : max <= 20 ? g * 5 : g));
         const avg = scaled.reduce((a, b) => a + b, 0) / scaled.length;
-        practical = Math.min(100, Math.max(0, Math.round(avg)));
+        return Math.min(100, Math.max(0, Math.round(avg)));
+      };
+      const scopedAssignmentAvg = normalizeGradesToPercent(courseSubmissionGrades ?? []);
+      const globalAssignmentAvg = normalizeGradesToPercent(raw);
+      if (globalAssignmentAvg != null) {
+        practical = globalAssignmentAvg;
         theory = Math.min(100, Math.max(0, practical - 3));
+      }
+      if (!Number.isNaN(cbtExamScore) && cbtExamScore > 0) {
+        theory = Math.min(100, Math.max(0, Math.round(cbtExamScore)));
+      }
+      if (!Number.isNaN(cbtEvalScore) && cbtEvalScore > 0) {
+        practical = Math.min(100, Math.max(0, Math.round(cbtEvalScore)));
+      } else if (scopedAssignmentAvg != null) {
+        // Web parity: Practical/Evaluation falls back to assignment average when no CBT evaluation score exists.
+        practical = scopedAssignmentAvg;
       }
       const rows = att ?? [];
       const present = rows.filter((r: any) => r.status === 'present').length;
       const attPct = rows.length ? Math.round((present / rows.length) * 100) : null;
-      const partPct = attPct != null ? Math.min(100, Math.max(0, Math.round(attPct * 0.95))) : null;
+      const assignmentPct =
+        courseAssignmentTotal != null && courseAssignmentTotal > 0 && courseGradedSubmissionCount != null
+          ? Math.round((courseGradedSubmissionCount / courseAssignmentTotal) * 100)
+          : null;
+      const projectPct = Math.min(100, Math.round((Number(projectCount ?? 0) / 3) * 100));
+      const partPct = projectPct > 0 ? projectPct : (attPct != null ? Math.min(100, Math.max(0, Math.round(attPct * 0.95))) : null);
 
       setForm((f) => ({
         ...f,
-        practical_score: raw.length ? String(practical) : f.practical_score,
-        theory_score: raw.length ? String(theory) : f.theory_score,
-        attendance_score: attPct != null ? String(attPct) : f.attendance_score,
+        practical_score: ((raw.length || cbtEvalScore > 0 || scopedAssignmentAvg != null) && practical > 0) ? String(practical) : f.practical_score,
+        theory_score: (raw.length || cbtExamScore > 0) ? String(theory) : f.theory_score,
+        // Web parity maps the Assignment component to assignment completion percentage.
+        attendance_score: assignmentPct != null ? String(Math.min(100, Math.max(0, assignmentPct))) : f.attendance_score,
         participation_score: partPct != null ? String(partPct) : f.participation_score,
       }));
-      if (raw.length || rows.length) {
-        setSignalsBanner('Scores prefilled from graded assignments and attendance (adjust as needed).');
+      if (raw.length || rows.length || cbtExamScore > 0 || cbtEvalScore > 0 || projectPct > 0) {
+        setSignalsBanner('Scores prefilled from CBT, graded assignments, attendance, and project engagement signals (adjust as needed).');
       }
     } catch {
       /* non-blocking */
     }
-  }, []);
+  }, [sessionConfig.course_name]);
 
   const selectStudent = useCallback(async (student: StudentRow) => {
     setSelectedStudent(student);

@@ -15,6 +15,8 @@ import { useTheme } from '../../contexts/ThemeContext';
 import { projectService } from '../../services/project.service';
 import { FONT_FAMILY, FONT_SIZE, LETTER_SPACING } from '../../constants/typography';
 import { SPACING, RADIUS } from '../../constants/spacing';
+import { VisualizerModal } from '../../components/visualizer/VisualizerModal';
+import { CodeData, VisualizationType } from '../../types/visualizer';
 
 type LabProject = {
   id: string;
@@ -48,6 +50,7 @@ export default function PlaygroundScreen({ navigation }: any) {
   const [language, setLanguage] = useState<(typeof LANGUAGES)[number]>('python');
   const [code, setCode] = useState(STARTER_CODE.python);
   const [saving, setSaving] = useState(false);
+  const [visualizerVisible, setVisualizerVisible] = useState(false);
 
   const canUse = profile?.role === 'student' || profile?.role === 'teacher' || profile?.role === 'admin';
 
@@ -123,6 +126,28 @@ export default function PlaygroundScreen({ navigation }: any) {
     ]);
   }, [activeId, loadProjects, newProject]);
 
+  const runVisualizer = () => {
+    setVisualizerVisible(true);
+  };
+
+  // Mock data for the current demonstration of the engine
+  const mockCodeData: CodeData = {
+    step: 0,
+    totalSteps: 20,
+    variables: { i: 0, n: 10, offset: 5.2 },
+    visualizationState: {
+      array: [45, 12, 89, 3, 27, 56, 12, 4],
+      comparing: [0, 1]
+    }
+  };
+
+  const getVisType = (): VisualizationType => {
+    if (language === 'python') return 'sorting';
+    if (language === 'javascript') return 'physics';
+    if (language === 'robotics') return 'turtle';
+    return 'loops';
+  };
+
   if (!canUse) {
     return (
       <SafeAreaView style={styles.safe}>
@@ -147,6 +172,13 @@ export default function PlaygroundScreen({ navigation }: any) {
             <Text style={styles.secondaryBtnText}>{saving ? 'Saving...' : 'Save Project'}</Text>
           </TouchableOpacity>
         </View>
+
+        <TouchableOpacity 
+          style={[styles.runBtn, { backgroundColor: colors.accent }]} 
+          onPress={runVisualizer}
+        >
+          <Text style={styles.runBtnText}>✦ RUN VISUALIZER</Text>
+        </TouchableOpacity>
 
         <View style={styles.card}>
           <Text style={styles.fieldLabel}>Project Title</Text>
@@ -214,6 +246,12 @@ export default function PlaygroundScreen({ navigation }: any) {
           ))
         )}
       </ScrollView>
+      <VisualizerModal
+        visible={visualizerVisible}
+        onClose={() => setVisualizerVisible(false)}
+        type={getVisType()}
+        initialData={mockCodeData}
+      />
     </SafeAreaView>
   );
 }
@@ -248,4 +286,22 @@ const getStyles = (colors: any) => StyleSheet.create({
   projectActions: { gap: SPACING.sm },
   miniBtn: { borderWidth: 1, borderColor: colors.border, backgroundColor: colors.bg, borderRadius: RADIUS.md, paddingHorizontal: SPACING.md, paddingVertical: 8 },
   miniBtnText: { fontFamily: FONT_FAMILY.bodyBold, fontSize: FONT_SIZE.xs, color: colors.primary, textTransform: 'uppercase', letterSpacing: LETTER_SPACING.wider },
+  runBtn: {
+    paddingVertical: SPACING.md,
+    borderRadius: RADIUS.lg,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: SPACING.xs,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.1,
+    shadowRadius: 8,
+    elevation: 2,
+  },
+  runBtnText: {
+    fontFamily: FONT_FAMILY.display,
+    fontSize: FONT_SIZE.xs,
+    color: '#fff',
+    letterSpacing: 1.5,
+  },
 });

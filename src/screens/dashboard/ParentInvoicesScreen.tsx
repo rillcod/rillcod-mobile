@@ -51,10 +51,11 @@ function bankAccountsForInvoice(all: PayAcc[], schoolId: string | null | undefin
 interface Payment {
   id: string;
   amount: number;
-  payment_method: string;
-  payment_status: string;
+  payment_method: string | null;
+  payment_status: string | null;
   transaction_reference: string | null;
   payment_date: string | null;
+  currency: string | null;
 }
 
 function formatCurrency(amount: number, currency: string) {
@@ -100,12 +101,29 @@ export default function ParentInvoicesScreen({ navigation, route }: any) {
 
       const [invoiceRows, paymentRows] = await Promise.all([
         portalUserId ? paymentService.listInvoicesForPortalUser(portalUserId) : Promise.resolve([]),
-        paymentService.listPaymentsForStudentRegistration(studentId, 30),
+        portalUserId
+          ? paymentService.listTransactions({
+              role: 'parent',
+              userId: profile?.id ?? '',
+              schoolId: profile?.school_id,
+              forStudentIds: [portalUserId],
+            })
+          : Promise.resolve([]),
       ]);
 
       const invs = (invoiceRows as Invoice[]) ?? [];
       setInvoices(invs);
-      setPayments((paymentRows as Payment[]) ?? []);
+      setPayments(
+        ((paymentRows ?? []) as any[]).map((row) => ({
+          id: row.id,
+          amount: Number(row.amount ?? 0),
+          payment_method: row.payment_method ?? null,
+          payment_status: row.payment_status ?? null,
+          transaction_reference: row.transaction_reference ?? null,
+          payment_date: row.paid_at ?? row.created_at ?? null,
+          currency: row.currency ?? 'NGN',
+        })),
+      );
 
       let merged: PayAcc[] = [];
       if (portalUserId) {
@@ -128,7 +146,7 @@ export default function ParentInvoicesScreen({ navigation, route }: any) {
       setLoading(false);
       setRefreshing(false);
     }
-  }, [paramStudentId, profile?.email]);
+  }, [paramStudentId, profile?.email, profile?.id, profile?.school_id]);
 
   const loadRef = React.useRef(load);
   loadRef.current = load;
@@ -145,7 +163,12 @@ export default function ParentInvoicesScreen({ navigation, route }: any) {
   );
 
   const totalOwed = invoices.filter(i => i.status === 'pending' || i.status === 'overdue').reduce((s, i) => s + i.amount, 0);
-  const totalPaid = payments.filter(p => p.payment_status === 'completed').reduce((s, p) => s + p.amount, 0);
+  const totalPaid = payments
+    .filter((p) => {
+      const status = String(p.payment_status ?? '').toLowerCase();
+      return status === 'completed' || status === 'success';
+    })
+    .reduce((s, p) => s + p.amount, 0);
   const currency = invoices[0]?.currency ?? 'NGN';
 
   const handlePay = (inv: Invoice) => {
@@ -368,19 +391,19 @@ export default function ParentInvoicesScreen({ navigation, route }: any) {
                               ? new Date(pay.payment_date).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })
                               : '—'}
                           </Text>
-                          <Text style={styles.payMethod}>{pay.payment_method.replace('_', ' ')}</Text>
+                          <Text style={styles.payMethod}>{(pay.payment_method ?? 'unknown').replace('_', ' ')}</Text>
                           {pay.transaction_reference && <Text style={styles.payRef}>Ref: {pay.transaction_reference}</Text>}
                         </View>
                         <View style={{ alignItems: 'flex-end', gap: 4 }}>
-                          <Text style={styles.payAmount}>{formatCurrency(pay.amount, 'NGN')}</Text>
+                          <Text style={styles.payAmount}>{formatCurrency(pay.amount, pay.currency ?? 'NGN')}</Text>
                           <View style={[
                             styles.statusBadge,
-                            pay.payment_status === 'completed'
+                            String(pay.payment_status ?? '').toLowerCase() === 'completed' || String(pay.payment_status ?? '').toLowerCase() === 'success'
                               ? { borderColor: COLORS.success + '55', backgroundColor: COLORS.success + '22' }
                               : { borderColor: COLORS.warning + '55', backgroundColor: COLORS.warning + '22' },
                           ]}>
-                            <Text style={[styles.statusText, { color: pay.payment_status === 'completed' ? COLORS.success : COLORS.warning }]}>
-                              {pay.payment_status}
+                            <Text style={[styles.statusText, { color: String(pay.payment_status ?? '').toLowerCase() === 'completed' || String(pay.payment_status ?? '').toLowerCase() === 'success' ? COLORS.success : COLORS.warning }]}>
+                              {(pay.payment_status ?? 'pending')}
                             </Text>
                           </View>
                         </View>

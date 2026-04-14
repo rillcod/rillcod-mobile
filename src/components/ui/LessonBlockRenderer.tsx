@@ -15,6 +15,21 @@ import { COLORS } from '../../constants/colors';
 import { FONT_FAMILY, FONT_SIZE } from '../../constants/typography';
 import { SPACING, RADIUS } from '../../constants/spacing';
 
+function cleanInlineMarkdown(value: string): string {
+  return value
+    .replace(/!\[([^\]]*)\]\(([^)]+)\)/g, '$1')
+    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '$1')
+    .replace(/`([^`]+)`/g, '$1')
+    .replace(/\*\*([^*]+)\*\*/g, '$1')
+    .replace(/\*([^*]+)\*/g, '$1')
+    .replace(/__([^_]+)__/g, '$1')
+    .replace(/_([^_]+)_/g, '$1')
+    .replace(/^>\s*/gm, '')
+    .replace(/^\s*[-*]\s+\[[xX ]\]\s*/gm, '')
+    .replace(/\s{2,}/g, ' ')
+    .trim();
+}
+
 // ── Scratch block categories ──────────────────────────────────────────────────
 type ScratchCat = 'event' | 'motion' | 'looks' | 'sound' | 'control' | 'sensing' | 'operator' | 'variable' | 'custom';
 
@@ -309,12 +324,18 @@ interface LessonBlock {
   [key: string]: unknown;
 }
 
-function Block({ block, index }: { block: LessonBlock; index: number }) {
+function Block({ block, index, visualMode = 'standard' }: { block: LessonBlock; index: number; visualMode?: 'standard' | 'cinematic' }) {
   const t = (block.type || 'text').toLowerCase();
+  const cinematic = visualMode === 'cinematic';
 
   if (t === 'heading' || t === 'title') {
     return (
-      <MotiView from={{ opacity: 0, translateX: -10 }} animate={{ opacity: 1, translateX: 0 }} transition={{ delay: index * 30 }} style={blockStyles.headingWrap}>
+      <MotiView
+        from={{ opacity: 0, translateX: -10, translateY: cinematic ? 6 : 0 }}
+        animate={{ opacity: 1, translateX: 0, translateY: 0 }}
+        transition={{ delay: index * 30, duration: cinematic ? 520 : 320 }}
+        style={blockStyles.headingWrap}
+      >
         <View style={blockStyles.headingAccent} />
         <Text style={blockStyles.heading}>{block.content || block.title}</Text>
       </MotiView>
@@ -323,8 +344,12 @@ function Block({ block, index }: { block: LessonBlock; index: number }) {
 
   if (t === 'text' || t === 'paragraph') {
     return (
-      <MotiView from={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: index * 20 }}>
-        <Text style={blockStyles.bodyText}>{block.content}</Text>
+      <MotiView
+        from={{ opacity: 0, translateY: cinematic ? 8 : 0 }}
+        animate={{ opacity: 1, translateY: 0 }}
+        transition={{ delay: index * 20, duration: cinematic ? 500 : 260 }}
+      >
+        <Text style={blockStyles.bodyText}>{cleanInlineMarkdown(String(block.content ?? ''))}</Text>
       </MotiView>
     );
   }
@@ -367,7 +392,7 @@ function Block({ block, index }: { block: LessonBlock; index: number }) {
         <Text style={blockStyles.calloutIcon}>{emoji}</Text>
         <View style={{ flex: 1 }}>
           <Text style={[blockStyles.calloutLabel, { color }]}>{isWarning ? 'IMPORTANT' : t === 'tip' ? 'PRO TIP' : 'KEY INSIGHT'}</Text>
-          <Text style={[blockStyles.calloutText, { color: color + 'EE' }]}>{block.content}</Text>
+          <Text style={[blockStyles.calloutText, { color: color + 'EE' }]}>{cleanInlineMarkdown(String(block.content ?? ''))}</Text>
         </View>
       </MotiView>
     );
@@ -456,7 +481,11 @@ function Block({ block, index }: { block: LessonBlock; index: number }) {
 
   if (t === 'motion_graphic' || t === 'motion' || t === 'animation') {
     return (
-      <MotiView from={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: index * 30 }}>
+      <MotiView
+        from={{ opacity: 0, scale: cinematic ? 0.96 : 1 }}
+        animate={{ opacity: 1, scale: 1 }}
+        transition={{ delay: index * 30, duration: cinematic ? 600 : 320 }}
+      >
         <MotionGraphicBlock type={(block.content || block.label || block.concept || 'pulse') as string} concept={block.concept as string} label={block.label as string} />
       </MotiView>
     );
@@ -470,6 +499,18 @@ function Block({ block, index }: { block: LessonBlock; index: number }) {
         <LinearGradient colors={['#4F46E515', 'transparent']} style={StyleSheet.absoluteFill} />
         <Text style={blockStyles.mathLabel}>∑ MATHEMATICAL SYNTHESIS</Text>
         <Text style={blockStyles.mathFormula}>{block.content}</Text>
+      </MotiView>
+    );
+  }
+
+  if (t === 'divider' || t === 'hr') {
+    return (
+      <MotiView
+        from={{ opacity: 0, scaleX: 0.4 }}
+        animate={{ opacity: 1, scaleX: 1 }}
+        transition={{ delay: index * 24, duration: cinematic ? 520 : 260 }}
+      >
+        <View style={blockStyles.divider} />
       </MotiView>
     );
   }
@@ -526,7 +567,7 @@ function Block({ block, index }: { block: LessonBlock; index: number }) {
 
   // Fallback: render as styled text card
   const title = typeof block.title === 'string' ? block.title : typeof block.type === 'string' ? block.type : `Block ${index + 1}`;
-  const body = typeof block.content === 'string' ? block.content : JSON.stringify(block.content ?? block, null, 2);
+  const body = typeof block.content === 'string' ? cleanInlineMarkdown(block.content) : JSON.stringify(block.content ?? block, null, 2);
   return (
     <MotiView from={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: index * 20 }} style={blockStyles.fallbackCard}>
       {title && <Text style={blockStyles.fallbackTitle}>{title.toUpperCase()}</Text>}
@@ -566,6 +607,13 @@ export function parseTextToBlocks(text: string | null | undefined): LessonBlock[
     // Skip blank lines
     if (!line) { i++; continue; }
 
+    // ── Horizontal divider ────────────────────────────────────────────────────
+    if (/^(-{3,}|\*{3,}|_{3,})$/.test(line)) {
+      blocks.push({ type: 'divider' });
+      i++;
+      continue;
+    }
+
     // ── Mermaid fence ─────────────────────────────────────────────────────────
     if (line.startsWith('```mermaid') || line.startsWith('~~~mermaid')) {
       const codeLines: string[] = [];
@@ -593,26 +641,55 @@ export function parseTextToBlocks(text: string | null | undefined): LessonBlock[
       continue;
     }
 
+    // ── Markdown image line ![alt](url) ──────────────────────────────────────
+    const imageMatch = line.match(/^!\[([^\]]*)\]\(([^)]+)\)$/);
+    if (imageMatch) {
+      blocks.push({
+        type: 'image',
+        caption: cleanInlineMarkdown(imageMatch[1] || 'Lesson image'),
+        url: imageMatch[2]?.trim(),
+      });
+      i++;
+      continue;
+    }
+
+    // ── Markdown link line [label](url) ──────────────────────────────────────
+    const linkMatch = line.match(/^\[([^\]]+)\]\(([^)]+)\)$/);
+    if (linkMatch) {
+      const label = cleanInlineMarkdown(linkMatch[1] || 'Open resource');
+      const url = linkMatch[2]?.trim();
+      const isVideo = /youtube\.com|youtu\.be|vimeo\.com|\.mp4(\?|$)|\.webm(\?|$)|\.mov(\?|$)/i.test(url);
+      blocks.push({
+        type: isVideo ? 'video' : 'file',
+        title: label,
+        caption: label,
+        fileName: label,
+        url,
+      });
+      i++;
+      continue;
+    }
+
     // ── Headings ──────────────────────────────────────────────────────────────
     if (/^#{1,3}\s+/.test(line)) {
-      blocks.push({ type: 'heading', content: line.replace(/^#+\s+/, '') });
+      blocks.push({ type: 'heading', content: cleanInlineMarkdown(line.replace(/^#+\s+/, '')) });
       i++;
       continue;
     }
 
     // ── Callout / Note / Tip / Warning ────────────────────────────────────────
     if (/^>\s*⚠️|^>\s*warning:|^>\s*!warning/i.test(line)) {
-      blocks.push({ type: 'callout', style: 'warning', content: line.replace(/^>\s*(⚠️|warning:|!warning)/i, '').trim() });
+      blocks.push({ type: 'callout', style: 'warning', content: cleanInlineMarkdown(line.replace(/^>\s*(⚠️|warning:|!warning)/i, '').trim()) });
       i++;
       continue;
     }
     if (/^>\s*💡|^>\s*tip:|^>\s*!tip/i.test(line)) {
-      blocks.push({ type: 'tip', content: line.replace(/^>\s*(💡|tip:|!tip)/i, '').trim() });
+      blocks.push({ type: 'tip', content: cleanInlineMarkdown(line.replace(/^>\s*(💡|tip:|!tip)/i, '').trim()) });
       i++;
       continue;
     }
     if (/^>\s/.test(line)) {
-      blocks.push({ type: 'note', content: line.replace(/^>\s*/, '').trim() });
+      blocks.push({ type: 'note', content: cleanInlineMarkdown(line.replace(/^>\s*/, '').trim()) });
       i++;
       continue;
     }
@@ -636,7 +713,7 @@ export function parseTextToBlocks(text: string | null | undefined): LessonBlock[
     if (/^(\d+\.|[-*•])\s+/.test(line)) {
       const steps: string[] = [];
       while (i < lines.length && /^(\d+\.|[-*•])\s+/.test(lines[i].trim())) {
-        steps.push(lines[i].trim().replace(/^(\d+\.|[-*•])\s+/, ''));
+        steps.push(cleanInlineMarkdown(lines[i].trim().replace(/^(\d+\.|[-*•])\s+/, '')));
         i++;
       }
       const hasScratch = steps.filter(s => SCRATCH_KEYWORDS.test(s)).length >= Math.ceil(steps.length / 2);
@@ -667,7 +744,7 @@ export function parseTextToBlocks(text: string | null | undefined): LessonBlock[
     // ── Bold/all-caps heading-like lines ──────────────────────────────────────
     if (/^\*\*[^*]+\*\*$/.test(line) || /^[A-Z][A-Z\s]{6,}:?$/.test(line)) {
       const clean = line.replace(/\*\*/g, '').replace(/:$/, '');
-      blocks.push({ type: 'heading', content: clean });
+      blocks.push({ type: 'heading', content: cleanInlineMarkdown(clean) });
       i++;
       continue;
     }
@@ -686,7 +763,7 @@ export function parseTextToBlocks(text: string | null | undefined): LessonBlock[
       i++;
     }
     if (paraLines.length > 0) {
-      const para = paraLines.join(' ');
+      const para = cleanInlineMarkdown(paraLines.join(' '));
       blocks.push({ type: 'text', content: para });
     }
   }
@@ -697,13 +774,24 @@ export function parseTextToBlocks(text: string | null | undefined): LessonBlock[
 interface LessonBlockRendererProps {
   blocks: LessonBlock[];
   lessonType?: string | null;
+  visualMode?: 'standard' | 'cinematic';
 }
 
-export default function LessonBlockRenderer({ blocks, lessonType }: LessonBlockRendererProps) {
+export default function LessonBlockRenderer({ blocks, lessonType, visualMode = 'standard' }: LessonBlockRendererProps) {
   if (!blocks || blocks.length === 0) return null;
+  const cinematic = visualMode === 'cinematic';
   return (
     <View style={blockStyles.root}>
-      {blocks.map((block, i) => <Block key={i} block={block} index={i} />)}
+      {blocks.map((block, i) => (
+        <MotiView
+          key={i}
+          from={{ opacity: 0, translateY: cinematic ? 12 : 0, scale: cinematic ? 0.98 : 1 }}
+          animate={{ opacity: 1, translateY: 0, scale: 1 }}
+          transition={{ delay: i * (cinematic ? 55 : 30), duration: cinematic ? 560 : 320 }}
+        >
+          <Block block={block} index={i} visualMode={visualMode} />
+        </MotiView>
+      ))}
     </View>
   );
 }
@@ -819,6 +907,7 @@ const blockStyles = StyleSheet.create({
   // Fallback
   fallbackCard: { backgroundColor: COLORS.bgCard, borderRadius: RADIUS.md, padding: SPACING.md, borderWidth: 1, borderColor: COLORS.border, gap: SPACING.xs },
   fallbackTitle: { fontFamily: FONT_FAMILY.bodySemi, fontSize: FONT_SIZE.xs, color: COLORS.textMuted, letterSpacing: 1, textTransform: 'uppercase' },
+  divider: { height: 1, backgroundColor: COLORS.border, marginVertical: SPACING.xs },
 
   // Motion Graphic
   // (defined inline in each variant)

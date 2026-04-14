@@ -3,6 +3,7 @@ import {
   View, Text, StyleSheet, FlatList, TouchableOpacity,
   RefreshControl, ActivityIndicator, TextInput, Alert, Modal,
 } from 'react-native';
+import * as Linking from 'expo-linking';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { MotiView } from 'moti';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -49,6 +50,12 @@ function formatDate(d: string): string {
   return new Date(d).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
 }
 
+function normalizeUrl(url: string): string {
+  const value = url.trim();
+  if (/^https?:\/\//i.test(value)) return value;
+  return `https://${value}`;
+}
+
 export default function LibraryScreen({ navigation }: any) {
   const { profile } = useAuth();
   const [items, setItems] = useState<ContentItem[]>([]);
@@ -92,6 +99,24 @@ export default function LibraryScreen({ navigation }: any) {
 
   const onRefresh = () => { setRefreshing(true); load(); };
 
+  const openContentItem = async (item: ContentItem) => {
+    if (!item.url) {
+      Alert.alert('No URL', 'This content item has no associated URL.');
+      return;
+    }
+    try {
+      const target = normalizeUrl(item.url);
+      const supported = await Linking.canOpenURL(target);
+      if (!supported) {
+        Alert.alert('Cannot open', 'This resource link is not valid on this device.');
+        return;
+      }
+      await Linking.openURL(target);
+    } catch {
+      Alert.alert('Open failed', 'Could not open this resource. Please try again.');
+    }
+  };
+
   const submitRating = async (stars: number) => {
     if (!profile?.id || !ratingModalItem) return;
     setRatingBusy(true);
@@ -124,13 +149,7 @@ export default function LibraryScreen({ navigation }: any) {
         <View style={styles.card}>
           <TouchableOpacity
             style={styles.cardMainPress}
-            onPress={() => {
-              if (item.url) {
-                Alert.alert(item.title, `URL: ${item.url}\n\nOpen this link in a browser to access this resource.`);
-              } else {
-                Alert.alert('No URL', 'This content item has no associated URL.');
-              }
-            }}
+            onPress={() => void openContentItem(item)}
             activeOpacity={0.75}
           >
             <View style={[styles.typeBox, { backgroundColor: `${color}20` }]}>

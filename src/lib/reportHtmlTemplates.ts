@@ -288,6 +288,14 @@ export function generateStandardReportHtml(report: any, orgSettings: any): strin
                             <p style="font-size:9px;font-weight:700;color:#9ca3af;text-transform:uppercase;">Director, ${org.name}</p>
                         </div>
 
+                        ${report.show_payment_notice ? `
+                        <div style="flex:1;background:#fffbeb;border:1.5px solid #fcd34d;border-radius:12px;padding:8px 12px;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;gap:3px;">
+                            <p style="font-size:8px;font-weight:900;color:#92400e;text-transform:uppercase;letter-spacing:.14em;">Next Term Fee Payment</p>
+                            <p style="font-size:16px;font-weight:900;color:#78350f;line-height:1;">₦${report.fee_amount || '20,000'} · RILLCOD LTD</p>
+                            <p style="font-size:14px;font-weight:900;color:#78350f;line-height:1;">Providus · 7901178957</p>
+                            <p style="font-size:8px;font-weight:700;color:#b45309;">Use student name as reference · Send proof to admin</p>
+                        </div>` : ''}
+
                         <!-- QR Code -->
                         <div style="flex-shrink:0;display:flex;flex-direction:column;align-items:center;gap:4px;">
                             <div style="padding:8px;background:#fff;border:3px solid #f3f4f6;border-radius:20px;box-shadow:0 1px 4px rgba(0,0,0,.06);">

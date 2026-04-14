@@ -229,6 +229,8 @@ const ACTION_SCREENS: Record<string, string> = {
   IoT: ROUTES.IoT,
   'People hub': ROUTES.PeopleHub,
   'Activity logs': ROUTES.ActivityLogs,
+  Subscriptions: ROUTES.Subscriptions,
+  Moderation: ROUTES.Moderation,
 };
 
 /**
@@ -247,6 +249,8 @@ const ADMIN_HOME_LINKS = [
   { icon: 'AN', label: 'Analytics', screen: ROUTES.Analytics, color: COLORS.success },
   { icon: 'IT', label: 'IoT', screen: ROUTES.IoT, color: COLORS.info },
   { icon: 'LG', label: 'Activity logs', screen: ROUTES.ActivityLogs, color: COLORS.primary },
+  { icon: 'SB', label: 'Subscriptions', screen: ROUTES.Subscriptions, color: COLORS.success },
+  { icon: 'MD', label: 'Moderation', screen: ROUTES.Moderation, color: COLORS.error },
   { icon: 'NW', label: 'Newsletters', screen: ROUTES.Newsletters, color: COLORS.accent },
   { icon: 'SG', label: 'Settings', screen: ROUTES.Settings, color: COLORS.textMuted },
 ];

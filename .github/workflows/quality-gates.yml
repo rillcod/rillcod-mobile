@@ -1,0 +1,31 @@
+name: quality-gates
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  quality-gates:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Use Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Migration timestamp guard
+        run: npm run ci:migration-check
+
+      - name: Supabase type sync guard
+        run: npm run ci:schema-sync-check
+

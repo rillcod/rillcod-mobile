@@ -294,7 +294,10 @@ function GraphicTab({ lessonTitle }: { lessonTitle: string }) {
           temperature: 0.4,
         });
         const cleanCode = reply.replace(/^```[a-z]*\n?/i, '').replace(/\n?```$/i, '').trim();
-        setBlocks([{ type: 'mermaid', content: cleanCode, title: topic }]);
+        setBlocks([
+          { type: 'motion_graphic', content: type === 'mindmap' ? 'orbit' : 'wave', title: `AI ${type}` },
+          { type: 'mermaid', content: cleanCode, title: topic },
+        ]);
       } else if (type === 'infographic') {
         // Generate structured illustration blocks
         const reply = await callAI({
@@ -308,7 +311,10 @@ function GraphicTab({ lessonTitle }: { lessonTitle: string }) {
         });
         try {
           const parsed = JSON.parse(reply);
-          setBlocks([{ type: 'illustration', title: parsed.title || topic, items: parsed.items || [] }]);
+          setBlocks([
+            { type: 'motion_graphic', content: 'particles', title: 'AI Infographic Motion' },
+            { type: 'illustration', title: parsed.title || topic, items: parsed.items || [] },
+          ]);
         } catch {
           setBlocks([{ type: 'text', content: reply }]);
         }
@@ -325,7 +331,10 @@ function GraphicTab({ lessonTitle }: { lessonTitle: string }) {
         });
         try {
           const parsed = JSON.parse(reply);
-          setBlocks([{ type: 'illustration', title: `Key Points: ${topic}`, items: parsed.items || [] }]);
+          setBlocks([
+            { type: 'motion_graphic', content: 'pulse', title: 'AI Key Concepts Motion' },
+            { type: 'illustration', title: `Key Points: ${topic}`, items: parsed.items || [] },
+          ]);
         } catch {
           setBlocks([{ type: 'text', content: reply }]);
         }
