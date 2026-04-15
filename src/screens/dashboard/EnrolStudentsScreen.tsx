@@ -63,9 +63,15 @@ const GRADE_PRESETS = [
 /** Deep-linked from class detail: programme enrolment + optional class assignment (legacy flow). */
 function LegacyEnrolFromClass({ navigation, route }: any) {
   const { profile } = useAuth();
-  const params = (route?.params ?? {}) as { classId?: string; className?: string; programId?: string };
+  const params = (route?.params ?? {}) as {
+    classId?: string;
+    className?: string;
+    classSchoolId?: string;
+    programId?: string;
+  };
   const targetClassId = params.classId;
   const targetClassName = params.className;
+  const scopeSchoolId = params.classSchoolId ?? profile?.school_id ?? null;
   const presetProgramId = params.programId;
   const [step, setStep] = useState<'students' | 'program' | 'confirm'>('students');
   const [students, setStudents] = useState<LegacyStudent[]>([]);
@@ -80,9 +86,13 @@ function LegacyEnrolFromClass({ navigation, route }: any) {
   const load = useCallback(async () => {
     const applySchoolScope =
       (profile?.role === 'teacher' || profile?.role === 'school') && !!profile?.school_id;
-    const scopeSchoolId = profile?.school_id ?? null;
     const [studList, progList] = await Promise.all([
-      enrollmentService.listStudentsForEnrolPicker({ scopeSchoolId, applySchoolScope }),
+      enrollmentService.listStudentsForEnrolPicker({
+        role: profile?.role,
+        teacherId: profile?.id ?? null,
+        schoolId: scopeSchoolId,
+        applySchoolScope,
+      }),
       enrollmentService.listProgramsForEnrolPicker({ scopeSchoolId, applySchoolScope }),
     ]);
     setStudents(studList as LegacyStudent[]);
@@ -92,7 +102,7 @@ function LegacyEnrolFromClass({ navigation, route }: any) {
       if (found) setSelectedProgram(found);
     }
     setLoading(false);
-  }, [profile?.role, profile?.school_id, presetProgramId]);
+  }, [profile?.id, profile?.role, profile?.school_id, presetProgramId, scopeSchoolId]);
 
   useEffect(() => {
     load();
@@ -134,7 +144,15 @@ function LegacyEnrolFromClass({ navigation, route }: any) {
       }));
       await enrollmentService.upsertEnrollments(rows);
       if (targetClassId) {
-        await enrollmentService.assignPortalUsersToClass(studentIds, targetClassId, targetClassName ?? null);
+        await Promise.all(
+          studentIds.map((studentId) =>
+            classService.assignStudentToClass(studentId, targetClassId, targetClassName ?? null, {
+              callerRole: profile?.role,
+              callerId: profile?.id,
+              callerSchoolId: scopeSchoolId,
+            }),
+          ),
+        );
       }
       Alert.alert(
         '✅ Enrolled!',
@@ -428,7 +446,12 @@ function BulkEnrolStudentsMain({ navigation }: any) {
           schoolId: profile?.school_id ?? null,
         }),
         enrollmentService.listProgramsForEnrolPicker({ scopeSchoolId: null, applySchoolScope: false }),
-        enrollmentService.listClassesForBulkPicker({ isAdmin, teacherId: profile?.id ?? null }),
+        enrollmentService.listClassesForBulkPicker({
+          role: profile?.role,
+          isAdmin,
+          teacherId: profile?.id ?? null,
+          schoolId: profile?.school_id ?? null,
+        }),
         isAdmin ? schoolService.listApprovedSchoolsMini() : Promise.resolve([]),
         !isAdmin && profile?.id
           ? enrollmentService.listSchoolsForTeacherBulkPicker(profile.id, profile.school_id ?? null)
@@ -556,7 +579,12 @@ function BulkEnrolStudentsMain({ navigation }: any) {
           return n;
         });
         setSelected(new Set());
-        const fresh = await enrollmentService.listClassesForBulkPicker({ isAdmin, teacherId: profile?.id ?? null });
+        const fresh = await enrollmentService.listClassesForBulkPicker({
+          role: profile?.role,
+          isAdmin,
+          teacherId: profile?.id ?? null,
+          schoolId: profile?.school_id ?? null,
+        });
         setClassesList(fresh);
       } catch (e: any) {
         Alert.alert('Enrolment failed', e?.message ?? 'Unknown error');

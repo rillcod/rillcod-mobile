@@ -148,8 +148,8 @@ const AdminOnlyUsersScreen = withRoleGuard(UsersScreen, ['admin']);
 const AdminOnlyAddSchoolScreen = withRoleGuard(AddSchoolScreen, ['admin']);
 const AdminOnlyWipeStudentsScreen = withRoleGuard(WipeStudentsScreen, ['admin']);
 const AdminOnlyCardBuilderScreen = withRoleGuard(CardBuilderScreen, ['admin']);
-const AdminOnlyProgramsScreen = withRoleGuard(ProgramsScreen, ['admin']);
-const StaffLessonsScreen = withRoleGuard(LessonsScreen, ['admin', 'teacher']);
+const RoleProgramsScreen = withRoleGuard(ProgramsScreen, ['admin', 'teacher', 'school', 'student']);
+const StaffLessonsScreen = withRoleGuard(LessonsScreen, ['admin', 'teacher', 'school']);
 const StaffEnrolStudentsScreen = withRoleGuard(EnrolStudentsScreen, ['admin', 'teacher', 'school']);
 const StaffAnalyticsScreen = withRoleGuard(AnalyticsScreen, ['admin', 'school', 'teacher']);
 const StaffTeachersScreen = withRoleGuard(TeachersScreen, ['admin', 'school']);
@@ -157,10 +157,10 @@ const StaffPeopleHubScreen = withRoleGuard(PeopleHubScreen, ['admin', 'teacher',
 const StaffStudentsScreen = withRoleGuard(StudentsScreen, ['admin', 'teacher', 'school']);
 const StaffStudentImportScreen = withRoleGuard(StudentImportScreen, ['admin', 'teacher', 'school']);
 const StaffAttendanceScreen = withRoleGuard(AttendanceScreen, ['admin', 'teacher', 'school', 'student']);
-const StaffPaymentsScreen = withRoleGuard(PaymentsScreen, ['admin', 'school']);
+const StaffPaymentsScreen = withRoleGuard(PaymentsScreen, ['admin', 'teacher', 'school']);
 const StaffBulkPaymentsScreen = withRoleGuard(BulkPaymentsScreen, ['admin', 'school']);
-const StaffTransactionsScreen = withRoleGuard(TransactionsScreen, ['admin', 'school']);
-const StaffInvoicesScreen = withRoleGuard(InvoicesScreen, ['admin', 'school']);
+const StaffTransactionsScreen = withRoleGuard(TransactionsScreen, ['admin', 'teacher', 'school']);
+const StaffInvoicesScreen = withRoleGuard(InvoicesScreen, ['admin', 'teacher', 'school']);
 const ProgressAccessScreen = withRoleGuard(ProgressScreen, ['admin', 'school']);
 const AdminOnlyIoTScreen = withRoleGuard(IoTScreen, ['admin']);
 const StaffReportsScreen = withRoleGuard(ReportsScreen, ['admin', 'teacher', 'school', 'student']);
@@ -168,8 +168,8 @@ const StaffAssignmentsScreen = withRoleGuard(AssignmentsScreen, ['admin', 'teach
 const StaffGradesScreen = withRoleGuard(GradesScreen, ['admin', 'teacher', 'school', 'student']);
 const StaffClassesScreen = withRoleGuard(ClassesScreen, ['admin', 'teacher', 'school']);
 const StaffCBTScreen = withRoleGuard(CBTScreen, ['admin', 'teacher', 'student']);
-const StaffProjectsScreen = withRoleGuard(ProjectsScreen, ['admin', 'teacher', 'student']);
-const StaffLibraryScreen = withRoleGuard(LibraryScreen, ['admin', 'teacher', 'student']);
+const StaffProjectsScreen = withRoleGuard(ProjectsScreen, ['admin', 'teacher', 'school', 'student']);
+const StaffLibraryScreen = withRoleGuard(LibraryScreen, ['admin', 'teacher', 'school', 'student']);
 const StaffLiveSessionsScreen = withRoleGuard(LiveSessionsScreen, ['admin', 'teacher', 'school', 'student']);
 const StaffEngageScreen = withRoleGuard(EngageScreen, ['admin', 'teacher', 'student']);
 const StaffVaultScreen = withRoleGuard(VaultScreen, ['admin', 'teacher', 'student']);
@@ -192,18 +192,18 @@ const ParentInvoicesOnlyScreen = withRoleGuard(ParentInvoicesScreen, ['parent'])
 const ParentCertificatesOnlyScreen = withRoleGuard(ParentCertificatesScreen, ['parent']);
 const ParentFeedbackScreenGuard = withRoleGuard(ParentFeedbackScreen, ['admin', 'teacher', 'school', 'parent']);
 const ParentChildrenOnlyScreen = withRoleGuard(MyChildrenScreen, ['parent']);
-const PlaygroundAccessScreen = withRoleGuard(PlaygroundScreen, ['admin', 'teacher', 'student']);
-const PortfolioAccessScreen = withRoleGuard(PortfolioScreen, ['student']);
+const PlaygroundAccessScreen = withRoleGuard(PlaygroundScreen, ['admin', 'teacher', 'school', 'student', 'parent']);
+const PortfolioAccessScreen = withRoleGuard(PortfolioScreen, ['admin', 'teacher', 'school', 'student', 'parent']);
 const StaffTimetableScreen = withRoleGuard(TimetableScreen, ['admin', 'teacher', 'school', 'student']);
 const StaffStudentDetailScreen = withRoleGuard(StudentDetailScreen, ['admin', 'teacher', 'school']);
 const StaffAssignmentDetailScreen = withRoleGuard(AssignmentDetailScreen, ['admin', 'teacher', 'student']);
 const StaffTeacherDetailScreen = withRoleGuard(TeacherDetailScreen, ['admin', 'school']);
 const StaffProjectDetailScreen = withRoleGuard(ProjectDetailScreen, ['admin', 'teacher', 'student']);
 const StaffClassDetailScreen = withRoleGuard(ClassDetailScreen, ['admin', 'teacher', 'school']);
-const StaffCourseDetailScreen = withRoleGuard(CourseDetailScreen, ['admin', 'teacher', 'student']);
-const StaffLessonDetailScreen = withRoleGuard(LessonDetailScreen, ['admin', 'teacher', 'student']);
-const StaffCourseDiscussionScreen = withRoleGuard(CourseDiscussionScreen, ['admin', 'teacher', 'student']);
-const StaffDiscussionTopicScreen = withRoleGuard(DiscussionTopicScreen, ['admin', 'teacher', 'student']);
+const StaffCourseDetailScreen = withRoleGuard(CourseDetailScreen, ['admin', 'teacher', 'school', 'student']);
+const StaffLessonDetailScreen = withRoleGuard(LessonDetailScreen, ['admin', 'teacher', 'school', 'student']);
+const StaffCourseDiscussionScreen = withRoleGuard(CourseDiscussionScreen, ['admin', 'teacher', 'school', 'student']);
+const StaffDiscussionTopicScreen = withRoleGuard(DiscussionTopicScreen, ['admin', 'teacher', 'school', 'student']);
 const StaffLessonEditorScreen = withRoleGuard(LessonEditorScreen, ['admin', 'teacher', 'school']);
 const StaffCourseEditorScreen = withRoleGuard(CourseEditorScreen, ['admin', 'teacher']);
 const StaffMarkAttendanceScreen = withRoleGuard(MarkAttendanceScreen, ['admin', 'teacher', 'school']);
@@ -272,7 +272,7 @@ function MainTabs() {
   const isAdmin = profile?.role === 'admin';
   const isTeacher = profile?.role === 'teacher';
   const unread = useInboxUnreadCount(!isAdmin && !isTeacher ? profile?.id : undefined);
-  const showLearnTab = profile?.role === 'student' || profile?.role === 'teacher';
+  const showLearnTab = profile?.role !== 'parent';
 
   return (
     <Tab.Navigator
@@ -540,7 +540,7 @@ function MainStack() {
       <Stack.Screen name={ROUTES.Users} component={AdminOnlyUsersScreen} />
       <Stack.Screen name={ROUTES.EnrolStudents} component={StaffEnrolStudentsScreen} />
       <Stack.Screen name={ROUTES.WipeStudents} component={AdminOnlyWipeStudentsScreen} />
-      <Stack.Screen name={ROUTES.Programs} component={AdminOnlyProgramsScreen} />
+      <Stack.Screen name={ROUTES.Programs} component={RoleProgramsScreen} />
       <Stack.Screen name={ROUTES.Lessons} component={StaffLessonsScreen} />
       <Stack.Screen name={ROUTES.LessonDetail} component={StaffLessonDetailScreen} />
       <Stack.Screen name={ROUTES.CourseDiscussion} component={StaffCourseDiscussionScreen} />

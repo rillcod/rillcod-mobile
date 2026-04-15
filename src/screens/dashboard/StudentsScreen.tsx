@@ -52,7 +52,10 @@ export default function StudentsScreen({ navigation }: any) {
   const load = useCallback(async () => {
     try {
       if (isTeacher && profile?.id) {
-        const { rows, total } = await studentService.listStudentsByTeacherClasses(profile.id);
+        const { rows, total } = await studentService.listStudentsByTeacherScope({
+          teacherId: profile.id,
+          fallbackSchoolId: profile.school_id,
+        });
         setStudents(rows as Student[]);
         setFiltered(rows as Student[]);
         setTotal(total);

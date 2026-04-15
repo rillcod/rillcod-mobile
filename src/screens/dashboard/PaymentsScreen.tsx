@@ -27,6 +27,7 @@ import {
 } from '../../services/payment.service';
 import { schoolService } from '../../services/school.service';
 import { studentService } from '../../services/student.service';
+import { teacherService } from '../../services/teacher.service';
 import { FONT_FAMILY, FONT_SIZE, LETTER_SPACING } from '../../constants/typography';
 import { SPACING, RADIUS } from '../../constants/spacing';
 import { ScreenHeader } from '../../components/ui/ScreenHeader';
@@ -195,8 +196,10 @@ export default function PaymentsScreen({ navigation }: any) {
   });
 
   const isAdmin = profile?.role === 'admin';
+  const isTeacher = profile?.role === 'teacher';
   const isSchool = profile?.role === 'school';
   const canManage = isAdmin || isSchool;
+  const canPayInvoice = profile?.role === 'school' || profile?.role === 'parent';
 
   const load = useCallback(async () => {
     if (!profile) {
@@ -213,14 +216,24 @@ export default function PaymentsScreen({ navigation }: any) {
         });
       }
 
+      const teacherSchoolIds = isTeacher && profile?.id
+        ? await teacherService.listSchoolIdsForTeacher(profile.id, profile.school_id)
+        : [];
+
       const [invoiceData, transactionData, accountData, receiptRows] = await Promise.all([
-        paymentService.listInvoices({ role: profile.role, userId: profile.id, schoolId: profile.school_id }),
+        paymentService.listInvoices({
+          role: profile.role,
+          userId: profile.id,
+          schoolId: profile.school_id,
+          teacherSchoolIds,
+        }),
         paymentService.listTransactions({
           role: profile.role,
           userId: profile.id,
           schoolId: profile.school_id,
+          teacherSchoolIds,
         }),
-        paymentService.listPaymentAccounts({ isAdmin, schoolId: profile.school_id }),
+        canManage ? paymentService.listPaymentAccounts({ isAdmin, schoolId: profile.school_id }) : Promise.resolve([]),
         canManage
           ? paymentService.listReceiptRecords({
               limit: 100,
@@ -285,7 +298,7 @@ export default function PaymentsScreen({ navigation }: any) {
       setLoading(false);
       setRefreshing(false);
     }
-  }, [isAdmin, isSchool, profile]);
+  }, [canManage, isAdmin, isSchool, isTeacher, profile]);
 
   useEffect(() => {
     load();
@@ -1099,8 +1112,14 @@ export default function PaymentsScreen({ navigation }: any) {
   return (
     <SafeAreaView style={styles.safe}>
       <ScreenHeader
-        title={canManage ? 'Payments' : 'Billing'}
-        subtitle={canManage ? 'Invoices, activity, receipts, and bank accounts' : 'Your invoices and receipts'}
+        title={canManage ? 'Payments' : isTeacher ? 'Smart Finance' : 'Billing'}
+        subtitle={
+          canManage
+            ? 'Invoices, activity, receipts, and bank accounts'
+            : isTeacher
+              ? 'School-scoped finance visibility for your assigned schools'
+              : 'Your invoices and receipts'
+        }
         accentColor={colors.primary}
         onBack={() =>
           typeof navigation.canGoBack === 'function' && navigation.canGoBack()
@@ -1159,8 +1178,10 @@ export default function PaymentsScreen({ navigation }: any) {
         {[
           { key: 'invoices', label: 'Invoices' },
           { key: 'transactions', label: canManage ? 'Activity' : 'Transactions' },
-          { key: 'receipts', label: 'Receipts' },
-          { key: 'accounts', label: 'Accounts' },
+          ...(canManage ? [
+            { key: 'receipts', label: 'Receipts' },
+            { key: 'accounts', label: 'Accounts' },
+          ] : []),
         ].map((item) => (
           <TouchableOpacity
             key={item.key}
@@ -1266,7 +1287,7 @@ export default function PaymentsScreen({ navigation }: any) {
         <ScrollView refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); load(); }} tintColor={colors.primary} />} contentContainerStyle={styles.list} showsVerticalScrollIndicator={false}>
           {tab === 'invoices' ? renderInvoiceCards() : null}
           {tab === 'transactions' ? renderTransactionCards() : null}
-          {tab === 'receipts'
+          {tab === 'receipts' && canManage
             ? filteredReceipts.map((receipt, index) => {
                 const schoolName = schools.find((school) => school.id === receipt.school_id)?.name ?? null;
                 const studentName = students.find((student) => student.id === receipt.student_id)?.full_name ?? null;
@@ -1306,7 +1327,7 @@ export default function PaymentsScreen({ navigation }: any) {
                 );
               })
             : null}
-          {tab === 'accounts' ? renderAccounts() : null}
+          {tab === 'accounts' && canManage ? renderAccounts() : null}
           <View style={{ height: 24 }} />
         </ScrollView>
       )}
@@ -1336,7 +1357,7 @@ export default function PaymentsScreen({ navigation }: any) {
                     <Text style={[styles.heroMeta, { color: selectedInvoice.payment_link ? colors.primary : colors.textMuted }]}>{selectedInvoice.payment_link ? 'PAYSTACK CHECKOUT READY' : 'BANK PAYMENT FLOW ACTIVE'}</Text>
                   </View>
 
-                  {!canManage && selectedInvoice.status !== 'paid' && selectedInvoice.status !== 'cancelled' ? (
+                  {canPayInvoice && selectedInvoice.status !== 'paid' && selectedInvoice.status !== 'cancelled' ? (
                     <View style={[styles.sectionCard, { backgroundColor: colors.bgCard, borderColor: colors.border }]}>
                       <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>SMART PAYMENT</Text>
                       <Text style={[styles.sectionBody, { color: colors.textMuted }]}>
@@ -1391,7 +1412,7 @@ export default function PaymentsScreen({ navigation }: any) {
                     </View>
                   ) : null}
 
-                  {!canManage && selectedInvoice.status !== 'paid' && selectedInvoice.status !== 'cancelled' ? (
+                  {canPayInvoice && selectedInvoice.status !== 'paid' && selectedInvoice.status !== 'cancelled' ? (
                     <BankTransferProofActions
                       invoiceId={selectedInvoice.id}
                       invoiceNumber={selectedInvoice.invoice_number}
@@ -1407,7 +1428,7 @@ export default function PaymentsScreen({ navigation }: any) {
                     <Text style={[styles.actionText, { color: colors.textPrimary }]}>{exporting ? 'EXPORTING...' : 'PRINT PDF'}</Text>
                   </TouchableOpacity>
 
-                  {!canManage && selectedInvoice.status !== 'paid' ? (
+                  {canPayInvoice && selectedInvoice.status !== 'paid' ? (
                     <TouchableOpacity style={[styles.actionButton, { backgroundColor: colors.primary, borderColor: colors.primary }]} onPress={() => openPayment(selectedInvoice)}>
                       <Text style={styles.actionPrimaryText}>{selectedInvoice.payment_link ? 'PAY WITH PAYSTACK' : 'PAYMENT INFO'}</Text>
                     </TouchableOpacity>

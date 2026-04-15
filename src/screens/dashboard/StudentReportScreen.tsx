@@ -113,7 +113,10 @@ export default function StudentReportScreen({ navigation, route }: any) {
       return;
     }
     const [repRows, subRows, enrRows] = await Promise.all([
-      gradeService.listFullProgressReportsForStudentReport(effectiveStudentId),
+      gradeService.listFullProgressReportsForStudentReport(
+        effectiveStudentId,
+        studentName ?? profile?.full_name ?? null,
+      ),
       gradeService.listSubmissionsForStudentReport(effectiveStudentId),
       gradeService.listEnrollmentsForStudentReport(effectiveStudentId),
     ]);

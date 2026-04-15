@@ -51,7 +51,7 @@ export type RootStackParamList = {
   BulkRegister: undefined;
   ClassDetail: { classId: string };
   CreateAssignment: { classId?: string; className?: string; assignmentId?: string };
-  EnrolStudents: { classId?: string; className?: string; programId?: string } | undefined;
+  EnrolStudents: { classId?: string; className?: string; classSchoolId?: string | null; programId?: string } | undefined;
   ReportBuilder: { studentId?: string; studentName?: string };
   StudentReport: { studentId: string; studentName?: string };
   AI: undefined;

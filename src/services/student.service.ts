@@ -11,6 +11,17 @@ export type StudentDirectoryRow = Pick<
 >;
 
 export class StudentService {
+  private async listTeacherSchoolIds(teacherId: string, fallbackSchoolId?: string | null) {
+    const { data: ts, error } = await supabase
+      .from('teacher_schools')
+      .select('school_id')
+      .eq('teacher_id', teacherId);
+    if (error) throw error;
+    const ids = [...new Set((ts ?? []).map((r: { school_id: string }) => r.school_id).filter(Boolean))] as string[];
+    if (fallbackSchoolId && !ids.includes(fallbackSchoolId)) ids.unshift(fallbackSchoolId);
+    return ids;
+  }
+
   async listStudents(schoolId?: string | null) {
     let query = supabase
       .from('portal_users')
@@ -211,6 +222,56 @@ export class StudentService {
     return {
       rows: (data ?? []) as StudentDirectoryRow[],
       total: count ?? data?.length ?? 0,
+    };
+  }
+
+  /** Teachers: students across all assigned schools (primary + `teacher_schools`). */
+  async listStudentsByTeacherScope(params: { teacherId: string; fallbackSchoolId?: string | null; limit?: number }) {
+    const limit = params.limit ?? 200;
+    const schoolIds = await this.listTeacherSchoolIds(params.teacherId, params.fallbackSchoolId);
+    if (!schoolIds.length) return { rows: [] as StudentDirectoryRow[], total: 0 };
+
+    const { data: schoolRows, error: schoolErr } = await supabase
+      .from('schools')
+      .select('id, name')
+      .in('id', schoolIds);
+    if (schoolErr) throw schoolErr;
+    const schoolNames = [...new Set((schoolRows ?? []).map((row) => row.name).filter(Boolean))] as string[];
+
+    const primary = await supabase
+      .from('portal_users')
+      .select('id, full_name, email, school_name, is_active, created_at, section_class', { count: 'exact' })
+      .eq('role', 'student')
+      .eq('is_deleted', false)
+      .in('school_id', schoolIds)
+      .order('created_at', { ascending: false })
+      .limit(limit);
+    if (primary.error) throw primary.error;
+
+    let legacyRows: StudentDirectoryRow[] = [];
+    if (schoolNames.length) {
+      const legacy = await supabase
+        .from('portal_users')
+        .select('id, full_name, email, school_name, is_active, created_at, section_class')
+        .eq('role', 'student')
+        .eq('is_deleted', false)
+        .is('school_id', null)
+        .in('school_name', schoolNames)
+        .order('created_at', { ascending: false })
+        .limit(limit);
+      if (legacy.error) throw legacy.error;
+      legacyRows = (legacy.data ?? []) as StudentDirectoryRow[];
+    }
+
+    const byId = new Map<string, StudentDirectoryRow>();
+    for (const row of [ ...((primary.data ?? []) as StudentDirectoryRow[]), ...legacyRows ]) {
+      byId.set(row.id, row);
+    }
+
+    const rows = Array.from(byId.values()).sort((a, b) => String(b.created_at ?? '').localeCompare(String(a.created_at ?? '')));
+    return {
+      rows,
+      total: primary.count ?? rows.length,
     };
   }
 

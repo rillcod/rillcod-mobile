@@ -102,6 +102,7 @@ export default function ClassesScreen({ navigation }: any) {
 
   const load = useCallback(async () => {
     const data = await classService.listClassesForManagement({
+      role: profile?.role,
       teacherId: isTeacher ? profile!.id : undefined,
       schoolId: !isTeacher && profile?.school_id ? profile.school_id : undefined,
       limit: 150,
@@ -625,5 +626,4 @@ const styles = StyleSheet.create({
   saveText: { fontFamily: FONT_FAMILY.bodySemi, fontSize: FONT_SIZE.base, color: COLORS.white100, textTransform: 'uppercase', letterSpacing: 1 },
   btnDisabled: { opacity: 0.6 },
 });
-
 

@@ -4,30 +4,166 @@ import type { Database } from '../types/supabase';
 export type ClassRow = Database['public']['Tables']['classes']['Row'];
 
 export class ClassService {
+  private async listAuthorizedSchoolIdsForCaller(params: {
+    callerRole?: string | null;
+    callerId?: string | null;
+    callerSchoolId?: string | null;
+  }) {
+    const { callerRole, callerId, callerSchoolId } = params;
+    if (callerRole === 'admin') return [];
+
+    const schoolIds: string[] = [];
+    if (callerSchoolId) schoolIds.push(callerSchoolId);
+
+    if (callerRole === 'teacher' && callerId) {
+      const linkedSchoolIds = await this.listTeacherSchoolIds(callerId);
+      linkedSchoolIds.forEach((id) => {
+        if (id && !schoolIds.includes(id)) schoolIds.push(id);
+      });
+    }
+
+    return schoolIds;
+  }
+
+  private async listTeacherSchoolIds(teacherId: string) {
+    const { data, error } = await supabase
+      .from('teacher_schools')
+      .select('school_id')
+      .eq('teacher_id', teacherId);
+    if (error) throw error;
+    return [...new Set((data ?? []).map((row: { school_id: string }) => row.school_id).filter(Boolean))] as string[];
+  }
+
+  private async listTeacherIdsAssignedToSchool(schoolId: string) {
+    const { data, error } = await supabase
+      .from('teacher_schools')
+      .select('teacher_id')
+      .eq('school_id', schoolId);
+    if (error) throw error;
+    return [...new Set((data ?? []).map((row: { teacher_id: string }) => row.teacher_id).filter(Boolean))] as string[];
+  }
+
+  private async syncCurrentStudents(classIds: string[]) {
+    const uniqueIds = [...new Set(classIds.filter(Boolean))];
+    for (const classId of uniqueIds) {
+      const { count, error } = await supabase
+        .from('portal_users')
+        .select('id', { count: 'exact', head: true })
+        .eq('class_id', classId)
+        .eq('role', 'student');
+      if (error) throw error;
+      const { error: updateError } = await supabase.from('classes').update({ current_students: count ?? 0 }).eq('id', classId);
+      if (updateError) throw updateError;
+    }
+  }
+
+  private async getClassSchoolName(schoolId: string | null) {
+    if (!schoolId) return null;
+    const { data, error } = await supabase.from('schools').select('name').eq('id', schoolId).maybeSingle();
+    if (error) throw error;
+    return data?.name ?? null;
+  }
+
+  private async assertRosterAccess(params: {
+    classId: string;
+    callerRole?: string | null;
+    callerId?: string | null;
+    callerSchoolId?: string | null;
+  }) {
+    const { data: cls, error } = await supabase
+      .from('classes')
+      .select('id, name, school_id')
+      .eq('id', params.classId)
+      .maybeSingle();
+    if (error) throw error;
+    if (!cls) throw new Error('Class not found');
+
+    const schoolName = await this.getClassSchoolName(cls.school_id);
+
+    if (!params.callerRole || params.callerRole === 'admin') {
+      return { cls, schoolName };
+    }
+
+    if (!cls.school_id) {
+      throw new Error('This class is missing a school link and cannot be managed from mobile yet.');
+    }
+
+    if (params.callerRole === 'school') {
+      if (!params.callerSchoolId || params.callerSchoolId !== cls.school_id) {
+        throw new Error('You can only manage classes inside your own school.');
+      }
+      return { cls, schoolName };
+    }
+
+    if (params.callerRole === 'teacher') {
+      const schoolIds = await this.listAuthorizedSchoolIdsForCaller(params);
+      if (!schoolIds.includes(cls.school_id)) {
+        throw new Error('You are not assigned to this class school.');
+      }
+      return { cls, schoolName };
+    }
+
+    throw new Error('You do not have permission to manage this class roster.');
+  }
+
   /** Add-class form: teachers visible in picker (no `is_active` filter — matches legacy UI). */
   async listTeachersForClassPicker(params: { schoolId?: string | null; isAdmin: boolean; limit?: number }) {
     const lim = params.limit ?? 100;
-    let q = supabase.from('portal_users').select('id, full_name, email').eq('role', 'teacher').limit(lim);
     if (!params.isAdmin && params.schoolId) {
-      q = q.eq('school_id', params.schoolId);
+      const linkedTeacherIds = await this.listTeacherIdsAssignedToSchool(params.schoolId);
+      const [primary, linked] = await Promise.all([
+        supabase.from('portal_users').select('id, full_name, email').eq('role', 'teacher').eq('school_id', params.schoolId).limit(lim),
+        linkedTeacherIds.length
+          ? supabase.from('portal_users').select('id, full_name, email').eq('role', 'teacher').in('id', linkedTeacherIds).limit(lim)
+          : Promise.resolve({ data: [] as { id: string; full_name: string; email: string }[], error: null }),
+      ]);
+      if (primary.error) throw primary.error;
+      if (linked.error) throw linked.error;
+      const byId = new Map<string, { id: string; full_name: string; email: string }>();
+      for (const row of [...(primary.data ?? []), ...(linked.data ?? [])]) byId.set(row.id, row);
+      return Array.from(byId.values()).sort((a, b) => a.full_name.localeCompare(b.full_name));
     }
-    const { data, error } = await q;
+    const { data, error } = await supabase.from('portal_users').select('id, full_name, email').eq('role', 'teacher').limit(lim);
     if (error) throw error;
     return data ?? [];
   }
 
   async listTeacherOptions(params: { schoolId?: string | null; isAdmin: boolean }) {
-    let q = supabase
+    if (!params.isAdmin && params.schoolId) {
+      const linkedTeacherIds = await this.listTeacherIdsAssignedToSchool(params.schoolId);
+      const [primary, linked] = await Promise.all([
+        supabase
+          .from('portal_users')
+          .select('id, full_name, email')
+          .eq('role', 'teacher')
+          .eq('is_active', true)
+          .eq('school_id', params.schoolId)
+          .order('full_name', { ascending: true })
+          .limit(150),
+        linkedTeacherIds.length
+          ? supabase
+              .from('portal_users')
+              .select('id, full_name, email')
+              .eq('role', 'teacher')
+              .eq('is_active', true)
+              .in('id', linkedTeacherIds)
+              .order('full_name', { ascending: true })
+              .limit(150)
+          : Promise.resolve({ data: [] as { id: string; full_name: string; email: string }[], error: null }),
+      ]);
+      if (primary.error) throw primary.error;
+      if (linked.error) throw linked.error;
+      const byId = new Map<string, { id: string; full_name: string; email: string }>();
+      for (const row of [...(primary.data ?? []), ...(linked.data ?? [])]) byId.set(row.id, row);
+      return Array.from(byId.values()).sort((a, b) => a.full_name.localeCompare(b.full_name));
+    }
+    const { data, error } = await supabase
       .from('portal_users')
       .select('id, full_name, email')
       .eq('role', 'teacher')
       .eq('is_active', true)
       .order('full_name', { ascending: true })
       .limit(150);
-    if (!params.isAdmin && params.schoolId) {
-      q = q.eq('school_id', params.schoolId);
-    }
-    const { data, error } = await q;
     if (error) throw error;
     return data ?? [];
   }
@@ -43,7 +179,7 @@ export class ClassService {
     return data ?? [];
   }
 
-  async listClassesForManagement(params: { teacherId?: string; schoolId?: string | null; limit?: number }) {
+  async listClassesForManagement(params: { role?: string | null; teacherId?: string; schoolId?: string | null; limit?: number }) {
     const lim = params.limit ?? 150;
     let q = supabase
       .from('classes')
@@ -52,8 +188,17 @@ export class ClassService {
       )
       .order('created_at', { ascending: false })
       .limit(lim);
-    if (params.teacherId) q = q.eq('teacher_id', params.teacherId);
-    else if (params.schoolId) q = q.eq('school_id', params.schoolId);
+    if (params.role === 'teacher' && params.teacherId) {
+      const schoolIds = await this.listAuthorizedSchoolIdsForCaller({
+        callerRole: 'teacher',
+        callerId: params.teacherId,
+        callerSchoolId: params.schoolId,
+      });
+      if (!schoolIds.length) return [];
+      q = q.in('school_id', schoolIds);
+    } else if (params.schoolId) {
+      q = q.eq('school_id', params.schoolId);
+    }
     const { data, error } = await q;
     if (error) throw error;
     return data ?? [];
@@ -161,7 +306,17 @@ export class ClassService {
   }
 
   /** Mark attendance: reuse today’s session row if one exists for this class. */
-  async getClassSessionIdForDate(classId: string, sessionDate: string) {
+  async getClassSessionIdForDate(
+    classId: string,
+    sessionDate: string,
+    context?: { callerRole?: string | null; callerId?: string | null; callerSchoolId?: string | null },
+  ) {
+    await this.assertRosterAccess({
+      classId,
+      callerRole: context?.callerRole,
+      callerId: context?.callerId,
+      callerSchoolId: context?.callerSchoolId,
+    });
     const { data, error } = await supabase
       .from('class_sessions')
       .select('id')
@@ -172,14 +327,37 @@ export class ClassService {
     return data?.id ?? null;
   }
 
-  async insertClassSessionReturningId(row: Database['public']['Tables']['class_sessions']['Insert']) {
+  async insertClassSessionReturningId(
+    row: Database['public']['Tables']['class_sessions']['Insert'],
+    context?: { callerRole?: string | null; callerId?: string | null; callerSchoolId?: string | null },
+  ) {
+    if (row.class_id) {
+      await this.assertRosterAccess({
+        classId: row.class_id,
+        callerRole: context?.callerRole,
+        callerId: context?.callerId,
+        callerSchoolId: context?.callerSchoolId,
+      });
+    }
     const { data, error } = await supabase.from('class_sessions').insert(row).select('id').single();
     if (error) throw error;
     if (!data?.id) throw new Error('Failed to create class session');
     return data.id;
   }
 
-  async listActiveStudentsInClass(classId: string, limit = 300) {
+  async listActiveStudentsInClass(
+    classId: string,
+    limit = 300,
+    context?: { callerRole?: string | null; callerId?: string | null; callerSchoolId?: string | null },
+  ) {
+    if (context?.callerRole) {
+      await this.assertRosterAccess({
+        classId,
+        callerRole: context.callerRole,
+        callerId: context.callerId,
+        callerSchoolId: context.callerSchoolId,
+      });
+    }
     const { data, error } = await supabase
       .from('portal_users')
       .select('id, full_name, email, section_class')
@@ -218,37 +396,112 @@ export class ClassService {
     if (error) throw error;
   }
 
-  async searchStudentsForEnrollment(params: { query: string; schoolId?: string | null; limit?: number }) {
+  async searchStudentsForEnrollment(params: {
+    query: string;
+    schoolId?: string | null;
+    schoolIds?: string[];
+    schoolNames?: string[];
+    limit?: number;
+  }) {
     const lim = params.limit ?? 12;
     const q = params.query.trim();
-    let req = supabase
+    const schoolIds = [...new Set([...(params.schoolIds ?? []), ...(params.schoolId ? [params.schoolId] : [])])];
+    const schoolNames = [...new Set((params.schoolNames ?? []).filter(Boolean))];
+
+    const requests: PromiseLike<{ data: any[] | null; error: any }>[] = [];
+    const primaryReq = supabase
       .from('portal_users')
       .select('id, full_name, email, section_class')
       .eq('role', 'student')
       .eq('is_active', true)
       .ilike('full_name', `%${q}%`)
       .limit(lim);
-    if (params.schoolId) req = req.eq('school_id', params.schoolId);
-    const { data, error } = await req;
-    if (error) throw error;
-    return data ?? [];
+
+    requests.push(schoolIds.length ? primaryReq.in('school_id', schoolIds) : primaryReq);
+
+    if (schoolNames.length) {
+      requests.push(
+        supabase
+          .from('portal_users')
+          .select('id, full_name, email, section_class')
+          .eq('role', 'student')
+          .eq('is_active', true)
+          .is('school_id', null)
+          .in('school_name', schoolNames)
+          .ilike('full_name', `%${q}%`)
+          .limit(lim),
+      );
+    }
+
+    const results = await Promise.all(requests);
+    const merged = new Map<string, { id: string; full_name: string; email: string; section_class: string | null }>();
+    for (const result of results) {
+      if (result.error) throw result.error;
+      for (const row of result.data ?? []) merged.set(row.id, row);
+    }
+
+    return Array.from(merged.values()).sort((a, b) => a.full_name.localeCompare(b.full_name)).slice(0, lim);
   }
 
-  async assignStudentToClass(studentId: string, classId: string, sectionClassName: string) {
+  async assignStudentToClass(
+    studentId: string,
+    classId: string,
+    sectionClassName: string | null,
+    context?: { callerRole?: string | null; callerId?: string | null; callerSchoolId?: string | null },
+  ) {
+    const { cls, schoolName } = await this.assertRosterAccess({
+      classId,
+      callerRole: context?.callerRole,
+      callerId: context?.callerId,
+      callerSchoolId: context?.callerSchoolId,
+    });
+
+    const { data: studentRow, error: studentError } = await supabase
+      .from('portal_users')
+      .select('id, class_id, school_id, school_name')
+      .eq('id', studentId)
+      .eq('role', 'student')
+      .maybeSingle();
+    if (studentError) throw studentError;
+    if (!studentRow) throw new Error('Student not found');
+
+    if (cls.school_id) {
+      const sameById = studentRow.school_id === cls.school_id;
+      const sameByName = !!(schoolName && studentRow.school_name === schoolName);
+      if (!sameById && !sameByName) {
+        throw new Error('This student belongs to a different school and cannot be added here.');
+      }
+    }
+
+    const previousClassId = studentRow.class_id;
     const { error } = await supabase
       .from('portal_users')
       .update({ class_id: classId, section_class: sectionClassName })
-      .eq('id', studentId);
+      .eq('id', studentId)
+      .eq('role', 'student');
     if (error) throw error;
+    await this.syncCurrentStudents([classId, previousClassId ?? '']);
   }
 
-  async removeStudentFromClass(studentId: string, classId: string) {
+  async removeStudentFromClass(
+    studentId: string,
+    classId: string,
+    context?: { callerRole?: string | null; callerId?: string | null; callerSchoolId?: string | null },
+  ) {
+    await this.assertRosterAccess({
+      classId,
+      callerRole: context?.callerRole,
+      callerId: context?.callerId,
+      callerSchoolId: context?.callerSchoolId,
+    });
     const { error } = await supabase
       .from('portal_users')
       .update({ class_id: null, section_class: null })
       .eq('id', studentId)
-      .eq('class_id', classId);
+      .eq('class_id', classId)
+      .eq('role', 'student');
     if (error) throw error;
+    await this.syncCurrentStudents([classId]);
   }
 
   async deleteClass(classId: string) {
@@ -258,3 +511,4 @@ export class ClassService {
 }
 
 export const classService = new ClassService();
+

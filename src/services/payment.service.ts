@@ -219,8 +219,9 @@ export class PaymentService {
     role: string;
     userId: string;
     schoolId?: string | null;
+    teacherSchoolIds?: string[] | null;
   }) {
-    const { role, userId, schoolId } = params;
+    const { role, userId, schoolId, teacherSchoolIds } = params;
     if (role === 'student') return [];
 
     const isAdmin = role === 'admin';
@@ -239,6 +240,9 @@ export class PaymentService {
     } else if (isSchool) {
       if (!schoolId) return [];
       query = query.eq('school_id', schoolId);
+    } else if (role === 'teacher') {
+      if (!teacherSchoolIds?.length) return [];
+      query = query.in('school_id', teacherSchoolIds);
     } else {
       query = query.eq('portal_user_id', userId);
     }
@@ -252,10 +256,11 @@ export class PaymentService {
     role: string;
     userId: string;
     schoolId?: string | null;
+    teacherSchoolIds?: string[] | null;
     /** Parent view: linked students’ portal user ids */
     forStudentIds?: string[] | null;
   }) {
-    const { role, userId, schoolId, forStudentIds } = params;
+    const { role, userId, schoolId, teacherSchoolIds, forStudentIds } = params;
 
     if (role === 'student') return [];
 
@@ -276,6 +281,9 @@ export class PaymentService {
     } else if (role === 'school') {
       if (!schoolId) return [];
       query = query.eq('school_id', schoolId);
+    } else if (role === 'teacher') {
+      if (!teacherSchoolIds?.length) return [];
+      query = query.in('school_id', teacherSchoolIds);
     } else if (role === 'parent' && forStudentIds?.length) {
       query = query.in('portal_user_id', forStudentIds);
     } else {
@@ -618,7 +626,7 @@ export class PaymentService {
   }
 
   /** Admin / school `TransactionsScreen`: joined rows for ledger UI. */
-  async listFinanceConsoleTransactionsWithJoins(params: { schoolId?: string | null }) {
+  async listFinanceConsoleTransactionsWithJoins(params: { schoolId?: string | null; schoolIds?: string[] | null }) {
     let q = supabase
       .from('payment_transactions')
       .select(
@@ -627,12 +635,13 @@ export class PaymentService {
       .order('created_at', { ascending: false })
       .limit(200);
     if (params.schoolId) q = q.eq('school_id', params.schoolId);
+    if (!params.schoolId && params.schoolIds?.length) q = q.in('school_id', params.schoolIds);
     const { data, error } = await q;
     if (error) throw error;
     return data ?? [];
   }
 
-  async listReceiptsForFinanceConsole(params: number | { limit?: number; schoolId?: string | null } = 200) {
+  async listReceiptsForFinanceConsole(params: number | { limit?: number; schoolId?: string | null; schoolIds?: string[] | null } = 200) {
     const opts = typeof params === 'number' ? { limit: params } : (params ?? {});
     const limit = opts.limit ?? 200;
     let q = supabase
@@ -641,6 +650,7 @@ export class PaymentService {
       .order('issued_at', { ascending: false })
       .limit(limit);
     if (opts.schoolId) q = q.eq('school_id', opts.schoolId);
+    if (!opts.schoolId && opts.schoolIds?.length) q = q.in('school_id', opts.schoolIds);
     const { data, error } = await q;
     if (error) throw error;
     return data ?? [];

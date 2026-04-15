@@ -25,10 +25,12 @@ export type BulkEnrollClassRow = {
 const ACTIVE_STUDENT_OR = 'is_active.eq.true,is_active.is.null';
 
 export class EnrollmentService {
-  async listTeacherSchoolIds(teacherId: string): Promise<string[]> {
+  async listTeacherSchoolIds(teacherId: string, primarySchoolId?: string | null): Promise<string[]> {
     const { data, error } = await supabase.from('teacher_schools').select('school_id').eq('teacher_id', teacherId);
     if (error) throw error;
-    return [...new Set((data ?? []).map((r) => r.school_id).filter(Boolean))] as string[];
+    const schoolIds = [...new Set((data ?? []).map((r) => r.school_id).filter(Boolean))] as string[];
+    if (primarySchoolId && !schoolIds.includes(primarySchoolId)) schoolIds.unshift(primarySchoolId);
+    return schoolIds;
   }
 
   /**
@@ -57,7 +59,7 @@ export class EnrollmentService {
     const schoolIds: string[] = [];
     if (params.schoolId) schoolIds.push(params.schoolId);
     if (params.teacherId) {
-      const ts = await this.listTeacherSchoolIds(params.teacherId);
+      const ts = await this.listTeacherSchoolIds(params.teacherId, params.schoolId);
       ts.forEach((id) => {
         if (id && !schoolIds.includes(id)) schoolIds.push(id);
       });
@@ -121,14 +123,27 @@ export class EnrollmentService {
     return [...map.entries()].map(([id, name]) => ({ id, name })).sort((a, b) => a.name.localeCompare(b.name));
   }
 
-  /** Classes for bulk picker: admin sees all; teacher sees own classes (matches web `/api/classes` default). */
-  async listClassesForBulkPicker(params: { isAdmin: boolean; teacherId?: string | null }): Promise<BulkEnrollClassRow[]> {
+  /** Classes for bulk picker: admin sees all; teacher/school see classes inside their allowed school scope. */
+  async listClassesForBulkPicker(params: {
+    role?: string | null;
+    isAdmin: boolean;
+    teacherId?: string | null;
+    schoolId?: string | null;
+  }): Promise<BulkEnrollClassRow[]> {
     let q = supabase
       .from('classes')
       .select('id, name, program_id, school_id, programs(name), schools(name)')
       .order('created_at', { ascending: false })
       .limit(250);
-    if (!params.isAdmin && params.teacherId) q = q.eq('teacher_id', params.teacherId);
+    if (!params.isAdmin) {
+      if (params.role === 'teacher' && params.teacherId) {
+        const schoolIds = await this.listTeacherSchoolIds(params.teacherId, params.schoolId);
+        if (!schoolIds.length) return [];
+        q = q.in('school_id', schoolIds);
+      } else if (params.schoolId) {
+        q = q.eq('school_id', params.schoolId);
+      }
+    }
     const { data, error } = await q;
     if (error) throw error;
     return (data ?? []) as BulkEnrollClassRow[];
@@ -232,18 +247,34 @@ export class EnrollmentService {
     return { enrolled: allowedIds.length, skipped: studentIds.length - allowedIds.length };
   }
 
-  async listStudentsForEnrolPicker(params: { scopeSchoolId?: string | null; applySchoolScope: boolean }) {
-    let q = supabase
+  async listStudentsForEnrolPicker(params: {
+    role?: string | null;
+    teacherId?: string | null;
+    schoolId?: string | null;
+    applySchoolScope?: boolean;
+  }) {
+    if (params.applySchoolScope) {
+      const rows = await this.listStudentsForBulkEnroll({
+        role: params.role ?? '',
+        teacherId: params.teacherId,
+        schoolId: params.schoolId,
+      });
+      return rows.map((row) => ({
+        id: row.id,
+        full_name: row.full_name,
+        email: row.email,
+        school_name: row.school_name,
+        section_class: row.section_class,
+      }));
+    }
+
+    const { data, error } = await supabase
       .from('portal_users')
       .select('id, full_name, email, school_name, section_class')
       .eq('role', 'student')
       .eq('is_active', true)
       .order('full_name', { ascending: true })
       .limit(300);
-    if (params.applySchoolScope && params.scopeSchoolId) {
-      q = q.eq('school_id', params.scopeSchoolId);
-    }
-    const { data, error } = await q;
     if (error) throw error;
     return data ?? [];
   }

@@ -57,6 +57,7 @@ export default function AttendanceScreen({ navigation }: any) {
   const [view, setView] = useState<'sessions' | 'records'>('sessions');
 
   const isTeacher = profile?.role === 'teacher';
+  const canTakeRegister = profile?.role === 'admin' || profile?.role === 'teacher' || profile?.role === 'school';
   const isStudent = profile?.role === 'student';
 
   const loadClasses = useCallback(async () => {
@@ -67,6 +68,7 @@ export default function AttendanceScreen({ navigation }: any) {
 
     try {
       const rows = await attendanceService.listClassesForAttendancePicker({
+        role: profile?.role,
         teacherId: isTeacher ? profile!.id : undefined,
         schoolId: !isTeacher ? profile?.school_id ?? undefined : undefined,
         limit: 50,
@@ -99,7 +101,11 @@ export default function AttendanceScreen({ navigation }: any) {
       return;
     }
 
-    const data = await attendanceService.listAttendance(sessionId, profile?.school_id);
+    const data = await attendanceService.listAttendance(sessionId, {
+      callerRole: profile?.role,
+      callerId: profile?.id,
+      callerSchoolId: profile?.school_id,
+    });
 
     setRecords(
       ((data ?? []) as any[]).map((row) => ({
@@ -168,7 +174,7 @@ export default function AttendanceScreen({ navigation }: any) {
           <Text style={styles.title}>Attendance</Text>
           <Text style={styles.subtitle}>{isStudent ? 'My attendance records' : view === 'sessions' ? 'Select a session' : `${records.length} records`}</Text>
         </View>
-        {isTeacher && view === 'sessions' && selectedClass && (
+        {canTakeRegister && view === 'sessions' && selectedClass && (
           <TouchableOpacity
             onPress={() => navigation.navigate(ROUTES.MarkAttendance, { classId: selectedClass, className: classes.find((c) => c.id === selectedClass)?.name })}
             style={styles.actionBtn}

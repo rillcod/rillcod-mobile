@@ -178,6 +178,7 @@ export default function ClassDetailScreen({ navigation, route }: any) {
   });
 
   const isTeacher = profile?.role === 'teacher' || profile?.role === 'admin';
+  const canManageRoster = profile?.role === 'admin' || profile?.role === 'teacher' || profile?.role === 'school';
   const canManageClass = profile?.role === 'admin' || profile?.role === 'teacher';
   const focusPassRef = useRef(0);
 
@@ -559,6 +560,7 @@ export default function ClassDetailScreen({ navigation, route }: any) {
       data = (await classService.searchStudentsForEnrollment({
         query: query.trim(),
         schoolId: classInfo.school_id,
+        schoolNames: classInfo.school_name ? [classInfo.school_name] : [],
         limit: 12,
       })) as EnrolledStudent[];
     } catch {
@@ -574,7 +576,11 @@ export default function ClassDetailScreen({ navigation, route }: any) {
     setEnrolling(true);
 
     try {
-      await classService.assignStudentToClass(student.id, classId, classInfo.name);
+      await classService.assignStudentToClass(student.id, classId, classInfo.name, {
+        callerRole: profile?.role,
+        callerId: profile?.id,
+        callerSchoolId: profile?.school_id,
+      });
     } catch (error: any) {
       setEnrolling(false);
       Alert.alert('Error', error?.message ?? 'Could not enrol student.');
@@ -597,7 +603,11 @@ export default function ClassDetailScreen({ navigation, route }: any) {
         style: 'destructive',
         onPress: async () => {
           try {
-            await classService.removeStudentFromClass(studentId, classId);
+            await classService.removeStudentFromClass(studentId, classId, {
+              callerRole: profile?.role,
+              callerId: profile?.id,
+              callerSchoolId: profile?.school_id,
+            });
           } catch (error: any) {
             Alert.alert('Error', error?.message ?? 'Could not remove student.');
             return;
@@ -679,9 +689,18 @@ export default function ClassDetailScreen({ navigation, route }: any) {
         rightAction={
           isTeacher && activeTab === 'assignments'
             ? { label: '+ New', onPress: () => navigation.navigate(ROUTES.CreateAssignment, { classId, className: classInfo.name }) }
-            : isTeacher && activeTab === 'students'
-              ? { label: '+ Enrol', onPress: () => navigation.navigate(ROUTES.EnrolStudents, { classId, className: classInfo.name, programId: classInfo.program_id }) }
-            : undefined
+            : canManageRoster && activeTab === 'students'
+              ? {
+                  label: '+ Enrol',
+                  onPress: () =>
+                    navigation.navigate(ROUTES.EnrolStudents, {
+                      classId,
+                      className: classInfo.name,
+                      classSchoolId: classInfo.school_id,
+                      programId: classInfo.program_id,
+                    }),
+                }
+              : undefined
         }
       />
 
@@ -765,12 +784,21 @@ export default function ClassDetailScreen({ navigation, route }: any) {
                   <Text style={[styles.secondaryBtnText, { color: colors.textPrimary }]}>Edit class</Text>
                 </TouchableOpacity>
               ) : null}
-              <TouchableOpacity
-                onPress={() => navigation.navigate(ROUTES.EnrolStudents, { classId, className: classInfo.name, programId: classInfo.program_id })}
-                style={[styles.secondaryBtn, { borderColor: colors.primary }]}
-              >
-                <Text style={[styles.secondaryBtnText, { color: colors.primary }]}>Manage Roster</Text>
-              </TouchableOpacity>
+              {canManageRoster ? (
+                <TouchableOpacity
+                  onPress={() =>
+                    navigation.navigate(ROUTES.EnrolStudents, {
+                      classId,
+                      className: classInfo.name,
+                      classSchoolId: classInfo.school_id,
+                      programId: classInfo.program_id,
+                    })
+                  }
+                  style={[styles.secondaryBtn, { borderColor: colors.primary }]}
+                >
+                  <Text style={[styles.secondaryBtnText, { color: colors.primary }]}>Manage Roster</Text>
+                </TouchableOpacity>
+              ) : null}
               <TouchableOpacity
                 onPress={() => navigation.navigate(ROUTES.CreateAssignment, { classId, className: classInfo.name })}
                 style={[styles.secondaryBtn, { borderColor: colors.border }]}
@@ -878,7 +906,7 @@ export default function ClassDetailScreen({ navigation, route }: any) {
               />
             </View>
 
-            {isTeacher && (
+            {canManageRoster && (
               <View style={[styles.inlineCard, { borderColor: colors.border, backgroundColor: colors.bgCard }]}> 
                 <TouchableOpacity onPress={() => setShowEnrollSearch((value) => !value)} style={styles.inlineHeader}>
                   <Text style={[styles.sectionTitle, { color: colors.textMuted }]}>Roster Control</Text>
@@ -932,7 +960,7 @@ export default function ClassDetailScreen({ navigation, route }: any) {
                     <Text style={[styles.studentMeta, { color: colors.textMuted }]}>{student.email}</Text>
                     {student.section_class ? <Text style={[styles.studentMeta, { color: colors.textSecondary }]}>{student.section_class}</Text> : null}
                   </View>
-                  {isTeacher && (
+                  {canManageRoster && (
                     <TouchableOpacity onPress={() => removeStudent(student.id)}>
                       <Text style={[styles.removeText, { color: colors.error }]}>Remove</Text>
                     </TouchableOpacity>

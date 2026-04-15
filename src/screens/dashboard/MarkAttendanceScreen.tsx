@@ -39,7 +39,11 @@ export default function MarkAttendanceScreen({ navigation, route }: any) {
   useEffect(() => {
     const fetchStudents = async () => {
       try {
-        const rows = await classService.listActiveStudentsInClass(classId);
+        const rows = await classService.listActiveStudentsInClass(classId, 300, {
+          callerRole: profile?.role,
+          callerId: profile?.id,
+          callerSchoolId: profile?.school_id,
+        });
         setStudents(
           rows.map((student) => ({
             id: student.id,
@@ -82,7 +86,11 @@ export default function MarkAttendanceScreen({ navigation, route }: any) {
       const today = new Date().toISOString().split('T')[0];
       const sessionTopic = topic.trim() || `Attendance - ${today}`;
 
-      let sessionId = await classService.getClassSessionIdForDate(classId, today);
+      let sessionId = await classService.getClassSessionIdForDate(classId, today, {
+        callerRole: profile?.role,
+        callerId: profile?.id,
+        callerSchoolId: profile?.school_id,
+      });
       if (!sessionId) {
         sessionId = await classService.insertClassSessionReturningId({
           class_id: classId,
@@ -93,6 +101,10 @@ export default function MarkAttendanceScreen({ navigation, route }: any) {
           status: 'completed',
           is_active: true,
           start_time: null,
+        }, {
+          callerRole: profile?.role,
+          callerId: profile?.id,
+          callerSchoolId: profile?.school_id,
         });
       }
 
@@ -104,7 +116,11 @@ export default function MarkAttendanceScreen({ navigation, route }: any) {
       }));
 
       for (const record of records) {
-        await attendanceService.createAttendance(record, profile?.school_id);
+        await attendanceService.createAttendance(record, {
+          callerRole: profile?.role,
+          callerId: profile?.id,
+          callerSchoolId: profile?.school_id,
+        });
       }
 
       success();

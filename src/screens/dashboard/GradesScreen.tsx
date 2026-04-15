@@ -107,13 +107,14 @@ export default function GradesScreen({ navigation }: any) {
     if (!profile?.id) return;
     try {
       let targetId = profile.id;
+      let fallbackStudentName: string | null = isParent ? null : profile.full_name ?? null;
       if (isParent) {
         const studentIds = await schoolService.getParentStudentIds();
         if (studentIds.length > 0) targetId = studentIds[0];
       }
 
       const [reportRows, gpa, submissionRows, cbtRows] = await Promise.all([
-        gradeService.listProgressReports(targetId),
+        gradeService.listProgressReports(targetId, fallbackStudentName),
         gradeService.calculateGPA(targetId),
         gradeService.listGradedAssignmentSubmissionsForParentGrades(targetId, 50),
         gradeService.listCbtSessionsWithScoresForParentGrades(targetId, 50),

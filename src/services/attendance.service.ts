@@ -11,12 +11,65 @@ export interface AttendanceInput {
 }
 
 export class AttendanceService {
+  private async listTeacherSchoolIds(teacherId: string, primarySchoolId?: string | null) {
+    const { data, error } = await supabase.from('teacher_schools').select('school_id').eq('teacher_id', teacherId);
+    if (error) throw error;
+    const schoolIds = [...new Set((data ?? []).map((row) => row.school_id).filter(Boolean))] as string[];
+    if (primarySchoolId && !schoolIds.includes(primarySchoolId)) schoolIds.unshift(primarySchoolId);
+    return schoolIds;
+  }
+
+  private async assertSessionAccess(params: {
+    sessionId: string;
+    callerRole?: string | null;
+    callerId?: string | null;
+    callerSchoolId?: string | null;
+  }) {
+    const { data: session, error } = await supabase
+      .from('class_sessions')
+      .select('classes!inner(school_id)')
+      .eq('id', params.sessionId)
+      .single();
+    if (error) throw error;
+
+    const classSchoolId = (session.classes as { school_id: string | null }).school_id;
+    if (!params.callerRole || params.callerRole === 'admin') return;
+
+    if (!classSchoolId) {
+      throw new Error('This class session is missing a school link.');
+    }
+
+    if (params.callerRole === 'school') {
+      if (!params.callerSchoolId || params.callerSchoolId !== classSchoolId) {
+        throw new Error('Access denied');
+      }
+      return;
+    }
+
+    if (params.callerRole === 'teacher') {
+      const schoolIds = await this.listTeacherSchoolIds(params.callerId ?? '', params.callerSchoolId);
+      if (!schoolIds.includes(classSchoolId)) {
+        throw new Error('Access denied');
+      }
+    }
+  }
+
   /** Class picker for staff attendance UI (teacher vs school scope). */
-  async listClassesForAttendancePicker(params: { teacherId?: string; schoolId?: string | null; limit?: number }) {
+  async listClassesForAttendancePicker(params: {
+    role?: string | null;
+    teacherId?: string;
+    schoolId?: string | null;
+    limit?: number;
+  }) {
     const lim = params.limit ?? 50;
     let q = supabase.from('classes').select('id, name').order('name', { ascending: true }).limit(lim);
-    if (params.teacherId) q = q.eq('teacher_id', params.teacherId);
-    else if (params.schoolId) q = q.eq('school_id', params.schoolId);
+    if (params.role === 'teacher' && params.teacherId) {
+      const schoolIds = await this.listTeacherSchoolIds(params.teacherId, params.schoolId);
+      if (!schoolIds.length) return [];
+      q = q.in('school_id', schoolIds);
+    } else if (params.schoolId) {
+      q = q.eq('school_id', params.schoolId);
+    }
     const { data, error } = await q;
     if (error) throw error;
     return data ?? [];
@@ -56,18 +109,11 @@ export class AttendanceService {
     return data ?? [];
   }
 
-  async listAttendance(sessionId: string, schoolId?: string | null) {
-    if (schoolId) {
-      const { data: session } = await supabase
-        .from('class_sessions')
-        .select('classes!inner(school_id)')
-        .eq('id', sessionId)
-        .single();
-      
-      if (!session || (session.classes as any).school_id !== schoolId) {
-        throw new Error('Access denied');
-      }
-    }
+  async listAttendance(
+    sessionId: string,
+    context?: { callerRole?: string | null; callerId?: string | null; callerSchoolId?: string | null },
+  ) {
+    if (context?.callerRole) await this.assertSessionAccess({ sessionId, ...context });
 
     const { data, error } = await supabase
       .from('attendance')
@@ -79,18 +125,11 @@ export class AttendanceService {
     return data;
   }
 
-  async createAttendance(input: AttendanceInput, schoolId?: string | null) {
-    if (schoolId) {
-       const { data: session } = await supabase
-        .from('class_sessions')
-        .select('classes!inner(school_id)')
-        .eq('id', input.session_id)
-        .single();
-      
-      if (!session || (session.classes as any).school_id !== schoolId) {
-        throw new Error('Access denied');
-      }
-    }
+  async createAttendance(
+    input: AttendanceInput,
+    context?: { callerRole?: string | null; callerId?: string | null; callerSchoolId?: string | null },
+  ) {
+    if (context?.callerRole) await this.assertSessionAccess({ sessionId: input.session_id, ...context });
 
     const { data, error } = await supabase
       .from('attendance')

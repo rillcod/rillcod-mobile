@@ -73,7 +73,7 @@ export default function ParentResultsScreen({ navigation, route }: any) {
       }
 
       setNoPortalAccount(false);
-      const data = await gradeService.listProgressReports(portalUserId);
+      const data = await gradeService.listProgressReports(portalUserId, studentName ?? null);
       setReports(data as Report[]);
     } finally {
       setLoading(false);

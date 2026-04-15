@@ -20,6 +20,7 @@ import {
   computeSmartBillingSignals,
   transactionNeedsFinanceAttention,
 } from '../../services/payment.service';
+import { teacherService } from '../../services/teacher.service';
 import { ScreenHeader } from '../../components/ui/ScreenHeader';
 import { FONT_FAMILY, FONT_SIZE, LETTER_SPACING } from '../../constants/typography';
 import { SPACING, RADIUS } from '../../constants/spacing';
@@ -112,8 +113,9 @@ export default function TransactionsScreen({ navigation }: any) {
   });
 
   const isAdmin = profile?.role === 'admin';
+  const isTeacher = profile?.role === 'teacher';
   const isSchool = profile?.role === 'school';
-  const canView = isAdmin || isSchool;
+  const canView = isAdmin || isSchool || isTeacher;
 
   const canApproveTransaction = useCallback(
     (tx: TransactionRow) => {
@@ -133,18 +135,25 @@ export default function TransactionsScreen({ navigation }: any) {
     }
 
     try {
+      const teacherSchoolIds = isTeacher && profile?.id
+        ? await teacherService.listSchoolIdsForTeacher(profile.id, profile.school_id)
+        : [];
+
       const [data, receiptRows, invData] = await Promise.all([
         paymentService.listFinanceConsoleTransactionsWithJoins({
           schoolId: isSchool && profile.school_id ? profile.school_id : undefined,
+          schoolIds: !isSchool ? teacherSchoolIds : undefined,
         }),
         paymentService.listReceiptsForFinanceConsole({
           limit: 200,
           schoolId: isSchool && profile.school_id ? profile.school_id : undefined,
+          schoolIds: !isSchool ? teacherSchoolIds : undefined,
         }),
         paymentService.listInvoices({
           role: profile.role,
           userId: profile.id,
           schoolId: profile.school_id,
+          teacherSchoolIds,
         }),
       ]);
       setBillingInvoices(
@@ -183,7 +192,7 @@ export default function TransactionsScreen({ navigation }: any) {
       setLoading(false);
       setRefreshing(false);
     }
-  }, [canView, isSchool, profile]);
+  }, [canView, isSchool, isTeacher, profile]);
 
   useEffect(() => {
     load();
@@ -471,7 +480,7 @@ export default function TransactionsScreen({ navigation }: any) {
         />
         <View style={styles.emptyState}>
           <Text style={styles.emptyTitle}>Access Restricted</Text>
-          <Text style={styles.emptyText}>This screen is available to admin and school accounts only.</Text>
+          <Text style={styles.emptyText}>This screen is available to admin, teacher, and school accounts.</Text>
         </View>
       </SafeAreaView>
     );
@@ -481,7 +490,7 @@ export default function TransactionsScreen({ navigation }: any) {
     <SafeAreaView style={styles.safe}>
       <ScreenHeader
         title="Finance ledger"
-        subtitle="Transactions reconciled with invoices · CSV export"
+        subtitle={isTeacher ? 'Read-only transactions for your assigned schools · CSV export' : 'Transactions reconciled with invoices · CSV export'}
         onBack={() => navigation.goBack()}
         rightAction={{ label: 'CSV', onPress: () => void exportTransactionsCsv() }}
       />

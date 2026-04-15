@@ -2,6 +2,57 @@ import { supabase } from '../lib/supabase';
 import type { Database } from '../types/supabase';
 
 export class GradeService {
+  private async listPublishedReportsWithLegacyFallback(
+    selectClause: string,
+    params: { studentId: string; studentName?: string | null; limit?: number },
+  ): Promise<any[]> {
+    const limit = params.limit ?? 100;
+    const primary = await supabase
+      .from('student_progress_reports')
+      .select(selectClause)
+      .eq('student_id', params.studentId)
+      .eq('is_published', true)
+      .order('report_date', { ascending: false })
+      .limit(limit);
+    if (primary.error) throw primary.error;
+    if ((primary.data ?? []).length > 0 || !params.studentName?.trim()) {
+    return (primary.data ?? []) as any[];
+    }
+
+    const fallback = await supabase
+      .from('student_progress_reports')
+      .select(selectClause)
+      .is('student_id', null)
+      .eq('student_name', params.studentName.trim())
+      .eq('is_published', true)
+      .order('report_date', { ascending: false })
+      .limit(limit);
+    if (fallback.error) throw fallback.error;
+    return (fallback.data ?? []) as any[];
+  }
+
+  private async listAssignmentSubmissionsByStudentKeys(
+    portalUserId: string,
+    selectClause: string,
+    params?: { gradedOnly?: boolean; limit?: number },
+  ): Promise<any[]> {
+    const buildQuery = (column: 'portal_user_id' | 'user_id') => {
+      let query = supabase.from('assignment_submissions').select(selectClause).eq(column, portalUserId);
+      if (params?.gradedOnly) query = query.eq('status', 'graded').not('grade', 'is', null);
+      query = query.order('submitted_at', { ascending: false });
+      if (params?.limit) query = query.limit(params.limit);
+      return query;
+    };
+
+    const [portalRows, userRows] = await Promise.all([buildQuery('portal_user_id'), buildQuery('user_id')]);
+    if (portalRows.error) throw portalRows.error;
+    if (userRows.error) throw userRows.error;
+
+    const merged = new Map<string, any>();
+    for (const row of [...(portalRows.data ?? []), ...(userRows.data ?? [])] as any[]) merged.set(row.id, row);
+    return Array.from(merged.values());
+  }
+
   async listGrades(userId: string, programId?: string, schoolId?: string | null) {
     let query = supabase
       .from('enrollments')
@@ -115,28 +166,20 @@ export class GradeService {
   }
 
   /** Most recent published report for the student’s portal user id. */
-  async getLatestPublishedReportForStudent(studentPortalUserId: string) {
-    const { data, error } = await supabase
-      .from('student_progress_reports')
-      .select('*')
-      .eq('student_id', studentPortalUserId)
-      .eq('is_published', true)
-      .order('report_date', { ascending: false })
-      .limit(1);
-    if (error) throw error;
-    return data?.[0] ?? null;
+  async getLatestPublishedReportForStudent(studentPortalUserId: string, studentName?: string | null) {
+    const data = await this.listPublishedReportsWithLegacyFallback('*', {
+      studentId: studentPortalUserId,
+      studentName,
+      limit: 1,
+    });
+    return data[0] ?? null;
   }
 
-  async listProgressReports(studentId: string) {
-    const { data, error } = await supabase
-      .from('student_progress_reports')
-      .select('id, course_name, report_term, report_date, theory_score, practical_score, attendance_score, overall_score, overall_grade, is_published, instructor_name, learning_milestones, key_strengths, areas_for_growth, instructor_assessment')
-      .eq('student_id', studentId)
-      .eq('is_published', true)
-      .order('report_date', { ascending: false });
-
-    if (error) throw error;
-    return data ?? [];
+  async listProgressReports(studentId: string, studentName?: string | null) {
+    return this.listPublishedReportsWithLegacyFallback(
+      'id, course_name, report_term, report_date, theory_score, practical_score, attendance_score, overall_score, overall_grade, is_published, instructor_name, learning_milestones, key_strengths, areas_for_growth, instructor_assessment',
+      { studentId, studentName },
+    );
   }
 
   async listPortalStudentsByIds(ids: string[]) {
@@ -209,16 +252,11 @@ export class GradeService {
 
   /** Parent grades: graded assignment rows for a student’s portal user id. */
   async listGradedAssignmentSubmissionsForParentGrades(portalUserId: string, limit = 30) {
-    const { data, error } = await supabase
-      .from('assignment_submissions')
-      .select('id, status, grade, feedback, submitted_at, assignments(title, max_points)')
-      .eq('portal_user_id', portalUserId)
-      .eq('status', 'graded')
-      .not('grade', 'is', null)
-      .order('submitted_at', { ascending: false })
-      .limit(limit);
-    if (error) throw error;
-    return data ?? [];
+    return this.listAssignmentSubmissionsByStudentKeys(
+      portalUserId,
+      'id, status, grade, feedback, submitted_at, assignments(title, max_points)',
+      { gradedOnly: true, limit },
+    );
   }
 
   /** Parent grades: CBT session rows with scores. */
@@ -235,17 +273,13 @@ export class GradeService {
   }
 
   /** My Children: latest published letter grade for a portal student. */
-  async getLatestPublishedOverallGradeForPortalStudent(portalUserId: string) {
-    const { data, error } = await supabase
-      .from('student_progress_reports')
-      .select('overall_grade')
-      .eq('student_id', portalUserId)
-      .eq('is_published', true)
-      .order('report_date', { ascending: false })
-      .limit(1)
-      .maybeSingle();
-    if (error) throw error;
-    return data?.overall_grade ?? null;
+  async getLatestPublishedOverallGradeForPortalStudent(portalUserId: string, studentName?: string | null) {
+    const rows = await this.listPublishedReportsWithLegacyFallback('overall_grade', {
+      studentId: portalUserId,
+      studentName,
+      limit: 1,
+    });
+    return (rows[0] as any)?.overall_grade ?? null;
   }
 
   /** Progress screen (school / admin): flat report list. */
@@ -271,27 +305,19 @@ export class GradeService {
   }
 
   /** Student report screen: full progress report rows for a portal user id. */
-  async listFullProgressReportsForStudentReport(portalUserId: string) {
-    const { data, error } = await supabase
-      .from('student_progress_reports')
-      .select(
-        'id, course_name, report_term, report_period, current_module, next_module, course_duration, theory_score, practical_score, attendance_score, participation_score, participation_grade, projects_grade, homework_grade, proficiency_level, overall_score, overall_grade, is_published, instructor_name, report_date, learning_milestones, key_strengths, areas_for_growth, instructor_assessment, school_name, section_class',
-      )
-      .eq('student_id', portalUserId)
-      .order('report_date', { ascending: false });
-    if (error) throw error;
-    return data ?? [];
+  async listFullProgressReportsForStudentReport(portalUserId: string, studentName?: string | null) {
+    return this.listPublishedReportsWithLegacyFallback(
+      'id, course_name, report_term, report_period, current_module, next_module, course_duration, theory_score, practical_score, attendance_score, participation_score, participation_grade, projects_grade, homework_grade, proficiency_level, overall_score, overall_grade, is_published, instructor_name, report_date, learning_milestones, key_strengths, areas_for_growth, instructor_assessment, school_name, section_class, student_name',
+      { studentId: portalUserId, studentName },
+    );
   }
 
   async listSubmissionsForStudentReport(portalUserId: string, limit = 50) {
-    const { data, error } = await supabase
-      .from('assignment_submissions')
-      .select('id, status, grade, submitted_at, assignments(title, due_date)')
-      .eq('portal_user_id', portalUserId)
-      .order('submitted_at', { ascending: false })
-      .limit(limit);
-    if (error) throw error;
-    return data ?? [];
+    return this.listAssignmentSubmissionsByStudentKeys(
+      portalUserId,
+      'id, status, grade, submitted_at, assignments(title, due_date)',
+      { limit },
+    );
   }
 
   async listEnrollmentsForStudentReport(portalUserId: string, limit = 50) {
